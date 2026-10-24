@@ -15,7 +15,7 @@ import scipy.stats
 from eelbrain import datasets, boosting, combine, convolve, correlation_coefficient, epoch_impulse_predictor, NDVar, UTS, Scalar
 
 from eelbrain.testing import assert_dataobj_equal
-from eelbrain._trf._boosting import Boosting, DeconvolutionData, Split, convolve_1d
+from eelbrain._trf._boosting import Boosting, DeconvolutionData, convolve_1d
 from eelbrain._trf._boosting_opt import boosting_fit
 
 
@@ -95,9 +95,9 @@ def test_boosting():
     assert list(res.partition_result_data().keys()) == ['i_validate', 'r', 'ev', 'train_r', 'train_ev', 'x1']
     assert list(res.partition_result_data()['i_validate']) == list(range(5))
     for res_i, split in zip(res.partition_results, res.splits.splits):
-        assert res_i.i_validate == split.i_validate
-        assert res_i.n_samples == np.sum(split.validate[:, 1] - split.validate[:, 0])
-        for segments, r in ((split.validate, res_i.r), (split.train, res_i.train_r)):
+        assert res_i.i_validate == split.i_reserved
+        assert res_i.n_samples == np.sum(split.reserved[:, 1] - split.reserved[:, 0])
+        for segments, r in ((split.reserved, res_i.r), (split.train, res_i.train_r)):
             y_pred = [convolve(res_i.h_scaled, NDVar(x1.x[i0:i1], UTS(x1.time.times[i0], x1.time.tstep, i1 - i0))) for i0, i1 in segments]
             y_pred = np.concatenate([y_pred_i.x for y_pred_i in y_pred])
             y_i = np.concatenate([y.x[i0:i1] for i0, i1 in segments])
@@ -119,7 +119,13 @@ def test_boosting():
     assert correlation_coefficient(y_pred, y, 'time') == pytest.approx(res_cv.r)
     # fit res_cv on same data as res
     fit = res_cv.fit
-    fit.data.splits = replace(fit.data.splits, splits=[fit.data.splits.splits[i] for i in [9, 10, 11]])
+    splits = fit.data.splits
+    fit.data.initialize_cross_validation(3)  # splits that were not fit
+    with pytest.raises(RuntimeError, match="does not match the splits used in fit"):
+        fit.evaluate_fit()
+    fit.data.splits = replace(splits, splits=[splits.splits[3]])
+    # the existing runs are still matched to the (equal) replaced split
+    assert_dataobj_equal(fit.evaluate_fit().h, res_cv.partition_results[3].h)
     fit.fit(0, 1, 0, 'l2')
     res_cv = fit.evaluate_fit(debug=True)
     assert_dataobj_equal(res_cv.h, res.h)
@@ -181,7 +187,7 @@ def test_boosting_cross_predict(error):
     assert proportion_explained == pytest.approx(trf.proportion_explained, 1e-16)
     # Proportion explained in each test partition
     for res in trf.partition_results:
-        segments = [split.test for split in trf.splits.splits if split.i_test == res.i_test][0]
+        segments = [split.reserved for split in trf.splits.splits if split.i_reserved == res.i_test][0]
         index = np.concatenate([np.arange(start, stop) for start, stop in segments])
         y_i = y_normalized.x[index]
         residual_i = y_residual.x[index]
@@ -235,7 +241,9 @@ def test_boosting_epochs():
 def test_boosting_object():
     "Test Boosting object"
     ds = datasets._get_continuous(ynd=True)
-    data = DeconvolutionData('y', 'x2', ds)
+    with pytest.raises(ValueError, match="without y"):
+        Boosting(DeconvolutionData('x2', data=ds))
+    data = DeconvolutionData('x2', 'y', ds)
     data.apply_basis(0.2, 'hamming')
     data.normalize('l1')
     data.initialize_cross_validation(4)
@@ -329,10 +337,10 @@ def test_boosting_fit():
     y_len = len(y)
     seg_len = int(y_len / 40)
     all_segments = np.array([[0, seg_len], [seg_len, y_len]], np.int64)
-    split = Split(all_segments[1:], all_segments[:1])
+    train, validate = all_segments[1:], all_segments[:1]
     tstart = np.array([0], np.int64)
     tstop = np.array([10], np.int64)
-    h, history = boosting_fit(y, x, x_pads, split.train, split.validate, split.train_and_validate, tstart, tstop, 0.005, 0.005, 2)
+    h, history = boosting_fit(y, x, x_pads, train, validate, all_segments, tstart, tstop, 0.005, 0.005, 2)
     test_sse_history = [step.e_test for step in history]
     test_seg_len = int(floor(x.shape[1] / 40))
     y_pred = convolve_array(h, x[:, :test_seg_len], x_pads)
@@ -350,7 +358,7 @@ def test_boosting_fit():
     x_pads = np.zeros(len(x))
     tstart = np.array([0, 0, 0], np.int64)
     tstop = np.array([10, 10, 10], np.int64)
-    h, history = boosting_fit(y, x, x_pads, split.train, split.validate, split.train_and_validate, tstart, tstop, 0.005, 0.005, 2)
+    h, history = boosting_fit(y, x, x_pads, train, validate, all_segments, tstart, tstop, 0.005, 0.005, 2)
     test_sse_history = [step.e_test for step in history]
     test_seg_len = int(floor(x.shape[1] / 40))
     y_pred = convolve_array(h, x[:, :test_seg_len], x_pads)

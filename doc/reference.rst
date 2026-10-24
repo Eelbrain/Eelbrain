@@ -190,6 +190,8 @@ Temporal Response Functions
    boosting
    BoostingResult
    Splits
+   Split
+   split_data
    epoch_impulse_predictor
    event_impulse_predictor
 

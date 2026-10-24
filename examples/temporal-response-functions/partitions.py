@@ -36,7 +36,7 @@ p = plot.preview_partitions(20, partitions=2, test=0)
 ###############################################################################
 # Validation and testing sets
 # ---------------------------
-# Testing the result of a model fit with cross-validation requires data that was never used during training. This is the default in the :func:`boosting` function (``test=1``): each data segment is used in turn as testing segment. For each testing segment, the remaining segments are used in different runs as training and validation data. The results of those runs are then averaged to predict responses in the testing data. This nested loop means that the number of boosting runs can get large quickly when using many partitions (*k* partitions result in ``k * (k - 1)`` runs), so the default for continuous data is to use five partitions:
+# Testing the result of a model fit with cross-validation requires data that was never used during training. This is the default in the :func:`boosting` function (``test=1``): each data segment is used in turn as testing segment. For each testing segment, the remaining segments are used in different runs as training and validation data. The results of those runs are then averaged to predict responses in the testing data. In the plots, the runs are grouped by testing segment (separated by black lines), and the y-axis labels the test partition. This nested loop means that the number of boosting runs can get large quickly when using many partitions (*k* partitions result in ``k * (k - 1)`` runs), so the default for continuous data is to use five partitions:
 
 p = plot.preview_partitions()
 p = plot.preview_partitions(20, partitions=5)
