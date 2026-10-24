@@ -396,6 +396,28 @@ def test_split_data_time():
     assert_array_equal(splits.splits[0].reserved, [[0, 10], [10, 20]])
     # default for continuous data
     assert split_data(np.array([[0, 100]]), 3).split == 'time'
+    # min_section: span boundaries close to a segment boundary snap to the segment boundary
+    segments = np.array([[0, 95], [95, 300]])
+    assert_array_equal(split_data(segments, 3, test=0, split='time').split_segments, [[0, 95], [95, 100], [100, 200], [200, 300]])
+    splits = split_data(segments, 3, test=0, split='time', min_section=15)
+    assert_array_equal(splits.split_segments, [[0, 95], [95, 200], [200, 300]])
+    assert_array_equal(splits.splits[0].reserved, [[0, 95]])
+    assert_array_equal(splits.splits[1].reserved, [[95, 200]])
+    assert_array_equal(splits.splits[1].train, [[0, 95], [200, 300]])
+    # both pieces would be too short: snap to the closer boundary
+    splits = split_data(np.array([[0, 2050], [2050, 3550], [3550, 6550], [6550, 9450]]), 3, test=0, split='time', min_section=1500)
+    assert_array_equal(splits.split_segments, [[0, 2050], [2050, 3550], [3550, 6550], [6550, 9450]])
+    assert_array_equal(splits.splits[0].reserved, [[0, 2050], [2050, 3550]])
+    # short segments are never cut
+    segments = np.array([[i * 10, (i + 1) * 10] for i in range(7)])
+    splits = split_data(segments, 3, test=0, split='time', min_section=15)
+    assert_array_equal(splits.split_segments, segments)
+    assert_array_equal(splits.splits[1].reserved, [[20, 30], [30, 40], [40, 50]])
+    # the data edges are not segment boundaries to snap to
+    splits = split_data(np.array([[0, 10], [10, 100]]), 3, test=0, split='time', min_section=15)
+    assert_array_equal(splits.split_segments, [[0, 10], [10, 33], [33, 67], [67, 100]])
+    with pytest.raises(ValueError, match="too short to form 5 partitions"):
+        split_data(segments[:3], 5, test=0, split='time', min_section=15)
     # more partitions than samples
     with pytest.raises(ValueError, match="not enough samples"):
         split_data(np.array([[0, 2], [2, 4]]), 5, validate=1, test=0, split='time')

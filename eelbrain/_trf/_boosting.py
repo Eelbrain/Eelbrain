@@ -1284,6 +1284,8 @@ def boosting(
           least as many cases as partitions.
         - ``'time'``: cut the concatenated cases into ``partitions`` contiguous
           spans of equal length (default 5), regardless of case boundaries.
+          A span boundary that falls within 15 s of a case boundary is moved
+          to the case boundary, so that cases shorter than 30 s are never cut.
         - ``'within_cases'``: cut each case into ``partitions`` pieces of
           equal length, and form each partition from one piece of every case
           (default 5 partitions), so that each partition samples every case.

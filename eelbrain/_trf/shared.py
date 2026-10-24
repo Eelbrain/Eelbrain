@@ -254,6 +254,9 @@ class Splits(PickleableDataClass, EQMixIn):
         return DataSplit(self, **kwargs)
 
 
+TIME_SPLIT_MIN_SECTION = 15.  # seconds; see split_data(min_section=)
+
+
 def split_data(
         segments: np.ndarray,
         partitions: int | None = None,
@@ -262,6 +265,7 @@ def split_data(
         validate: int = 1,
         test: int = 1,
         split: Literal['cases', 'time', 'within_cases'] = None,
+        min_section: int = 0,
 ) -> Splits:
     """Split data segments into train, validate and test segments
 
@@ -289,6 +293,11 @@ def split_data(
         divide each segment into ``partitions`` pieces of equal length and
         form partition *i* from the *i*-th piece of every segment. The default
         is ``'cases'`` for segmented data and ``'time'`` for continuous data.
+    min_section
+        With ``split='time'``, minimum length (in samples) of the pieces left
+        when a segment is cut: a span boundary that would leave a shorter piece
+        is moved to the closest segment boundary instead (see notes). The
+        default (0) always cuts at the span boundaries.
 
     Notes
     -----
@@ -342,7 +351,14 @@ def split_data(
     periods of time, while a span that straddles a segment boundary yields two
     sections in the same partition. For continuous data (a single segment),
     this simply cuts the data into ``partitions`` contiguous sections of equal
-    length.
+    length. With ``min_section``, a span boundary that falls within
+    ``min_section`` samples of a segment boundary is moved to that segment
+    boundary (the closer one, if both are within reach), so that cutting a
+    segment never leaves a piece shorter than ``min_section``. Segments shorter
+    than ``2 * min_section`` are thus never cut, and partitions are formed from
+    whole segments wherever that is possible within this tolerance; if the
+    segments are too short to form ``partitions`` distinct partitions this way,
+    an error is raised.
 
     **Within cases** (``split='within_cases'``): each segment is cut into
     ``partitions`` pieces of equal length (default 5), and partition *i*
@@ -417,6 +433,19 @@ def split_data(
             # partitions with equal numbers of samples, cut additionally at segment boundaries
             split_points = np.round(np.linspace(segments[0, 0], segments[-1, 1], partitions + 1)).astype(np.int64)
             boundaries = segments[1:, 0]
+            if min_section and len(segments) > 1:
+                # move span boundaries that would leave a piece shorter than min_section to the segment boundary
+                for i in range(1, partitions):
+                    i_segment = np.searchsorted(segments[:, 1], split_points[i], side='right')
+                    start, stop = segments[i_segment]
+                    to_start = split_points[i] - start
+                    to_stop = stop - split_points[i]
+                    if to_start < min_section and to_start <= to_stop and i_segment > 0:
+                        split_points[i] = start
+                    elif to_stop < min_section and i_segment < len(segments) - 1:
+                        split_points[i] = stop
+                if len(np.unique(split_points)) <= partitions:
+                    raise ValueError(f"{partitions=} with {split=}: the segments are too short to form {partitions} partitions without cutting a segment into pieces shorter than {min_section} samples; use fewer partitions")
             cuts = np.union1d(split_points, boundaries)
             split_segments = np.vstack([cuts[:-1], cuts[1:]]).T
             soft_splits = np.setdiff1d(split_points[1:-1], boundaries)
@@ -1273,9 +1302,12 @@ class DeconvolutionData:
 
         Notes
         -----
-        See :func:`split_data` for the algorithm.
+        See :func:`split_data` for the algorithm. With ``split='time'``,
+        cutting a segment never leaves a piece shorter than
+        ``TIME_SPLIT_MIN_SECTION`` (15 s).
         """
-        self.splits = split_data(self.segments, partitions, model, data, validate, test, split)
+        min_section = int(round(TIME_SPLIT_MIN_SECTION / self.time.tstep))
+        self.splits = split_data(self.segments, partitions, model, data, validate, test, split, min_section)
 
     def data_scale_ndvars(self) -> tuple:
         """Normalization parameters packaged like the input data

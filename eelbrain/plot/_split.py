@@ -8,7 +8,7 @@ from matplotlib.patches import Rectangle
 from matplotlib.ticker import MaxNLocator
 import numpy
 
-from .._trf.shared import Splits, split_data
+from .._trf.shared import TIME_SPLIT_MIN_SECTION, Splits, split_data
 from .._data_obj import Dataset, CategorialArg, NDVar, NDVarArg, asndvar
 from ._base import EelFigure, Layout, LegendMixin, LegendArg
 from ._styles import colors_for_oneway
@@ -104,6 +104,7 @@ def preview_partitions(
     validate: int = 1,
     test: int = 1,
     split: Literal['cases', 'time', 'within_cases'] = None,
+    min_section: int = None,
     data: Dataset = None,
     **kwargs,
 ) -> DataSplit:
@@ -117,6 +118,11 @@ def preview_partitions(
         (the default assumes continuous data), or as a sequence of integers
         describing the length (number of samples) of each trial, which allows
         trials of different lengths.
+    min_section
+        With ``split='time'``, minimum length (in samples) of the pieces left
+        when a trial is cut (see :func:`split_data`). For :class:`NDVar` data,
+        the default is the :func:`~eelbrain.boosting` default of 15 s; for
+        trials specified as numbers of samples, the default is 0.
     ...
         For a description of the splitting parameters see :func:`~eelbrain.boosting`.
         For plotting parameters see :class:`DataSplit`.
@@ -145,11 +151,13 @@ def preview_partitions(
         n_cases = len(y) if y.has_case else 1
         ns = [len(y.get_dim('time'))] * n_cases
         xlabel = 'Sample'
+        if min_section is None:
+            min_section = int(round(TIME_SPLIT_MIN_SECTION / y.time.tstep))
     else:
         ns = [int(n) for n in cases]
         xlabel = 'Sample'
     index = numpy.cumsum([0] + ns)
     segments = numpy.hstack([index[:-1, None], index[1:, None]])
-    splits = split_data(segments, partitions, model, data, validate, test, split)
+    splits = split_data(segments, partitions, model, data, validate, test, split, min_section or 0)
     kwargs.setdefault('xlabel', xlabel)
     return DataSplit(splits, **kwargs)
