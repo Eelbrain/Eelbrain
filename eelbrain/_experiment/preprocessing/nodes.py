@@ -356,6 +356,10 @@ class RawBadChannelsInput(Input[list[str]]):
         self._write_df(path, channels_df)
 
 
+# MNE 1.13 renamed the built-in head-model montages (and MNE 1.14 removes the old names)
+LEGACY_MONTAGE_NAMES = {f'standard_{suffix}': f'colin27_{suffix}' for suffix in ('1005', '1020', 'alphabetic', 'postfixed', 'prefixed', 'primed')}
+
+
 class RawSourceInput(Input[mne.io.BaseRaw]):
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
     key_options = {'noise': False}
@@ -413,6 +417,11 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
                 fp['electrodes'] = file_fingerprint(ctx.root, elec_path)
                 fp['coordsystem'] = file_fingerprint(ctx.root, coord_path)
         return fp
+
+    def normalize_stored_fingerprint(self, fingerprint: dict[str, Any]) -> None:
+        montage = fingerprint['pipe']['montage']  # None, a montage name, or a Sensor form for a DigMontage
+        if isinstance(montage, str) and montage in LEGACY_MONTAGE_NAMES:  # recorded with MNE < 1.13
+            fingerprint['pipe']['montage'] = LEGACY_MONTAGE_NAMES[montage]
 
     def load(self, ctx: Request) -> mne.io.BaseRaw:
         return self._load_raw(ctx, ctx.view_options['preload'])

@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+from copy import deepcopy
 import logging
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,6 +11,8 @@ import pandas as pd
 import pytest
 from mne_bids import BIDSPath
 
+from eelbrain._experiment.derivative_cache.base import DerivativeRegistry
+from eelbrain._experiment.preprocessing import RawSource
 from eelbrain._experiment.preprocessing.config import CHPI_MIN_ACTIVE_FRACTION
 from eelbrain._experiment.preprocessing.nodes import CanonicalHeadPositionDerivative, RawHeadPositionDerivative, RawSourceInput, find_chpi
 from eelbrain.testing import requires_mne_testing_data
@@ -69,6 +72,22 @@ def generate_head_positions(n: int) -> np.ndarray:
     out[:, 4:7] = np.column_stack([np.linspace(.001, .003, n), np.full(n, -.002), np.linspace(.050, .053, n)])  # tx, ty, tz
     out[:, 7:] = np.column_stack([np.full(n, .99), np.full(n, .001), np.full(n, .01)])  # gof, err, v
     return out
+
+
+def test_source_fingerprint_legacy_montage_names():
+    "Stored fingerprints recorded with pre-MNE-1.13 montage names match the renamed montages"
+    node = RawSourceInput('raw', RawSource(montage='colin27_1020'), '.fif')
+    stored = DerivativeRegistry.canonicalize({'raw': 'raw', 'pipe': RawSource(montage='standard_1020')})
+    current = DerivativeRegistry.canonicalize({'raw': 'raw', 'pipe': RawSource(montage='colin27_1020')})
+    assert stored != current
+    node.normalize_stored_fingerprint(stored)
+    assert stored == current
+    # Other montage specifications are left alone
+    for montage in (None, 'biosemi64', mne.channels.make_standard_montage('colin27_1020')):
+        fingerprint = DerivativeRegistry.canonicalize({'raw': 'raw', 'pipe': RawSource(montage=montage)})
+        expected = deepcopy(fingerprint)
+        node.normalize_stored_fingerprint(fingerprint)
+        assert fingerprint == expected
 
 
 @pytest.mark.parametrize('n', [1, 5])
