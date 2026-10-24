@@ -105,7 +105,7 @@ from .._celltable import Celltable
 from .._colorspaces import LocatedColormap, SYMMETRIC_CMAPS, ZEROBASED_CMAPS, ALPHA_CMAPS
 from .._config import CONFIG
 from .._data_obj import Dimension, Dataset, Factor, Interaction, NDVar, Var, Case, UTS, NDVarArg, CategorialArg, IndexArg, CellArg, NDVarTypes, ascategorial, asndvar, assub, isnumeric, isdataobject, combine_cells, cellname
-from .._utils.notebooks import in_ipython, use_inline_backend
+from .._utils.notebooks import use_inline_backend
 from .._stats import testnd
 from .._types import PathArg
 from .._utils import IS_WINDOWS, intervals, ui
@@ -1613,7 +1613,6 @@ class EelFigure(MatplotlibFigure):
     _can_set_ylim = False
     _can_set_xlim = False
     _has_frame = False
-    _displayed_inline = False
 
     def __init__(self, data_desc: str | None, layout: BaseLayout):
         """Parent class for Eelbrain figures.
@@ -1692,12 +1691,14 @@ class EelFigure(MatplotlibFigure):
         from IPython.display import display
         display(self.figure)
 
-    def _repr_png_(self) -> bytes | None:
-        "PNG representation for notebooks that do not use IPython (e.g., marimo)"
-        if self._displayed_inline:  # _show() already rendered the figure into the notebook
-            return None
+    def _mime_(self) -> tuple[str, str]:
+        "Display protocol of marimo, which renders the figure like its own matplotlib figures (marimo adds ``_mime_`` to all matplotlib artists)"
+        return self.figure._mime_()
+
+    def _repr_png_(self) -> bytes:
+        "PNG representation for notebooks that use neither IPython nor marimo"
         buffer = BytesIO()
-        self.figure.savefig(buffer, format='png', bbox_inches='tight')  # like marimo's own rendering of pyplot figures
+        self.figure.savefig(buffer, format='png', bbox_inches='tight')
         return buffer.getvalue()
 
     def _set_axtitle(
@@ -1777,16 +1778,10 @@ class EelFigure(MatplotlibFigure):
             self._frame.store_canvas()
 
         if CONFIG['show'] and self._layout.show:
-            if use_inline_backend() and not in_ipython():
-                # IPython displays open pyplot figures at the end of each cell; other notebooks (e.g., marimo) need an explicit show()
-                from matplotlib import pyplot
-                pyplot.show()
-                self._displayed_inline = True
-            else:
-                self._frame.Show()
-                if self._has_frame and do_autorun(self._layout.run):
-                    from .._wxgui import run
-                    run()
+            self._frame.Show()
+            if self._has_frame and do_autorun(self._layout.run):
+                from .._wxgui import run
+                run()
 
     def _tight(self):
         "Default implementation based on matplotlib"
