@@ -299,7 +299,7 @@ def label_from_annot(sss, subject, subjects_dir, parc=None, color=(0, 0, 0)):
         bad = [-1]
         for unknown_name in (b'unknown', b'Unknown'):
             if unknown_name in names:
-                bad.append(names.index(b'unknown'))
+                bad.append(names.index(unknown_name))
         keep = ~np.isin(annotation[ss['vertno']], bad)
         if np.any(keep):
             label = mne.Label(ss['vertno'][keep], hemi=hemi, color=color)

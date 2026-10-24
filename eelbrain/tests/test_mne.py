@@ -14,7 +14,7 @@ from eelbrain import (
     Dataset, Factor,
     concatenate, labels_from_clusters, morph_source_space, set_parc, xhemi)
 from eelbrain._data_obj import SourceSpace, asndvar, _matrix_graph
-from eelbrain._mne import shift_mne_epoch_trigger, combination_label
+from eelbrain._mne import shift_mne_epoch_trigger, combination_label, label_from_annot
 from eelbrain.testing import requires_mne_sample_data, requires_mne_testing_data
 from eelbrain.tests.test_data import assert_dataobj_equal
 
@@ -205,6 +205,22 @@ def test_combination_label():
               mne.read_labels_from_annot('fsaverage', 'PALS_B12_Lobes', subjects_dir=subjects_dir)}
     l = combination_label('frontal-lh', "LOBE.FRONTAL", labels, subjects_dir)[0]
     assert_array_equal(l.vertices, labels['LOBE.FRONTAL-lh'].vertices)
+
+
+@requires_mne_testing_data
+def test_label_from_annot():
+    "Mask label excludes unknown vertices (aparc.a2009s names the label 'Unknown')"
+    data_dir = Path(mne.datasets.testing.data_path(download=False))
+    subjects_dir = data_dir / 'subjects'
+    src = mne.read_source_spaces(subjects_dir / 'sample' / 'bem' / 'sample-oct-6-src.fif')
+    label_aparc = label_from_annot(src, 'sample', subjects_dir, 'aparc')
+    label_a2009s = label_from_annot(src, 'sample', subjects_dir, 'aparc.a2009s')
+    for label in (label_aparc, label_a2009s):
+        for hemi, ss in zip((label.lh, label.rh), src):
+            assert 0 < len(hemi.vertices) < len(ss['vertno'])
+            assert np.isin(hemi.vertices, ss['vertno']).all()
+    assert_array_equal(label_a2009s.lh.vertices, label_aparc.lh.vertices)
+    assert_array_equal(label_a2009s.rh.vertices, label_aparc.rh.vertices)
 
 
 @requires_mne_testing_data
