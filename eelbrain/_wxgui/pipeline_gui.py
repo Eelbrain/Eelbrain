@@ -946,6 +946,8 @@ class PipelineFrame(EelbrainFrame):
                     if choice == StaleICADialog.DELETE:
                         Path(error.path).unlink()
                     self._start_refresh()
+            except Exception as error:
+                self._show_error(*_error_dialog_args(error))
             return
 
     def _activate_item(self, idx: int, subject: str, task: Task) -> None:

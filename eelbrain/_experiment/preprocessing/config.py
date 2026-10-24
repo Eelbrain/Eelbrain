@@ -755,6 +755,29 @@ def find_chpi(
     return None
 
 
+class _MNELogFilter(logging.Filter):
+    """Forward selected MNE log messages to the pipeline log
+
+    Installed on MNE's logger while running Maxwell filtering with ``verbose='INFO'``: MNE's messages about the SSS origin and the bad channels are forwarded to ``logger`` (and kept in ``messages``), the rest (e.g., per-chunk progress) is dropped. Messages repeated by the bad channel detection and the filter proper are forwarded once. Warnings pass through unchanged.
+    """
+    MESSAGES = ('Automatic origin fit', 'Using origin', 'Bad MEG channels being reconstructed', 'No bad MEG channels', 'Static bad channels', 'Static flat channels')
+
+    def __init__(self, logger: logging.Logger, raw_name: str):
+        super().__init__()
+        self.logger = logger
+        self.raw_name = raw_name
+        self.messages = []
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            return True
+        message = record.getMessage().strip()
+        if message.startswith(self.MESSAGES) and message not in self.messages:
+            self.messages.append(message)
+            self.logger.info("Raw %s: %s", self.raw_name, message)
+        return False
+
+
 class RawMaxwell(CachedRawPipe):
     """Maxwell filter raw pipe.
 
@@ -765,6 +788,9 @@ class RawMaxwell(CachedRawPipe):
     bad_condition
         How to deal with ill-conditioned SSS matrices; by default, an error is
         raised, which might prevent the process to complete for some subjects.
+        An ill-conditioned basis usually points to a problem with the recording
+        (an inaccurate head digitization or device-to-head transform, which
+        misplace the automatically fitted origin, or too many bad channels).
         Set to ``'warning'`` to proceed anyway.
     cache
         Cache the resulting raw files (default ``True``).
@@ -924,23 +950,33 @@ class RawMaxwell(CachedRawPipe):
 
         shared_kwargs = {key: value for key, value in self.kwargs.items() if key in self._shared_kwargs}
         shared_kwargs.update(calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame='head', head_pos=head_pos)
-        # find bad channels
-        detector_kwargs = {key: value for key, value in self.kwargs.items() if key in self._detector_only_kwargs}
-        noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, h_freq=self.h_freq, verbose=MNE_VERBOSITY, **shared_kwargs, **detector_kwargs)
-        raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
-        if filter_chpi:
-            logger.info("Raw %s: removing %s", raw_name, 'line noise' if noise else 'cHPI signals and line noise')
-            mne.chpi.filter_chpi(raw, allow_line_only=noise, verbose=MNE_VERBOSITY)
-        # Maxwell filter
-        kwargs = {key: value for key, value in self.kwargs.items() if key in self._maxwell_filter_only_kwargs}
-        kwargs.update(shared_kwargs)
-        st_duration = kwargs.get('st_duration')
-        if st_duration is not None and kwargs.get('st_overlap', True):
-            # MNE's overlapping tSSS uses a Hann window of round(st_duration * sfreq) samples with 50% overlap, which only satisfies the constant-overlap-add constraint for an even sample count; nudge st_duration up by one sample when it would be odd
-            n_samples = int(round(st_duration * raw.info['sfreq']))
-            if n_samples % 2:
-                kwargs = {**kwargs, 'st_duration': (n_samples + 1) / raw.info['sfreq']}
-        raw_sss = mne.preprocessing.maxwell_filter(raw, destination=destination, verbose=MNE_VERBOSITY, **kwargs)
+        # The conditioning of the SSS basis depends on the origin and on which channels are available; MNE reports both, so forward those messages to the pipeline log
+        mne_log = _MNELogFilter(logger, raw_name)
+        logging.getLogger('mne').addFilter(mne_log)
+        try:
+            # find bad channels
+            detector_kwargs = {key: value for key, value in self.kwargs.items() if key in self._detector_only_kwargs}
+            noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, h_freq=self.h_freq, verbose='INFO', **shared_kwargs, **detector_kwargs)
+            raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
+            if filter_chpi:
+                logger.info("Raw %s: removing %s", raw_name, 'line noise' if noise else 'cHPI signals and line noise')
+                mne.chpi.filter_chpi(raw, allow_line_only=noise, verbose=MNE_VERBOSITY)
+            # Maxwell filter
+            kwargs = {key: value for key, value in self.kwargs.items() if key in self._maxwell_filter_only_kwargs}
+            kwargs.update(shared_kwargs)
+            st_duration = kwargs.get('st_duration')
+            if st_duration is not None and kwargs.get('st_overlap', True):
+                # MNE's overlapping tSSS uses a Hann window of round(st_duration * sfreq) samples with 50% overlap, which only satisfies the constant-overlap-add constraint for an even sample count; nudge st_duration up by one sample when it would be odd
+                n_samples = int(round(st_duration * raw.info['sfreq']))
+                if n_samples % 2:
+                    kwargs = {**kwargs, 'st_duration': (n_samples + 1) / raw.info['sfreq']}
+            raw_sss = mne.preprocessing.maxwell_filter(raw, destination=destination, verbose='INFO', **kwargs)
+        except RuntimeError as error:
+            if 'badly conditioned' not in str(error):
+                raise
+            raise DataError(f"{fpath}: the SSS basis is ill-conditioned ({'; '.join([str(error), *mne_log.messages])}). This usually indicates an inaccurate head digitization or device-to-head transform, which misplace the automatically fitted origin, or too many bad channels. Check the recording's digitization and head position; alternatively, set the origin explicitly, lower int_order, or use RawMaxwell(bad_condition='warning') to proceed anyway.") from error
+        finally:
+            logging.getLogger('mne').removeFilter(mne_log)
         if head_pos is not None:
             # drop 'chpi' channels appended by maxwell_filter
             drop_picks = mne.pick_types(raw_sss.info, meg=False, chpi=True)
