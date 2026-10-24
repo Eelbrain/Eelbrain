@@ -38,7 +38,7 @@ from ..exceptions import FileMissingError, ICAMissingError
 from ..pathing import bids_path, DERIV_DIR
 from .job import ICAJob
 from .config import (
-    MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell, find_chpi,
+    LEGACY_MONTAGE_NAMES, MNE_VERBOSITY, RawPipeGraph, RawSource, CachedRawPipe, RawICA, RawApplyICA, RawMaxwell, find_chpi,
     raw_node_name, raw_bad_channels_input_name, raw_input_name, ica_input_name,
 )
 
@@ -356,10 +356,6 @@ class RawBadChannelsInput(Input[list[str]]):
         self._write_df(path, channels_df)
 
 
-# MNE 1.13 renamed the built-in head-model montages (and MNE 1.14 removes the old names)
-LEGACY_MONTAGE_NAMES = {f'standard_{suffix}': f'colin27_{suffix}' for suffix in ('1005', '1020', 'alphabetic', 'postfixed', 'prefixed', 'primed')}
-
-
 class RawSourceInput(Input[mne.io.BaseRaw]):
     key_fields = ('subject', 'session', 'task', 'acquisition', 'run')
     key_options = {'noise': False}
@@ -420,7 +416,7 @@ class RawSourceInput(Input[mne.io.BaseRaw]):
 
     def normalize_stored_fingerprint(self, fingerprint: dict[str, Any]) -> None:
         montage = fingerprint['pipe']['montage']  # None, a montage name, or a Sensor form for a DigMontage
-        if isinstance(montage, str) and montage in LEGACY_MONTAGE_NAMES:  # recorded with MNE < 1.13
+        if isinstance(montage, str) and montage in LEGACY_MONTAGE_NAMES:  # recorded before the configuration was updated for MNE 1.13
             fingerprint['pipe']['montage'] = LEGACY_MONTAGE_NAMES[montage]
 
     def load(self, ctx: Request) -> mne.io.BaseRaw:

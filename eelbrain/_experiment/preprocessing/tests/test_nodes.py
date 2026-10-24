@@ -77,9 +77,9 @@ def generate_head_positions(n: int) -> np.ndarray:
 def test_source_fingerprint_legacy_montage_names():
     "Stored fingerprints recorded with pre-MNE-1.13 montage names match the renamed montages"
     node = RawSourceInput('raw', RawSource(montage='colin27_1020'), '.fif')
-    stored = DerivativeRegistry.canonicalize({'raw': 'raw', 'pipe': RawSource(montage='standard_1020')})
     current = DerivativeRegistry.canonicalize({'raw': 'raw', 'pipe': RawSource(montage='colin27_1020')})
-    assert stored != current
+    stored = deepcopy(current)
+    stored['pipe']['montage'] = 'standard_1020'
     node.normalize_stored_fingerprint(stored)
     assert stored == current
     # Other montage specifications are left alone

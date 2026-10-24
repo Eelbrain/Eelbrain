@@ -45,6 +45,9 @@ def test_raw_source_rename_channels():
     # rename_channels values need to be in the montage
     with pytest.raises(ConfigurationError):
         RawSource(montage='biosemi16', rename_channels={'A1': 'NoSuchChannel'})
+    # Montage names from before MNE 1.13 are rejected (stored fingerprints with them are migrated, see RawSourceInput.normalize_stored_fingerprint)
+    with pytest.raises(ConfigurationError, match="'colin27_1020'"):
+        RawSource(montage='standard_1020')
 
 
 def test_maxwell_head_pos_semantic_dict():

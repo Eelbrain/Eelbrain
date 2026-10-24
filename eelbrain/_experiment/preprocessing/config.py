@@ -34,6 +34,8 @@ from ..pathing import ica_file_path
 
 MNE_VERBOSITY = 'WARNING'
 LOG = logging.getLogger(__name__)
+# MNE 1.13 renamed the built-in head-model montages (and MNE 1.14 removes the old names)
+LEGACY_MONTAGE_NAMES = {f'standard_{suffix}': f'colin27_{suffix}' for suffix in ('1005', '1020', 'alphabetic', 'postfixed', 'prefixed', 'primed')}
 
 
 class RawPipe(Configuration):
@@ -134,6 +136,8 @@ class RawSource(RawPipe):
             **kwargs,
     ):
         RawPipe.__init__(self)
+        if isinstance(montage, str) and montage in LEGACY_MONTAGE_NAMES:
+            raise ConfigurationError(f"RawSource: {montage=} was renamed to {LEGACY_MONTAGE_NAMES[montage]!r} in MNE 1.13; update the configuration to the new name (cached data remains valid)")
         if isinstance(adjacency, str):
             if adjacency not in ('auto', 'grid', 'none') and adjacency not in mne.channels.get_builtin_ch_adjacencies():
                 adjacency = Path(adjacency)
