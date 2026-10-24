@@ -84,7 +84,51 @@ class GCReport:
 
     def collect(self) -> None:
         """Delete the cache files flagged by this scan."""
-        _collect(self)
+        registry = self.registry
+        touched_dirs: set[Path] = set()
+        n_removed = 0
+        counts: dict[str, int] = {}
+        for entry in sorted(self.deletable(), key=lambda entry: _GC_DELETE_PHASE.get(entry.category, 1)):
+            if entry.category is GCCategory.STALE_DISAMBIGUATION:
+                continue  # sidecars are pruned against post-deletion reality below
+            paths = [entry.path]
+            if entry.manifest_path is not None and entry.manifest_path != entry.path:
+                paths.append(entry.manifest_path)
+            for path in paths:
+                if _gc_remove_path(registry, path):
+                    n_removed += 1
+                    touched_dirs.add(path.parent)
+                    counts[entry.category.value] = counts.get(entry.category.value, 0) + 1
+                    detail = f"; {entry.reason}" if entry.reason else ''
+                    registry.log.debug("Cache GC: removed %s (%s%s)", registry.describe_artifact_path(path), entry.category.value, detail)
+        for sidecar_path in self.disambiguation_sidecars:
+            if not sidecar_path.exists():
+                continue
+            base_path = sidecar_path.with_name(sidecar_path.name[:-len(CACHE_DISAMBIGUATION_SUFFIX)])
+            mapping = registry._read_cache_disambiguation(base_path)
+            keep = {digest: suffix for digest, suffix in mapping.items() if _disambiguation_target_exists(base_path, suffix)}
+            if keep == mapping and mapping:
+                continue
+            if keep:
+                registry._write_cache_disambiguation(base_path, keep)
+                registry.log.debug("Cache GC: pruned %i entries from %s", len(mapping) - len(keep), registry.describe_artifact_path(sidecar_path))
+            elif _gc_remove_path(registry, sidecar_path):
+                n_removed += 1
+                touched_dirs.add(sidecar_path.parent)
+                counts[GCCategory.STALE_DISAMBIGUATION.value] = counts.get(GCCategory.STALE_DISAMBIGUATION.value, 0) + 1
+                registry.log.debug("Cache GC: removed %s (%s)", registry.describe_artifact_path(sidecar_path), GCCategory.STALE_DISAMBIGUATION.value)
+        for directory in sorted(touched_dirs, key=lambda path: len(path.parts), reverse=True):
+            while directory != registry.cache_dir and directory.is_relative_to(registry.cache_dir):
+                try:
+                    directory.rmdir()  # only succeeds when empty
+                except OSError:
+                    break
+                directory = directory.parent
+        if n_removed:
+            summary = ', '.join(f"{name}: {count}" for name, count in sorted(counts.items()))
+            registry.log.info("Cache GC: removed %i files (%s): %s", n_removed, _format_size(self.total_size()), summary)
+        else:
+            registry.log.info("Cache GC: nothing to remove")
 
     def deletable(self) -> list[GCEntry]:
         """The entries that :meth:`collect` will delete."""
@@ -342,8 +386,18 @@ def _classify_manifest(
             return None, 'node is no longer a cached derivative'
         return ctx, None
 
-    entry = None
+    def validate_input(owner: Input, ctx: Request[Any]) -> GCEntry | None:
+        try:
+            valid = owner.is_valid(ctx)
+        except Exception as error:
+            report.errors.append((manifest_path, repr(error)))
+            return classify(GCCategory.UNVERIFIABLE, f"cannot validate ({error})")
+        if valid:
+            return None
+        return classify(GCCategory.PROTECTED_STALE, 'input no longer matches its recorded provenance')
+
     owner = registry._nodes.get(manifest.derivative)
+    entry = None
     if owner is None:
         entry = classify(GCCategory.UNVERIFIABLE, f"manifest names unregistered derivative {manifest.derivative!r}")
     elif artifact_exists:
@@ -363,14 +417,7 @@ def _classify_manifest(
                 if not _same_path(expected_manifest, manifest_path):
                     entry = classify(GCCategory.PROTECTED_STALE, f"current request resolves to {registry.describe_artifact_path(owner.path(ctx))}")
                 elif revalidate:
-                    try:
-                        valid = owner.is_valid(ctx)
-                    except Exception as error:
-                        report.errors.append((manifest_path, repr(error)))
-                        entry = classify(GCCategory.UNVERIFIABLE, f"cannot validate ({error})")
-                    else:
-                        if not valid:
-                            entry = classify(GCCategory.PROTECTED_STALE, 'input no longer matches its recorded provenance')
+                    entry = validate_input(owner, ctx)
             elif not registry.is_cache_artifact(ctx.artifact_path):
                 entry = classify(GCCategory.UNVERIFIABLE, 'unexpected file next to an external-artifact mirror manifest')
             elif not _same_path(ctx.artifact_path, artifact_path):
@@ -397,14 +444,7 @@ def _classify_manifest(
             elif not owner.path(ctx).exists():
                 entry = classify(GCCategory.ORPHAN_MIRROR, f"input {registry.describe_artifact_path(owner.path(ctx))} is missing")
             elif revalidate:
-                try:
-                    valid = owner.is_valid(ctx)
-                except Exception as error:
-                    report.errors.append((manifest_path, repr(error)))
-                    entry = classify(GCCategory.UNVERIFIABLE, f"cannot validate ({error})")
-                else:
-                    if not valid:
-                        entry = classify(GCCategory.PROTECTED_STALE, 'input no longer matches its recorded provenance')
+                entry = validate_input(owner, ctx)
         elif registry.is_cache_artifact(ctx.artifact_path):
             entry = classify(GCCategory.ORPHAN_MANIFEST, 'artifact is missing')
         elif not _same_path(ctx.manifest_path, manifest_path):
@@ -521,52 +561,3 @@ def _gc_remove_path(registry: DerivativeRegistry, path: Path) -> bool:
     except OSError as error:
         registry.log.warning("Cache GC: could not remove %s (%s)", path, error)
         return False
-
-
-def _collect(report: GCReport) -> None:
-    """Delete the cache files flagged in a garbage-collection report."""
-    registry = report.registry
-    touched_dirs: set[Path] = set()
-    n_removed = 0
-    counts: dict[str, int] = {}
-    for entry in sorted(report.deletable(), key=lambda entry: _GC_DELETE_PHASE.get(entry.category, 1)):
-        if entry.category is GCCategory.STALE_DISAMBIGUATION:
-            continue  # sidecars are pruned against post-deletion reality below
-        paths = [entry.path]
-        if entry.manifest_path is not None and entry.manifest_path != entry.path:
-            paths.append(entry.manifest_path)
-        for path in paths:
-            if _gc_remove_path(registry, path):
-                n_removed += 1
-                touched_dirs.add(path.parent)
-                counts[entry.category.value] = counts.get(entry.category.value, 0) + 1
-                detail = f"; {entry.reason}" if entry.reason else ''
-                registry.log.debug("Cache GC: removed %s (%s%s)", registry.describe_artifact_path(path), entry.category.value, detail)
-    for sidecar_path in report.disambiguation_sidecars:
-        if not sidecar_path.exists():
-            continue
-        base_path = sidecar_path.with_name(sidecar_path.name[:-len(CACHE_DISAMBIGUATION_SUFFIX)])
-        mapping = registry._read_cache_disambiguation(base_path)
-        keep = {digest: suffix for digest, suffix in mapping.items() if _disambiguation_target_exists(base_path, suffix)}
-        if keep == mapping and mapping:
-            continue
-        if keep:
-            registry._write_cache_disambiguation(base_path, keep)
-            registry.log.debug("Cache GC: pruned %i entries from %s", len(mapping) - len(keep), registry.describe_artifact_path(sidecar_path))
-        elif _gc_remove_path(registry, sidecar_path):
-            n_removed += 1
-            touched_dirs.add(sidecar_path.parent)
-            counts[GCCategory.STALE_DISAMBIGUATION.value] = counts.get(GCCategory.STALE_DISAMBIGUATION.value, 0) + 1
-            registry.log.debug("Cache GC: removed %s (%s)", registry.describe_artifact_path(sidecar_path), GCCategory.STALE_DISAMBIGUATION.value)
-    for directory in sorted(touched_dirs, key=lambda path: len(path.parts), reverse=True):
-        while directory != registry.cache_dir and directory.is_relative_to(registry.cache_dir):
-            try:
-                directory.rmdir()  # only succeeds when empty
-            except OSError:
-                break
-            directory = directory.parent
-    if n_removed:
-        summary = ', '.join(f"{name}: {count}" for name, count in sorted(counts.items()))
-        registry.log.info("Cache GC: removed %i files (%s): %s", n_removed, _format_size(report.total_size()), summary)
-    else:
-        registry.log.info("Cache GC: nothing to remove")

@@ -2596,7 +2596,7 @@ def test_trf_ncrf_dependencies(samples_trf_experiment):
     options = e._trf_options('env', 0., 0.1, 'ncrf', None, None, False)
     ctx = e._resolve_derivative('trf', options=options)
     # every edge satisfies key coverage (used to raise RuntimeError for the 'epochs' edge)
-    deps = {dep.label or dep.name: dep for dep, _ in e._derivatives._dependency_handles(ctx)}
+    deps = {dep.label or dep.name: dep for dep, _ in ctx._dependency_handles()}
     assert {'fwd', 'cov'} <= set(deps)
     assert deps['response'].name == 'epochs'
     assert deps['response'].state == {'reference': ''}

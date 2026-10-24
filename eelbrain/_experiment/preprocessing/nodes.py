@@ -30,7 +30,7 @@ import pandas as pd
 from ..._exceptions import DataError
 from ..derivative_cache import (
     ALLOW_PROTECTED_OVERWRITE, ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
-    JobProvenance, Request, Input, MANIFEST_SCHEMA_VERSION, ProtectedArtifactError, UnverifiableArtifactError,
+    JobProvenance, Request, Input, ProtectedArtifactError, UnverifiableArtifactError,
     compare_manifests, file_fingerprint,
 )
 from ..logging import find_difference, format_difference_path
@@ -787,35 +787,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             parts = parts[1:] or [parts[0]]
         return format_difference_path(tuple(parts))
 
-    def _build_manifest(
-            self,
-            ctx: Request,
-            dependencies: dict[str, Any],
-            fingerprint: dict[str, Any] | None = None,
-    ) -> ArtifactManifest:
-        """Manifest for this request with the given fingerprints.
-
-        Validity checks pass the current dependency fingerprints
-        (``ctx.dependency_fingerprints()``) to compare against the stored
-        manifest; :meth:`save_result` passes the :meth:`JobSpec.make_job`
-        snapshot so the result is filed under the inputs it was computed from.
-        The node ``fingerprint`` defaults to the current one, with the same
-        snapshot override for :meth:`save_result`.
-        """
-        resolve_state, resolve_options = ctx._resolve_context()
-        return ArtifactManifest(
-            schema_version=MANIFEST_SCHEMA_VERSION,
-            derivative=self.name,
-            derivative_version=self.version,
-            key=ctx.key(),
-            fingerprint=ctx.registry.canonicalize(self.fingerprint(ctx)) if fingerprint is None else fingerprint,
-            dependencies=dependencies,
-            cache_policy=self.cache_policy.value,
-            software={'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION), 'mne': mne.__version__},
-            resolve_state=resolve_state,
-            resolve_options=resolve_options,
-        )
-
     def _manifests(self, ctx: Request) -> tuple[ArtifactManifest | None, ArtifactManifest]:
         """The manifest stored for this ICA file, and the one the current inputs describe.
 
@@ -825,7 +796,8 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             Resolved request for this ICA.
         """
         previous = ctx._manifest()
-        return previous, self._build_manifest(ctx, ctx.dependency_fingerprints(previous.dependencies if previous else None))
+        dependencies = ctx.dependency_fingerprints(previous.dependencies if previous else None)
+        return previous, ctx._current_manifest(ctx.current_fingerprint(), dependencies)
 
     def is_valid(self, ctx: Request) -> bool:
         if not self.path(ctx).exists():
@@ -951,9 +923,9 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         path.parent.mkdir(parents=True, exist_ok=True)
         result.save(path, overwrite=True)
         # The fit ran on the snapshot inputs, so the manifest records the snapshot
-        # fingerprint; 'exists' describes the artifact itself, just written.
+        # fingerprint and dependencies; 'exists' describes the artifact itself, just written.
         fingerprint = {**provenance.fingerprint, 'exists': True}
-        ctx.registry.write_manifest(ctx.manifest_path, self._build_manifest(ctx, provenance.dependencies, fingerprint))
+        ctx.registry.write_manifest(ctx.manifest_path, ctx._current_manifest(fingerprint, provenance.dependencies))
         # Reload without the validity check of load(): when the inputs changed during
         # the fit, the manifest just written is deliberately stale by current inputs.
         return self._load_value(ctx)

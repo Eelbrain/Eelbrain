@@ -185,18 +185,6 @@ class CachePolicy(str, Enum):
     NEVER = 'never'
 
 
-@dataclass(frozen=True)
-class InputFingerprint:
-    """Portable description of one non-derivative input."""
-
-    path: str | None
-    exists: bool
-    size: int | None = None
-    mtime: float | None = None
-    digest: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
 @dataclass
 class ArtifactManifest:
     """Sidecar metadata used to validate one cached artifact."""
@@ -559,10 +547,6 @@ class DependencyNode(Generic[T]):
     cache_log_level: int | None = logging.DEBUG
     dependency_fingerprint_from_artifact: bool = False
 
-    def cache_log_path(self, ctx: Request, path: Path) -> str:
-        """Return the displayed artifact path for cache log messages."""
-        return ctx.registry.describe_artifact_path(path)
-
     def log_cache_hit(self, ctx: Request, path: Path) -> None:
         """Emit the standard cache-hit message for this node."""
         self._log_cache_event(ctx, path, "Load cached", 'cached')
@@ -599,7 +583,7 @@ class DependencyNode(Generic[T]):
         if reason is not None:
             cache_event.update(reason.as_dict())
         ctx.registry.log.log(
-            self.cache_log_level, "%s %s%s: %s", action, self.name, detail, self.cache_log_path(ctx, path),
+            self.cache_log_level, "%s %s%s: %s", action, self.name, detail, ctx.registry.describe_artifact_path(path),
             extra={'cache_event': cache_event},
         )
 
@@ -1480,25 +1464,16 @@ class Request(Generic[T]):
         # The readable set is this request's identity fields — from
         # override_key_fields() when defined, else the static key_fields — so a
         # node that keys dynamically need not also declare a redundant static
-        # key_fields. A node that declares neither (e.g. a result node that
-        # overrides key() and manages its own identity, or an Input with
-        # key_fields=()) is not read-restricted.
-        self._restricted_state: _RestrictedStateView | None = None
-        if isinstance(node, (Derivative, Input)):
-            read_fields = node._get_key_fields(self)
-            allowed = frozenset(read_fields) | frozenset(node.fixed_state)
-            if allowed:
-                self._restricted_state = _RestrictedStateView(state, allowed)
+        # key_fields. Every node must declare one or the other (an Input with
+        # no identity fields declares key_fields=()); a node whose identity
+        # fields and fixed_state are both empty is not read-restricted.
+        allowed = frozenset(node._get_key_fields(self)) | frozenset(node.fixed_state)
+        self._restricted_state = _RestrictedStateView(state, allowed) if allowed else None
         with self._state_check_context():
             node.validate_options(self)
         if isinstance(node, Derivative) and node.cache_policy != CachePolicy.NEVER:
-            # Canonicalize here so key() implementations need not: a key that
-            # only became canonical through the manifest JSON round-trip would
-            # never equal its stored form and silently recompute on every run.
-            self._key = registry.canonicalize(node.key(self))
-            self._base_artifact_path = node.path(self)
-            self._artifact_path = self.registry.resolve_cache_artifact_path(self._base_artifact_path, self._key)
-            self._manifest_path = self.registry.manifest_path(self._artifact_path, self.node.name)
+            # Resolve up front so that an invalid key fails, and inert options warn, when the request is resolved
+            self._resolve_artifact()
             self._warn_inert_key_options()
 
     def _warn_inert_key_options(self) -> None:
@@ -1610,7 +1585,14 @@ class Request(Generic[T]):
         cheap quick fingerprint still matches (see :meth:`describe_dependency`),
         so cache-validity checks skip the expensive recomputation.
         """
-        return self.registry.dependency_fingerprints(self, stored)
+        out = {}
+        with self._build_deps_context(), self._state_check_context():
+            for dep, dep_ctx in self._dependency_handles():
+                label = dep.label or dep.name
+                fingerprint = self.node.dependency_fingerprint_override(self, dep, dep_ctx)
+                stored_entry = stored.get(label) if stored else None
+                out[label] = dep_ctx.describe_dependency(dep.view, fingerprint, stored_entry)
+        return out
 
     def current_fingerprint(self) -> dict[str, Any]:
         """Return the canonical current fingerprint for this node request."""
@@ -1688,21 +1670,30 @@ class Request(Generic[T]):
             kind = 'uncached derivative' if isinstance(self.node, Derivative) else 'untracked input'
             raise TypeError(f"Request for {kind} {self.node.name!r} has no {attribute}")
 
+    def _resolve_artifact(self) -> None:
+        """Compute the artifact path (at request time for a cached derivative, on demand for an EXTERNAL input)."""
+        self._require_artifact('artifact path')
+        base_artifact_path = self.node.path(self)
+        if isinstance(self.node, Derivative):
+            # Several keys can share one cache path (see DerivativeRegistry.resolve_cache_artifact_path); an EXTERNAL input's artifact is not managed by the cache and is simply its own path
+            artifact_path = self.registry.resolve_cache_artifact_path(base_artifact_path, self.key())
+        else:
+            artifact_path = base_artifact_path
+        self._base_artifact_path = base_artifact_path
+        self._artifact_path = artifact_path
+
     @property
     def base_artifact_path(self) -> Path:
         """Base artifact path before any cache-path disambiguation."""
         if self._base_artifact_path is None:
-            self._require_artifact('artifact path')
-            self._base_artifact_path = self.node.path(self)
+            self._resolve_artifact()
         return self._base_artifact_path
 
     @property
     def artifact_path(self) -> Path:
         """Resolved artifact path for this request."""
         if self._artifact_path is None:
-            # Cache-path disambiguation only applies inside cache-dir, so an
-            # EXTERNAL artifact is simply its own path.
-            self._artifact_path = self.base_artifact_path
+            self._resolve_artifact()
         return self._artifact_path
 
     @property
@@ -1716,6 +1707,9 @@ class Request(Generic[T]):
         """Return the normalized cache key for this request."""
         if self._key is None:
             self._require_artifact('cache key')
+            # Canonicalize here so key() implementations need not: a key that
+            # only became canonical through the manifest JSON round-trip would
+            # never equal its stored form and silently recompute on every run.
             self._key = self.registry.canonicalize(self.node.key(self))
         return self._key
 
@@ -1745,32 +1739,49 @@ class Request(Generic[T]):
     def _manifest(self) -> ArtifactManifest | None:
         return self.registry.read_manifest(self.manifest_path)
 
+    def _current_manifest(
+            self,
+            fingerprint: dict[str, Any],
+            dependencies: dict[str, Any],
+            software: dict[str, Any] | None = None,
+            artifact_metadata: dict[str, Any] | None = None,
+    ) -> ArtifactManifest:
+        """Manifest describing this request's artifact, given its fingerprint and dependency entries.
+
+        ``software`` defaults to the versions running now; a validity check
+        passes the stored manifest's entry instead, so a refreshed manifest
+        keeps recording the software that built the artifact.
+        """
+        resolve_state, resolve_options = self._resolve_context()
+        if software is None:
+            software = {'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION), 'mne': mne.__version__}
+        return ArtifactManifest(
+            schema_version=MANIFEST_SCHEMA_VERSION,
+            derivative=self.node.name,
+            derivative_version=self.node.version,
+            key=self.key(),
+            fingerprint=fingerprint,
+            dependencies=dependencies,
+            cache_policy=self.node.cache_policy.value,
+            software=software,
+            artifact_metadata=artifact_metadata or {},
+            resolve_state=resolve_state,
+            resolve_options=resolve_options,
+        )
+
     def _check_valid(
             self,
             manifest: ArtifactManifest,
     ) -> CacheInvalidation | None:
         """Return why ``manifest`` is stale for this request, or ``None`` if valid."""
-        derivative = self._require_derivative()
-        resolve_state, resolve_options = self._resolve_context()
-        current = ArtifactManifest(
-            schema_version=MANIFEST_SCHEMA_VERSION,
-            derivative=derivative.name,
-            derivative_version=derivative.version,
-            key=self.key(),
-            fingerprint=self.current_fingerprint(),
-            dependencies=self.dependency_fingerprints(stored=manifest.dependencies),
-            cache_policy=derivative.cache_policy.value,
-            software={},
-            resolve_state=resolve_state,
-            resolve_options=resolve_options,
-        )
+        self._require_derivative()
+        # The stored software and artifact metadata are kept: they describe the artifact as built, which this check does not change
+        current = self._current_manifest(self.current_fingerprint(), self.dependency_fingerprints(stored=manifest.dependencies), manifest.software, manifest.artifact_metadata)
         reason = compare_manifests(manifest, current)
         if reason is None and not self.registry._readonly and (current.dependencies != manifest.dependencies or manifest.resolve_state is None):
             # A quick fingerprint drifted while the full fingerprint still
             # matched (e.g. a touched file). Persist the refreshed dependency
             # entries so future checks take the quick path again.
-            current.software = manifest.software
-            current.artifact_metadata = manifest.artifact_metadata
             self.registry.write_manifest(self.manifest_path, current)
         return reason
 
@@ -1799,6 +1810,17 @@ class Request(Generic[T]):
             self._build_deps_depth -= 1
             if self._build_deps_depth == 0:
                 self._build_deps = None
+
+    def _resolve_dependency(self, dep: Dependency) -> Request[Any]:
+        """Resolve one declared edge relative to this request's state, checking key-field coverage."""
+        child = self.registry.resolve(dep.name, state={**self._state, **(dep.state or {})}, options=dep.options)
+        self.registry._check_edge_key_coverage(self, dep, child)
+        return child
+
+    def _dependency_handles(self) -> list[tuple[Dependency, Request[Any]]]:
+        """Resolve every declared edge to ``(dependency, child request)`` pairs."""
+        with self._build_deps_context():
+            return [(dep, self._resolve_dependency(dep)) for dep in self._build_deps.values()]
 
     def load_artifact(self) -> T:
         """Load or build the underlying derivative artifact without view shaping."""
@@ -1868,23 +1890,7 @@ class Request(Generic[T]):
         artifact_metadata = self.registry.canonicalize(derivative.artifact_metadata(self, artifact))
         self.artifact_path.parent.mkdir(parents=True, exist_ok=True)
         derivative.save(self, self.artifact_path, artifact)
-        resolve_state, resolve_options = self._resolve_context()
-        manifest = ArtifactManifest(
-            schema_version=MANIFEST_SCHEMA_VERSION,
-            derivative=derivative.name,
-            derivative_version=derivative.version,
-            key=self.key(),
-            fingerprint=fingerprint,
-            dependencies=dependencies,
-            cache_policy=derivative.cache_policy.value,
-            software={
-                'eelbrain_cache_schema': str(MANIFEST_SCHEMA_VERSION),
-                'mne': mne.__version__,
-            },
-            artifact_metadata=artifact_metadata,
-            resolve_state=resolve_state,
-            resolve_options=resolve_options,
-        )
+        manifest = self._current_manifest(fingerprint, dependencies, artifact_metadata=artifact_metadata)
         self.registry.write_manifest(self.manifest_path, manifest)
         if provenance is None:
             # Only an in-place build is guaranteed to be up-to-date; a job result may already be stale
@@ -1966,13 +1972,7 @@ class Request(Generic[T]):
             if view is not None or state is not None or options is not None or controls:
                 raise TypeError(f"{self.node.name!r} passed overrides to ctx.{caller}({name!r}); declare view, state, and options on the Dependency instead, and do not override controls here")
             dep = self._build_deps[name]
-            child = self.registry.resolve(
-                name=dep.name,
-                state={**self._state, **dep.state} if dep.state else self._state,
-                options=dep.options,
-            )
-            self.registry._check_edge_key_coverage(self, dep, child)
-            return child, dep.view
+            return self._resolve_dependency(dep), dep.view
         child = self.registry.resolve(
             name,
             state={**self._state, **(state or {})},
@@ -2350,23 +2350,6 @@ class DerivativeRegistry:
         if missing:
             raise RuntimeError(f"{parent.name!r} depends on {child.name!r}, whose output depends on state field(s) {missing}, but {parent.name!r} neither keys or pins these on this edge. Fix by adding {missing} to {parent.name!r}.key_fields, or pin it via Dependency({child.name!r}, state=...).")
 
-    def _dependency_handles(
-            self,
-            ctx: Request,
-    ) -> list[tuple[Dependency, Request[Any]]]:
-
-        out = []
-        with ctx._build_deps_context():
-            for dep in ctx._build_deps.values():
-                request = self.resolve(
-                    dep.name,
-                    state={**ctx._state, **(dep.state or {})},
-                    options=dep.options,
-                )
-                self._check_edge_key_coverage(ctx, dep, request)
-                out.append((dep, request))
-        return out
-
     def _tree_identity(self, handle: Request[Any]) -> str:
         """Stable id for the artifact/value a request resolves to.
 
@@ -2447,7 +2430,7 @@ class DerivativeRegistry:
             if tree_node.seen:
                 return tree_node
             seen.add(identity)
-            for child_dep, child_handle in self._dependency_handles(handle):
+            for child_dep, child_handle in handle._dependency_handles():
                 tree_node.children.append(make_node(child_handle, child_dep))
             return tree_node
 
@@ -2466,20 +2449,6 @@ class DerivativeRegistry:
         relative = artifact_path.relative_to(self.deriv_dir)
         relative = relative.relative_to(relative.parts[0])
         return self.cache_dir / node_name / relative.parent / f"{relative.name}{MANIFEST_SUFFIX}"
-
-    def dependency_fingerprints(
-            self,
-            ctx: Request,  # Bound state/options for the current load.
-            stored: dict[str, Any] | None = None,  # Previous manifest fragment, reused on quick-match.
-    ) -> dict[str, Any]:
-        out = {}
-        with ctx._build_deps_context(), ctx._state_check_context():
-            for dep, dep_ctx in self._dependency_handles(ctx):
-                key = dep.label or dep.name
-                fingerprint = ctx.node.dependency_fingerprint_override(ctx, dep, dep_ctx)
-                stored_entry = stored.get(key) if stored else None
-                out[key] = dep_ctx.describe_dependency(dep.view, fingerprint, stored_entry)
-        return out
 
     def read_manifest(self, path: str | Path) -> ArtifactManifest | None:
         """Read a manifest, returning ``None`` when it is missing or unreadable.
@@ -2627,15 +2596,14 @@ def file_fingerprint(
         relative = str(path.relative_to(root))
     except ValueError:
         relative = str(path)
-    if not path.exists():
-        out = InputFingerprint(relative, False, metadata=metadata or {})
-    else:
+    out = {'path': relative, 'exists': path.exists(), 'size': None, 'mtime': None, 'digest': None, 'metadata': metadata or {}}
+    if out['exists']:
         stat = path.stat()
-        sha1 = None
+        out['size'] = stat.st_size
+        out['mtime'] = stat.st_mtime
         if digest and path.is_file():
-            sha1 = hashlib.sha1(path.read_bytes()).hexdigest()
-        out = InputFingerprint(relative, True, stat.st_size, stat.st_mtime, sha1, metadata or {})
-    return asdict(out)
+            out['digest'] = hashlib.sha1(path.read_bytes()).hexdigest()
+    return out
 
 
 def canonical_state_subset(
