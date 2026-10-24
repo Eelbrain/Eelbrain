@@ -301,7 +301,7 @@ class Pipeline(StateModel):
         matching_paths = tuple(
             path
             for path in find_matching_paths(root, subjects=self._subjects, sessions=self._sessions, tasks=self._tasks, datatypes=datatype, suffixes=datatype, extensions=extensions, ignore_nosub=True)
-            if not path.acquisition or path.acquisition in acquisitions
+            if (not path.acquisition or path.acquisition in acquisitions) and (not path.run or path.run in self._runs)
         )
         self._acquisitions = tuple(sorted({path.acquisition or '' for path in matching_paths}))
 
@@ -366,7 +366,7 @@ class Pipeline(StateModel):
         self._variables._check_group_vars(self._groups, 'Pipeline.variables')
 
         # epochs
-        self._epochs = ConfigurationDict('epoch', assemble_epochs(self.epochs, self._tasks))
+        self._epochs = ConfigurationDict('epoch', assemble_epochs(self.epochs, self._tasks, self._runs))
 
         # epoch rejection; 'manual' is always available, '' selects no rejection
         epoch_rejection: dict[str, EpochRejection | None] = {'': None}

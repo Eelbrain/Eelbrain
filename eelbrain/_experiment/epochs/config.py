@@ -36,12 +36,25 @@ def _shared_sub_epoch_parameters(name: str, sub_epochs: Sequence[EpochBase], par
     return out
 
 
-def assemble_epochs(epoch_def: Mapping[str, EpochBase], tasks: Sequence[str]) -> dict[str, EpochBase]:
+def assemble_epochs(
+        epoch_def: Mapping[str, EpochBase],
+        tasks: Sequence[str],
+        runs: Sequence[str] = (),
+) -> dict[str, EpochBase]:
     """Resolve epoch definitions and cache epoch-family dependent parameters.
 
     This binds each epoch object's ``name`` and lets the epoch classes cache
     deterministic graph-dependent parameters such as inherited epoch
     parameters, ``task``/``tasks``, and ``rej_file_epochs``.
+
+    Parameters
+    ----------
+    epoch_def
+        Epoch definitions by name.
+    tasks
+        Tasks available in the dataset.
+    runs
+        Runs available in the dataset (empty if the dataset has no run entity).
     """
     epochs = {}
     unresolved_epochs = {}
@@ -50,7 +63,7 @@ def assemble_epochs(epoch_def: Mapping[str, EpochBase], tasks: Sequence[str]) ->
             raise TypeError(f"Epoch {name}: {epoch!r}; need an epoch definition")
         epoch._store_name(name)
         if isinstance(epoch, (PrimaryEpoch, ContinuousEpoch)):
-            epoch._store_dependent_parameters(epochs, tasks)
+            epoch._store_dependent_parameters(epochs, tasks, runs)
             epochs[name] = epoch
         elif isinstance(epoch, (SecondaryEpoch, SuperEpoch, EpochCollection)):
             unresolved_epochs[name] = epoch
@@ -72,7 +85,7 @@ def assemble_epochs(epoch_def: Mapping[str, EpochBase], tasks: Sequence[str]) ->
             if not ready:
                 continue
             epoch = unresolved_epochs.pop(key)
-            epoch._store_dependent_parameters(epochs, tasks)
+            epoch._store_dependent_parameters(epochs, tasks, runs)
             epochs[key] = epoch
         if len(unresolved_epochs) == n:
             raise ConfigurationError(f"Can't resolve epoch dependencies for {enumeration(unresolved_epochs)}")
@@ -173,7 +186,12 @@ class EpochBase(Configuration):
         """
         raise NotImplementedError(f"{self.__class__.__name__}._extraction_parameters()")
 
-    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str]) -> None:
+    def _store_dependent_parameters(
+            self,
+            epochs: Mapping[str, EpochBase],
+            tasks: Sequence[str],
+            runs: Sequence[str],
+    ) -> None:
         """Bind epoch-graph parameters after all epoch names are known."""
         if self._rej_file_epochs_from_name:
             self.rej_file_epochs = (self.name,)
@@ -185,6 +203,8 @@ class EpochBase(Configuration):
                 self.task = tasks[0]
             else:
                 raise ConfigurationError(f"Epoch {self.name!r} has no task specified, but multiple tasks exist: {enumeration(tasks)}")
+        if self.run is not None and self.run not in runs:
+            raise ConfigurationError(f"Epoch {self.name!r}: {self.run=} is not available (ignored or not in the dataset); available runs: {enumeration(runs) if runs else 'none'}")
 
     @property
     def tasks(self) -> tuple[str, ...]:
@@ -482,7 +502,12 @@ class SecondaryEpoch(Epoch):
         self.sel = typed_arg(sel, str, allow_none=True)
         self._kwargs = kwargs
 
-    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str]) -> None:
+    def _store_dependent_parameters(
+            self,
+            epochs: Mapping[str, EpochBase],
+            tasks: Sequence[str],
+            runs: Sequence[str],
+    ) -> None:
         base = epochs[self.sel_epoch]
         if not isinstance(base, (PrimaryEpoch, SecondaryEpoch)):
             raise ConfigurationError(f"Epoch {self.name}, base={self.sel_epoch!r}: is {base.__class__.__name__}, needs to be PrimaryEpoch or SecondaryEpoch")
@@ -521,7 +546,12 @@ class SuperEpoch(Epoch):
     def _repr_args(self):
         return [repr(self.sub_epochs), *[f'{k}={v!r}' for k, v in self._kwargs.items()]]
 
-    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str]) -> None:
+    def _store_dependent_parameters(
+            self,
+            epochs: Mapping[str, EpochBase],
+            tasks: Sequence[str],
+            runs: Sequence[str],
+    ) -> None:
         sub_epochs = [epochs[sub_epoch] for sub_epoch in self.sub_epochs]
         for sub_epoch in sub_epochs:
             if isinstance(sub_epoch, SuperEpoch):
@@ -572,7 +602,12 @@ class EpochCollection(EpochBase):
     def __init__(self, collect: Sequence[str]):
         self.collect = sequence_arg('collect', collect)
 
-    def _store_dependent_parameters(self, epochs: Mapping[str, EpochBase], tasks: Sequence[str]) -> None:
+    def _store_dependent_parameters(
+            self,
+            epochs: Mapping[str, EpochBase],
+            tasks: Sequence[str],
+            runs: Sequence[str],
+    ) -> None:
         sub_epochs = [epochs[sub_epoch] for sub_epoch in self.collect]
         for param, value in _shared_sub_epoch_parameters(self.name, sub_epochs, SuperEpoch.INHERITED_PARAMS).items():
             setattr(self, param, value)

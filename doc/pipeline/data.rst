@@ -90,6 +90,7 @@ Keys correspond to the ``ignore_...`` parameters of `mne_bids.get_entity_vals <h
     ignore_entities = {
         'ignore_subjects': ['S666', 'S999'],
         'ignore_sessions': ['02'],
+        'ignore_runs': ['01'],
     }
 
 
