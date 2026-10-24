@@ -974,17 +974,23 @@ class RawMaxwell(CachedRawPipe):
         except RuntimeError as error:
             if 'badly conditioned' not in str(error):
                 raise
+            generic_hint = "This usually indicates an inaccurate head digitization or device-to-head transform, which misplace the automatically fitted origin, or too many bad channels. Check the recording's digitization and head position; alternatively, set the origin explicitly, lower int_order, or use RawMaxwell(bad_condition='warning') to proceed anyway."
             # A sensor with a wrong location close to the origin dominates the internal basis; MNE does not check sensor positions, so list the MEG sensors inside the head sphere
-            radius, origin = mne.bem.fit_sphere_to_headshape(raw.info, units='m', verbose=False)[:2]
-            if not isinstance(shared_kwargs.get('origin', 'auto'), str):
-                origin = numpy.asarray(shared_kwargs['origin'], float)
-            picks = mne.pick_types(raw.info, meg=True, ref_meg=False, exclude='bads')
-            sensor_locs = mne.transforms.apply_trans(raw.info['dev_head_t'], numpy.array([raw.info['chs'][i]['loc'][:3] for i in picks]))
-            misplaced = [raw.ch_names[i] for i, distance in zip(picks, numpy.linalg.norm(sensor_locs - origin, axis=1)) if distance < radius]
-            if misplaced:
-                hint = f"{n_of(len(misplaced), 'MEG sensor')} located inside the head sphere (radius {radius * 1000:.0f} mm), indicating wrong channel positions: {', '.join(misplaced)}. Mark these channels as bad or fix their positions."
+            try:
+                radius, origin = mne.bem.fit_sphere_to_headshape(raw.info, units='m', verbose=False)[:2]
+            except (RuntimeError, ValueError) as fit_error:
+                # No or too few digitization points; MNE only needs them itself for origin='auto', so the filter can get this far without them
+                hint = f"{generic_hint} MEG sensor positions could not be checked against the head sphere: {fit_error}"
             else:
-                hint = "This usually indicates an inaccurate head digitization or device-to-head transform, which misplace the automatically fitted origin, or too many bad channels. Check the recording's digitization and head position; alternatively, set the origin explicitly, lower int_order, or use RawMaxwell(bad_condition='warning') to proceed anyway."
+                if not isinstance(shared_kwargs.get('origin', 'auto'), str):
+                    origin = numpy.asarray(shared_kwargs['origin'], float)
+                picks = mne.pick_types(raw.info, meg=True, ref_meg=False, exclude='bads')
+                sensor_locs = mne.transforms.apply_trans(raw.info['dev_head_t'], numpy.array([raw.info['chs'][i]['loc'][:3] for i in picks]))
+                misplaced = [raw.ch_names[i] for i, distance in zip(picks, numpy.linalg.norm(sensor_locs - origin, axis=1)) if distance < radius]
+                if misplaced:
+                    hint = f"{n_of(len(misplaced), 'MEG sensor')} located inside the head sphere (radius {radius * 1000:.0f} mm), indicating wrong channel positions: {', '.join(misplaced)}. Mark these channels as bad or fix their positions."
+                else:
+                    hint = generic_hint
             raise DataError(f"{fpath}: the SSS basis is ill-conditioned ({'; '.join([str(error), *mne_log.messages])}). {hint}") from error
         finally:
             logging.getLogger('mne').removeFilter(mne_log)
