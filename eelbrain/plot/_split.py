@@ -21,7 +21,8 @@ class DataSplit(EelFigure, LegendMixin):
             splits: Splits,
             legend: LegendArg = 'upper right',
             colors: dict = None,
-            xlabel: str = 'Segment',
+            xlabel: str = None,
+            tstep: float = None,
             **kwargs,
     ):
         """Plot data splits
@@ -36,6 +37,12 @@ class DataSplit(EelFigure, LegendMixin):
         colors
             Customize colors (uses the following keys: ``'train', 'validate',
             'test'``).
+        xlabel
+            X-axis label (default ``'Time [s]'`` with ``tstep``, otherwise
+            ``'Segment'``).
+        tstep
+            Time step between samples; if specified, the x-axis shows time in
+            seconds instead of sample indices.
         ...
             Also accepts :ref:`general-layout-parameters`.
 
@@ -52,7 +59,16 @@ class DataSplit(EelFigure, LegendMixin):
         labels = {'train': 'Training', 'validate': 'Validation', 'test': 'Testing'}
         if colors is None:
             colors = colors_for_oneway(roles, unambiguous=[6, 3, 5])
+        if tstep is None:
+            scale = 1
+            if xlabel is None:
+                xlabel = 'Segment'
+        else:
+            scale = tstep
+            if xlabel is None:
+                xlabel = 'Time [s]'
 
+        self.splits = splits
         rows = splits.leaves  # one row per boosting run: (top-level split, leaf split)
         is_nested = any(top_split is not split for top_split, split in rows)
 
@@ -62,7 +78,7 @@ class DataSplit(EelFigure, LegendMixin):
         ax = self.figure.axes[0]
 
         for x in splits.segments[:-1, 1]:
-            ax.axvline(x, color='k')
+            ax.axvline(x * scale, color='k')
         handles = {}
         for y, (top_split, split) in enumerate(rows):
             sets = [(split.train, 'train')]
@@ -71,7 +87,7 @@ class DataSplit(EelFigure, LegendMixin):
                     sets.append((split_i.reserved, 'test' if split_i.is_test else 'validate'))
             for segments, role in sets:
                 for x0, x1 in segments:
-                    rect = Rectangle((x0, y - 0.5), x1 - x0, 1, color=colors[role])
+                    rect = Rectangle((x0 * scale, y - 0.5), (x1 - x0) * scale, 1, color=colors[role])
                     ax.add_artist(rect)
                     handles[role] = rect
             # separate splits (black line between groups of nested splits)
@@ -89,7 +105,7 @@ class DataSplit(EelFigure, LegendMixin):
             ax.yaxis.set_major_locator(MaxNLocator(integer=True))
         if xlabel:
             ax.set_xlabel(xlabel)
-        ax.set_xlim(splits.segments[0, 0], splits.segments[-1, 1])
+        ax.set_xlim(splits.segments[0, 0] * scale, splits.segments[-1, 1] * scale)
         LegendMixin.__init__(self, legend, handles, labels)
         self._show()
 
@@ -98,13 +114,13 @@ class DataSplit(EelFigure, LegendMixin):
 
 
 def preview_partitions(
-    cases: int | Sequence[int] | NDVarArg = 0,
+    cases: int | Sequence[float] | NDVarArg = 0,
     partitions: int = None,
     model: CategorialArg = None,
     validate: int = 1,
     test: int = 1,
     split: Literal['cases', 'time', 'within_cases'] = None,
-    min_section: int = None,
+    min_section: float = None,
     data: Dataset = None,
     **kwargs,
 ) -> DataSplit:
@@ -115,14 +131,15 @@ def preview_partitions(
     cases
         Description of the data that will be used. Can be specified as
         :class:`NDVar` data, as integer describing the number of trials
-        (the default assumes continuous data), or as a sequence of integers
-        describing the length (number of samples) of each trial, which allows
+        (the default assumes continuous data), or as a sequence of numbers
+        describing the duration (in seconds) of each trial, which allows
         trials of different lengths.
     min_section
-        With ``split='time'``, minimum length (in samples) of the pieces left
-        when a trial is cut (see :func:`split_data`). For :class:`NDVar` data,
-        the default is the :func:`~eelbrain.boosting` default of 15 s; for
-        trials specified as numbers of samples, the default is 0.
+        With ``split='time'``, minimum duration (in seconds) of the pieces left
+        when a trial is cut (see :func:`split_data`). The default is the
+        :func:`~eelbrain.boosting` default of 15 s. Only applies when the
+        duration of trials is known (:class:`NDVar` data or trial durations);
+        trials specified by their number are never cut.
     ...
         For a description of the splitting parameters see :func:`~eelbrain.boosting`.
         For plotting parameters see :class:`DataSplit`.
@@ -131,6 +148,7 @@ def preview_partitions(
     --------
     :ref:`exa-data_split` example
     """
+    tstep = None  # trials specified by number: no time information
     if isinstance(cases, int):
         if cases == 0:
             if partitions is None:
@@ -150,14 +168,18 @@ def preview_partitions(
         y = asndvar(cases, data=data)
         n_cases = len(y) if y.has_case else 1
         ns = [len(y.get_dim('time'))] * n_cases
-        xlabel = 'Sample'
-        if min_section is None:
-            min_section = int(round(TIME_SPLIT_MIN_SECTION / y.time.tstep))
+        tstep = y.time.tstep
     else:
-        ns = [int(n) for n in cases]
-        xlabel = 'Sample'
+        tstep = 0.01  # resolution for trials specified by duration
+        ns = [int(round(duration / tstep)) for duration in cases]
+    if tstep is None:
+        min_section = 0
+        kwargs.setdefault('xlabel', xlabel)
+    else:
+        if min_section is None:
+            min_section = TIME_SPLIT_MIN_SECTION
+        min_section = int(round(min_section / tstep))
     index = numpy.cumsum([0] + ns)
     segments = numpy.hstack([index[:-1, None], index[1:, None]])
-    splits = split_data(segments, partitions, model, data, validate, test, split, min_section or 0)
-    kwargs.setdefault('xlabel', xlabel)
-    return DataSplit(splits, **kwargs)
+    splits = split_data(segments, partitions, model, data, validate, test, split, min_section)
+    return DataSplit(splits, tstep=tstep, **kwargs)
