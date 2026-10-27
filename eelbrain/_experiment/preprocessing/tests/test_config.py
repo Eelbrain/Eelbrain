@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -76,6 +77,8 @@ def test_maxwell_head_pos_semantic_dict():
     assert RawMaxwell('raw', st_duration=10., h_freq=40)._as_dict() == maxwell._as_dict()
     assert RawMaxwell('raw', st_duration=10., h_freq=30.)._as_dict() == {**maxwell._as_dict(), 'h_freq': 30.}
     assert RawMaxwell('raw', st_duration=10., h_freq=None)._as_dict() == {**maxwell._as_dict(), 'h_freq': None}
+    assert RawMaxwell('raw', st_duration=10., flat_duration=0.03)._as_dict() == maxwell._as_dict()
+    assert RawMaxwell('raw', st_duration=10., flat_duration=None)._as_dict() == {**maxwell._as_dict(), 'flat_duration': None}
     # without the low-pass filter, cHPI signals would enter the bad channel detection
     with pytest.raises(ConfigurationError, match='h_freq=None'):
         RawMaxwell('raw', st_duration=10., h_freq=None, head_pos=True)
@@ -187,6 +190,84 @@ def test_maxwell_movement_annotations():
         annotate_movement.reset_mock()
         pipe._make(raw, path=path, head_pos=head_pos[:1])
         annotate_movement.assert_not_called()
+
+
+@requires_mne_testing_data
+def test_maxwell_flat_segments():
+    "Segments in which MEG channels are flat are annotated as BAD_flat and skipped by bad channel detection and Maxwell filtering"
+    sss_dir = mne.datasets.testing.data_path(download=False) / 'SSS'
+    raw = mne.io.read_raw_fif(sss_dir / 'test_move_anon_raw.fif', allow_maxshield='yes', verbose=False).crop(0, 2).load_data()
+    path = SimpleNamespace(fpath='test_move_anon_raw.fif', find_empty_room=lambda: SimpleNamespace(fpath='test_move_anon_raw.fif'))
+    sfreq = raw.info['sfreq']
+    # one channel saturates for 100 ms, another is dead
+    clipped, dead = mne.pick_types(raw.info, meg=True)[[0, 1]]
+    raw._data[clipped, int(0.5 * sfreq):int(0.6 * sfreq)] = raw._data[clipped, int(0.5 * sfreq)]
+    raw._data[dead] = 0.
+    heavy = {'find_bad_channels_maxwell': MagicMock(return_value=([], [])), 'maxwell_filter': MagicMock(side_effect=lambda raw, **kwargs: raw)}
+    with patch.multiple(mne.preprocessing, **heavy):
+        raw_sss = RawMaxwell('raw')._make(raw.copy(), path=path)
+        detector_raw = heavy['find_bad_channels_maxwell'].call_args.args[0]
+        assert detector_raw.info['bads'] == [raw.ch_names[dead]]
+        flat = detector_raw.annotations[detector_raw.annotations.description == 'BAD_flat']
+        assert len(flat) == 1
+        assert flat.onset[0] - raw.first_time == pytest.approx(0.5, abs=2 / sfreq)
+        assert flat.duration[0] == pytest.approx(0.1, abs=2 / sfreq)
+        assert heavy['find_bad_channels_maxwell'].call_args.kwargs['skip_by_annotation'] == ('edge', 'bad_acq_skip', 'bad_flat')
+        assert heavy['maxwell_filter'].call_args.kwargs['skip_by_annotation'] == ('edge', 'bad_acq_skip', 'bad_flat')
+        # the annotations are stored with the filtered data
+        assert 'BAD_flat' in raw_sss.annotations.description
+
+        # a user-specified skip_by_annotation is extended
+        RawMaxwell('raw', skip_by_annotation='bad_mov')._make(raw.copy(), path=path)
+        assert heavy['maxwell_filter'].call_args.kwargs['skip_by_annotation'] == ('bad_mov', 'bad_flat')
+
+        # flat_duration=None disables the annotation; find_bad_channels_maxwell then finds the dead channel
+        raw_sss = RawMaxwell('raw', flat_duration=None)._make(raw.copy(), path=path)
+        detector_raw = heavy['find_bad_channels_maxwell'].call_args.args[0]
+        assert detector_raw.info['bads'] == []
+        assert 'BAD_flat' not in raw_sss.annotations.description
+        assert 'skip_by_annotation' not in heavy['maxwell_filter'].call_args.kwargs
+
+        # a stretch shorter than flat_duration is not annotated
+        raw_sss = RawMaxwell('raw', flat_duration=0.2)._make(raw.copy(), path=path)
+        assert 'BAD_flat' not in raw_sss.annotations.description
+
+
+@requires_mne_testing_data
+def test_maxwell_ill_conditioned_context():
+    "The error for an ill-conditioned SSS basis reports where it occurred"
+    sss_dir = mne.datasets.testing.data_path(download=False) / 'SSS'
+    raw = mne.io.read_raw_fif(sss_dir / 'test_move_anon_raw.fif', allow_maxshield='yes', verbose=False).crop(0, 2).load_data()
+    path = SimpleNamespace(fpath='test_move_anon_raw.fif', find_empty_room=lambda: SimpleNamespace(fpath='test_move_anon_raw.fif'))
+    error = RuntimeError("Matrix is badly conditioned: 5494 >= 1000")
+    mne_logger = logging.getLogger('mne')
+
+    def detector_log(*messages):
+        # MNE's messages during bad channel detection; the channels excluded per iteration are logged at DEBUG level
+        def detector(raw, **kwargs):
+            mne_logger.info("    Bad MEG channels being reconstructed: ['MEG0111']")
+            for message in messages:
+                mne_logger.log(logging.DEBUG if message.startswith('Bad:') else logging.INFO, '            ' + message)
+            raise error
+        return detector
+
+    heavy = {'find_bad_channels_maxwell': MagicMock(return_value=([], [])), 'maxwell_filter': MagicMock(side_effect=error)}
+    with patch.multiple(mne.preprocessing, **heavy), mne.utils.use_log_level('debug'):
+        # the filter proper
+        with pytest.raises(DataError, match="in the Maxwell filter, after bad channel detection.*digitization") as exc_info:
+            RawMaxwell('raw', flat_duration=None)._make(raw.copy(), path=path)
+        assert 'Bad MEG channels' not in str(exc_info.value)
+
+        # the first interval, with the initial sensor geometry
+        heavy['find_bad_channels_maxwell'].side_effect = detector_log("Interval   1:    0.000 -    4.999")
+        with pytest.raises(DataError, match=r"\(Matrix is badly conditioned: 5494 >= 1000; Bad MEG channels being reconstructed: \['MEG0111'\]\)\. The error occurred during bad channel detection in Interval 1: 0.000 - 4.999, with the initial sensor geometry\. This usually indicates an inaccurate head digitization"):
+            RawMaxwell('raw', flat_duration=None)._make(raw.copy(), path=path)
+
+        # a later interval, after excluding channels from it
+        heavy['find_bad_channels_maxwell'].side_effect = detector_log("Interval   1:    0.000 -    4.999", "Flat ( 1): MEG0112", "Bad:       MEG0113 12.3", "Interval   2:    5.000 -    9.999", "Bad:       MEG0122 9.0", "Bad:       MEG0123 7.1")
+        with pytest.raises(DataError, match=r"in Interval 2: 5.000 - 9.999, after excluding 2 noisy channels from this interval \(MEG0122 \(z=9.0\), MEG0123 \(z=7.1\)\); Flat \(1\): MEG0112\. Excluding many channels .* clipping") as exc_info:
+            RawMaxwell('raw', flat_duration=None)._make(raw.copy(), path=path)
+        assert 'digitization' not in str(exc_info.value)
 
 
 def test_raw_filter_predictor_nyquist():

@@ -762,7 +762,9 @@ def find_chpi(
 class _MNELogFilter(logging.Filter):
     """Forward selected MNE log messages to the pipeline log
 
-    Installed on MNE's logger while running Maxwell filtering with ``verbose='INFO'``: MNE's messages about the SSS origin and the bad channels are forwarded to ``logger`` (and kept in ``messages``), the rest (e.g., per-chunk progress) is dropped. Messages repeated by the bad channel detection and the filter proper are forwarded once. Warnings pass through unchanged.
+    Installed on MNE's logger while running Maxwell filtering: MNE's messages about the SSS origin and the bad channels are forwarded to ``logger`` (and kept in ``messages``), the rest (e.g., per-interval progress) is dropped. Messages repeated by the bad channel detection and the filter proper are forwarded once. Warnings pass through unchanged.
+
+    The bad channel detection's progress is tracked for the error message when the SSS basis becomes ill-conditioned: ``interval`` is the interval being processed, ``excluded`` lists the channels the detection excluded from that interval so far (one per iteration, which MNE logs at DEBUG level), and ``flat`` is the latest list of flat channels (which accumulate over intervals).
     """
     MESSAGES = ('Automatic origin fit', 'Using origin', 'Bad MEG channels being reconstructed', 'No bad MEG channels', 'Static bad channels', 'Static flat channels')
 
@@ -771,14 +773,26 @@ class _MNELogFilter(logging.Filter):
         self.logger = logger
         self.raw_name = raw_name
         self.messages = []
+        self.interval = None
+        self.excluded = []
+        self.flat = None
 
     def filter(self, record: logging.LogRecord) -> bool:
         if record.levelno >= logging.WARNING:
             return True
         message = record.getMessage().strip()
-        if message.startswith(self.MESSAGES) and message not in self.messages:
-            self.messages.append(message)
-            self.logger.info("Raw %s: %s", self.raw_name, message)
+        if message.startswith(self.MESSAGES):
+            if message not in self.messages:
+                self.messages.append(message)
+                self.logger.info("Raw %s: %s", self.raw_name, message)
+        elif message.startswith('Interval'):  # "Interval   3:   10.000 -   14.999"
+            self.interval = ' '.join(message.split())
+            self.excluded = []
+        elif message.startswith('Bad:'):  # "Bad:       MEG 046 12.3"
+            name, z = message[4:].strip().rsplit(' ', 1)
+            self.excluded.append(f"{name} (z={z})")
+        elif message.startswith('Flat ('):  # "Flat ( 2): MEG 046 MEG 086"
+            self.flat = ' '.join(message.split()).replace('( ', '(')
         return False
 
 
@@ -814,6 +828,16 @@ class RawMaxwell(CachedRawPipe):
         room data. With ``st_only=True``, the head positions only enter the temporal
         projection basis (see :func:`mne.preprocessing.maxwell_filter`) and
         the output is not compensated; a warning is issued.
+    flat_duration
+        Segments in which an MEG channel is flat (constant, e.g. due to
+        amplifier saturation) for at least this duration (in s) are marked with
+        a ``BAD_flat`` annotation (see :func:`mne.preprocessing.annotate_amplitude`)
+        and skipped by bad channel detection and Maxwell filtering (default
+        0.03). Channels that are flat for more than 5% of the recording are
+        marked as bad instead. Set to ``None`` to disable. Left in, segments
+        with many saturated channels make the bad channel detection exclude
+        those channels one by one until the SSS basis is ill-conditioned, or
+        mark them as bad for the whole recording.
     filter_chpi
         Remove cHPI signals and line noise with :func:`mne.chpi.filter_chpi`
         before Maxwell filtering (default: same as ``head_pos``). This only
@@ -859,15 +883,16 @@ class RawMaxwell(CachedRawPipe):
     Notes
     -----
     Empty room recordings are prepared with :func:`mne.preprocessing.maxwell_filter_prepare_emptyroom` before filtering: the device-to-head transform, digitization and bad channels of the task recording are injected, so that the empty room is filtered in the same coordinate frame, with the same origin and destination, and retains the same SSS components as the task recording (the ``'in'`` regularization selects components from the sensor geometry alone). The noise covariance therefore spans the same subspace as the data. Bad channels are the union of the task recording's and the empty room's own.
-    Flat channels are automatically marked as bad by :func:`mne.preprocessing.find_bad_channels_maxwell`.
+    Flat channels are automatically marked as bad by :func:`mne.preprocessing.find_bad_channels_maxwell`; segments in which channels are temporarily flat are annotated and skipped (see ``flat_duration``). The ``BAD_flat`` annotations are stored with the filtered data, but epochs overlapping them are not rejected automatically.
     :meth:`Pipeline.show_head_position_overview` marks recordings with continuous HPI with ``†``; those are the recordings that benefit from ``head_pos=True``.
     When a subject has several recordings at different head positions, the SSS reconstruction moves them all to a common position (the duration-weighted average) so that they share one forward solution. With ``st_only=True``, only the temporal projection is applied and the data keep their original head position; source estimates then require all recordings of a subject to share one head position.
     """
 
     _bad_chs_affect_cache = True
-    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('bad_condition', 'h_freq', 'head_pos', 'filter_chpi', 'rotation_velocity_limit', 'translation_velocity_limit', 'mean_distance_limit', 'kwargs')
+    DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('bad_condition', 'h_freq', 'flat_duration', 'head_pos', 'filter_chpi', 'rotation_velocity_limit', 'translation_velocity_limit', 'mean_distance_limit', 'kwargs')
     DICT_DEFAULTS = {
         'h_freq': 40.,
+        'flat_duration': 0.03,
         'head_pos': False,
         'filter_chpi': False,
         'rotation_velocity_limit': None,
@@ -883,6 +908,8 @@ class RawMaxwell(CachedRawPipe):
         'st_duration', 'st_correlation', 'st_fixed', 'st_only', 'st_overlap',
     ))
     _valid_kwargs = _shared_kwargs | _detector_only_kwargs | _maxwell_filter_only_kwargs
+    # Peak-to-peak limits between consecutive samples for flat segments; the same values find_bad_channels_maxwell uses for its flat channel detection
+    _flat_limits = {'mag': 0.01e-15, 'grad': 0.01e-13}
 
     def __init__(
         self,
@@ -890,6 +917,7 @@ class RawMaxwell(CachedRawPipe):
         bad_condition: str = 'error',
         cache: bool = True,
         h_freq: float | None = 40.,
+        flat_duration: float | None = 0.03,
         head_pos: bool = False,
         filter_chpi: bool | None = None,
         rotation_velocity_limit: float | None = None,
@@ -916,6 +944,7 @@ class RawMaxwell(CachedRawPipe):
         if h_freq is None and (head_pos or filter_chpi):
             raise ConfigurationError("RawMaxwell(h_freq=None): bad channels are detected before the cHPI signals are removed, so the low-pass filter is required with head_pos=True or filter_chpi=True")
         self.h_freq = h_freq
+        self.flat_duration = flat_duration
         self.head_pos = head_pos
         self.filter_chpi = filter_chpi
         self.rotation_velocity_limit = rotation_velocity_limit
@@ -954,14 +983,29 @@ class RawMaxwell(CachedRawPipe):
 
         shared_kwargs = {key: value for key, value in self.kwargs.items() if key in self._shared_kwargs}
         shared_kwargs.update(calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame='head', head_pos=head_pos)
-        # The conditioning of the SSS basis depends on the origin and on which channels are available; MNE reports both, so forward those messages to the pipeline log
+        if self.flat_duration is not None:
+            # Saturated channels are flat for the duration of the artifact. Annotated, those segments are skipped by the bad channel detection and by the filter (which leaves them unchanged)
+            annotations, flat_bads = mne.preprocessing.annotate_amplitude(raw, flat=self._flat_limits, min_duration=self.flat_duration, picks='meg', verbose=False)
+            if flat_bads:
+                logger.info("Raw %s: marking channels that are flat for more than 5%% of the recording as bad: %s", raw_name, ', '.join(flat_bads))
+                raw.info['bads'] = sorted(raw.info['bads'] + flat_bads)
+            if len(annotations):
+                logger.info("Raw %s: annotating %s as BAD_flat (%.1f s)", raw_name, n_of(len(annotations), 'segment'), annotations.duration.sum())
+                raw.set_annotations(raw.annotations + annotations)
+            skip_by_annotation = shared_kwargs.get('skip_by_annotation', ('edge', 'bad_acq_skip'))
+            if isinstance(skip_by_annotation, str):
+                skip_by_annotation = (skip_by_annotation,)
+            shared_kwargs['skip_by_annotation'] = (*skip_by_annotation, 'bad_flat')
+        # The conditioning of the SSS basis depends on the origin and on which channels are available; MNE reports both, so forward those messages to the pipeline log. The bad channel detection's progress is tracked for the error message (MNE logs the channels it excludes at DEBUG level)
         mne_log = _MNELogFilter(logger, raw_name)
         logging.getLogger('mne').addFilter(mne_log)
+        phase = 'detection'
         try:
             # find bad channels
             detector_kwargs = {key: value for key, value in self.kwargs.items() if key in self._detector_only_kwargs}
-            noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, h_freq=self.h_freq, verbose='INFO', **shared_kwargs, **detector_kwargs)
+            noisy_chs, flat_chs = mne.preprocessing.find_bad_channels_maxwell(raw, h_freq=self.h_freq, verbose='DEBUG', **shared_kwargs, **detector_kwargs)
             raw.info['bads'] = sorted(raw.info['bads'] + noisy_chs + flat_chs)
+            phase = 'filter'
             if filter_chpi:
                 logger.info("Raw %s: removing %s", raw_name, 'line noise' if noise else 'cHPI signals and line noise')
                 mne.chpi.filter_chpi(raw, allow_line_only=noise, verbose=MNE_VERBOSITY)
@@ -978,24 +1022,33 @@ class RawMaxwell(CachedRawPipe):
         except RuntimeError as error:
             if 'badly conditioned' not in str(error):
                 raise
-            generic_hint = "This usually indicates an inaccurate head digitization or device-to-head transform, which misplace the automatically fitted origin, or too many bad channels. Check the recording's digitization and head position; alternatively, set the origin explicitly, lower int_order, or use RawMaxwell(bad_condition='warning') to proceed anyway."
-            # A sensor with a wrong location close to the origin dominates the internal basis; MNE does not check sensor positions, so list the MEG sensors inside the head sphere
-            try:
-                radius, origin = mne.bem.fit_sphere_to_headshape(raw.info, units='m', verbose=False)[:2]
-            except (RuntimeError, ValueError) as fit_error:
-                # No or too few digitization points; MNE only needs them itself for origin='auto', so the filter can get this far without them
-                hint = f"{generic_hint} MEG sensor positions could not be checked against the head sphere: {fit_error}"
+            if phase == 'detection' and mne_log.excluded:
+                # The detection excludes the noisiest channel from the interval and repeats until none exceeds the limit; an artifact affecting many channels at once (e.g., clipping) shrinks the basis until it is ill-conditioned
+                context = f"The error occurred during bad channel detection in {mne_log.interval}, after excluding {n_of(len(mne_log.excluded), 'noisy channel')} from this interval ({', '.join(mne_log.excluded)}){f'; {mne_log.flat}' if mne_log.flat else ''}."
+                hint = "Excluding many channels from one interval indicates an artifact affecting many channels in that segment (e.g., clipping), not a problem with the sensor geometry. Segments in which channels are flat are annotated and skipped automatically (see flat_duration); mark other artifacts with BAD_ annotations and list them in skip_by_annotation, or use RawMaxwell(bad_condition='warning') to proceed anyway."
             else:
-                if not isinstance(shared_kwargs.get('origin', 'auto'), str):
-                    origin = numpy.asarray(shared_kwargs['origin'], float)
-                picks = mne.pick_types(raw.info, meg=True, ref_meg=False, exclude='bads')
-                sensor_locs = mne.transforms.apply_trans(raw.info['dev_head_t'], numpy.array([raw.info['chs'][i]['loc'][:3] for i in picks]))
-                misplaced = [raw.ch_names[i] for i, distance in zip(picks, numpy.linalg.norm(sensor_locs - origin, axis=1)) if distance < radius]
-                if misplaced:
-                    hint = f"{n_of(len(misplaced), 'MEG sensor')} located inside the head sphere (radius {radius * 1000:.0f} mm), indicating wrong channel positions: {', '.join(misplaced)}. Mark these channels as bad or fix their positions."
+                if phase == 'filter':
+                    context = "The error occurred in the Maxwell filter, after bad channel detection."
                 else:
-                    hint = generic_hint
-            raise DataError(f"{fpath}: the SSS basis is ill-conditioned ({'; '.join([str(error), *mne_log.messages])}). {hint}") from error
+                    context = f"The error occurred during bad channel detection in {mne_log.interval or 'the first interval'}, with the initial sensor geometry{f' ({mne_log.flat})' if mne_log.flat else ''}."
+                generic_hint = "This usually indicates an inaccurate head digitization or device-to-head transform, which misplace the automatically fitted origin, or too many bad channels. Check the recording's digitization and head position; alternatively, set the origin explicitly, lower int_order, or use RawMaxwell(bad_condition='warning') to proceed anyway."
+                # A sensor with a wrong location close to the origin dominates the internal basis; MNE does not check sensor positions, so list the MEG sensors inside the head sphere
+                try:
+                    radius, origin = mne.bem.fit_sphere_to_headshape(raw.info, units='m', verbose=False)[:2]
+                except (RuntimeError, ValueError) as fit_error:
+                    # No or too few digitization points; MNE only needs them itself for origin='auto', so the filter can get this far without them
+                    hint = f"{generic_hint} MEG sensor positions could not be checked against the head sphere: {fit_error}"
+                else:
+                    if not isinstance(shared_kwargs.get('origin', 'auto'), str):
+                        origin = numpy.asarray(shared_kwargs['origin'], float)
+                    picks = mne.pick_types(raw.info, meg=True, ref_meg=False, exclude='bads')
+                    sensor_locs = mne.transforms.apply_trans(raw.info['dev_head_t'], numpy.array([raw.info['chs'][i]['loc'][:3] for i in picks]))
+                    misplaced = [raw.ch_names[i] for i, distance in zip(picks, numpy.linalg.norm(sensor_locs - origin, axis=1)) if distance < radius]
+                    if misplaced:
+                        hint = f"{n_of(len(misplaced), 'MEG sensor')} located inside the head sphere (radius {radius * 1000:.0f} mm), indicating wrong channel positions: {', '.join(misplaced)}. Mark these channels as bad or fix their positions."
+                    else:
+                        hint = generic_hint
+            raise DataError(f"{fpath}: the SSS basis is ill-conditioned ({'; '.join([str(error), *mne_log.messages])}). {context} {hint}") from error
         finally:
             logging.getLogger('mne').removeFilter(mne_log)
         if head_pos is not None:

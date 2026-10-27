@@ -64,6 +64,12 @@ New in 0.43
     channels in the montage/adjacency instead of renaming channels in the data.
   - :class:`pipeline.RawMaxwell` can compensate for head movement in recordings
     with continuous HPI through the ``head_pos`` parameter.
+  - :class:`pipeline.RawMaxwell`: segments in which MEG channels are flat
+    (e.g., saturated) are annotated as ``BAD_flat`` and skipped by bad channel
+    detection and Maxwell filtering (``flat_duration`` parameter). The error for
+    an ill-conditioned SSS basis now reports whether it occurred during bad
+    channel detection (and which channels had been excluded from the interval)
+    or in the filter proper.
   - New :attr:`pipeline.Pipeline.event_factors` attribute to read numeric
     ``events.tsv`` columns as categorial (:class:`Factor`).
   - The ``load_...`` methods accept ``show_dependencies=True`` to return the
