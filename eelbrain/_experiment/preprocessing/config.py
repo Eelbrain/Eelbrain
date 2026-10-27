@@ -762,9 +762,7 @@ def find_chpi(
 class _MNELogFilter(logging.Filter):
     """Forward selected MNE log messages to the pipeline log
 
-    Installed on MNE's logger while running Maxwell filtering: MNE's messages about the SSS origin and the bad channels are forwarded to ``logger`` (and kept in ``messages``), the rest (e.g., per-interval progress) is dropped. Messages repeated by the bad channel detection and the filter proper are forwarded once. Warnings pass through unchanged.
-
-    The bad channel detection's progress is tracked for the error message when the SSS basis becomes ill-conditioned: ``interval`` is the interval being processed, ``excluded`` lists the channels the detection excluded from that interval so far (one per iteration, which MNE logs at DEBUG level), and ``flat`` is the latest list of flat channels (which accumulate over intervals).
+    Currently only used for Maxwell filtering, with a purpose-built mechanism for tracking the time interval being processed.
     """
     MESSAGES = ('Automatic origin fit', 'Using origin', 'Bad MEG channels being reconstructed', 'No bad MEG channels', 'Static bad channels', 'Static flat channels')
 
@@ -834,10 +832,7 @@ class RawMaxwell(CachedRawPipe):
         a ``BAD_flat`` annotation (see :func:`mne.preprocessing.annotate_amplitude`)
         and skipped by bad channel detection and Maxwell filtering (default
         0.03). Channels that are flat for more than 5% of the recording are
-        marked as bad instead. Set to ``None`` to disable. Left in, segments
-        with many saturated channels make the bad channel detection exclude
-        those channels one by one until the SSS basis is ill-conditioned, or
-        mark them as bad for the whole recording.
+        marked as bad instead. Set to ``None`` to disable.
     filter_chpi
         Remove cHPI signals and line noise with :func:`mne.chpi.filter_chpi`
         before Maxwell filtering (default: same as ``head_pos``). This only
@@ -883,7 +878,9 @@ class RawMaxwell(CachedRawPipe):
     Notes
     -----
     Empty room recordings are prepared with :func:`mne.preprocessing.maxwell_filter_prepare_emptyroom` before filtering: the device-to-head transform, digitization and bad channels of the task recording are injected, so that the empty room is filtered in the same coordinate frame, with the same origin and destination, and retains the same SSS components as the task recording (the ``'in'`` regularization selects components from the sensor geometry alone). The noise covariance therefore spans the same subspace as the data. Bad channels are the union of the task recording's and the empty room's own.
-    Flat channels are automatically marked as bad by :func:`mne.preprocessing.find_bad_channels_maxwell`; segments in which channels are temporarily flat are annotated and skipped (see ``flat_duration``). The ``BAD_flat`` annotations are stored with the filtered data, but epochs overlapping them are not rejected automatically.
+    Flat channels are automatically marked as bad by :func:`mne.preprocessing.find_bad_channels_maxwell`.
+    segments in which channels are temporarily flat are annotated and skipped (see ``flat_duration``),
+    and the ``BAD_flat`` annotations are stored with the filtered data.
     :meth:`Pipeline.show_head_position_overview` marks recordings with continuous HPI with ``†``; those are the recordings that benefit from ``head_pos=True``.
     When a subject has several recordings at different head positions, the SSS reconstruction moves them all to a common position (the duration-weighted average) so that they share one forward solution. With ``st_only=True``, only the temporal projection is applied and the data keep their original head position; source estimates then require all recordings of a subject to share one head position.
     """
@@ -983,8 +980,8 @@ class RawMaxwell(CachedRawPipe):
 
         shared_kwargs = {key: value for key, value in self.kwargs.items() if key in self._shared_kwargs}
         shared_kwargs.update(calibration=calibration, cross_talk=cross_talk, bad_condition=self.bad_condition, coord_frame='head', head_pos=head_pos)
+        # Preprocess by annotating saturated channels
         if self.flat_duration is not None:
-            # Saturated channels are flat for the duration of the artifact. Annotated, those segments are skipped by the bad channel detection and by the filter (which leaves them unchanged)
             annotations, flat_bads = mne.preprocessing.annotate_amplitude(raw, flat=self._flat_limits, min_duration=self.flat_duration, picks='meg', verbose=False)
             if flat_bads:
                 logger.info("Raw %s: marking channels that are flat for more than 5%% of the recording as bad: %s", raw_name, ', '.join(flat_bads))
@@ -996,7 +993,7 @@ class RawMaxwell(CachedRawPipe):
             if isinstance(skip_by_annotation, str):
                 skip_by_annotation = (skip_by_annotation,)
             shared_kwargs['skip_by_annotation'] = (*skip_by_annotation, 'bad_flat')
-        # The conditioning of the SSS basis depends on the origin and on which channels are available; MNE reports both, so forward those messages to the pipeline log. The bad channel detection's progress is tracked for the error message (MNE logs the channels it excludes at DEBUG level)
+        # The conditioning of the SSS basis depends on the origin and on which channels are available; MNE reports both, so forward those messages to the pipeline log
         mne_log = _MNELogFilter(logger, raw_name)
         logging.getLogger('mne').addFilter(mne_log)
         phase = 'detection'
@@ -1022,6 +1019,7 @@ class RawMaxwell(CachedRawPipe):
         except RuntimeError as error:
             if 'badly conditioned' not in str(error):
                 raise
+            # Diagnostic information for badly conditioned basis
             if phase == 'detection' and mne_log.excluded:
                 # The detection excludes the noisiest channel from the interval and repeats until none exceeds the limit; an artifact affecting many channels at once (e.g., clipping) shrinks the basis until it is ill-conditioned
                 context = f"The error occurred during bad channel detection in {mne_log.interval}, after excluding {n_of(len(mne_log.excluded), 'noisy channel')} from this interval ({', '.join(mne_log.excluded)}){f'; {mne_log.flat}' if mne_log.flat else ''}."
