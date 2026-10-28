@@ -109,8 +109,6 @@ New in 0.43
   surrounding channels share the same polarity.
 
 
-* API: The ``ds`` parameter, which was renamed to ``data`` in 0.40, is no longer accepted.
-
 New in 0.42
 -----------
 
