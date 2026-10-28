@@ -739,6 +739,7 @@ Pre-processing:
 
    RawSource
    RawFilter
+   RawNotchFilter
    RawICA
    RawMaxwell
    RawOversampledTemporalProjection

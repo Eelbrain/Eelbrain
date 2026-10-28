@@ -9,7 +9,7 @@ import pytest
 
 from eelbrain import NDVar, UTS, filter_data
 from eelbrain._exceptions import ConfigurationError, DataError
-from eelbrain._experiment.preprocessing import RawFilter, RawMaxwell, RawSource
+from eelbrain._experiment.preprocessing import RawFilter, RawMaxwell, RawNotchFilter, RawSource
 from eelbrain._experiment.trf import filter_predictor
 from eelbrain.testing import requires_mne_testing_data
 
@@ -205,3 +205,39 @@ def test_raw_filter_predictor_nyquist():
     raw['30-40'] = RawFilter('raw', 30, 40)
     with pytest.raises(ValueError):
         filter_predictor(x, raw, '30-40', True)
+
+
+def test_raw_notch_filter():
+    "RawNotchFilter removes line noise from the raw data, but is not applied to predictors"
+    pipe = RawNotchFilter('raw', (60, 120), method='iir')
+    assert pipe._as_dict() == {
+        'type': 'RawNotchFilter',
+        'source': 'raw',
+        'freqs': (60, 120),
+        'n_jobs': 1,
+        'kwargs': {'method': 'iir'},
+    }
+
+    # 10 Hz signal with 60 and 120 Hz line noise
+    sfreq = 1000.
+    times = np.arange(10 * int(sfreq)) / sfreq
+    signal_10 = np.sin(2 * np.pi * 10 * times)
+    noise = np.sin(2 * np.pi * 60 * times) + 0.5 * np.sin(2 * np.pi * 120 * times)
+    raw = mne.io.RawArray(np.vstack([signal_10 + noise] * 2), mne.create_info(['EEG 001', 'EEG 002'], sfreq, 'eeg'))
+    path = SimpleNamespace(fpath='sub-01_task-sample_eeg.fif')
+    out = RawNotchFilter('raw', (60, 120))._make(raw, path=path, raw_name='notch')
+    # power at each frequency, ignoring filter edge effects
+    data = out.get_data()[0, 2000:-2000]
+    spectrum = np.abs(np.fft.rfft(data))
+    freqs = np.fft.rfftfreq(len(data), 1 / sfreq)
+    power = {f: spectrum[np.argmin(np.abs(freqs - f))] for f in (10, 60, 120)}
+    assert power[60] < 0.01 * power[10]
+    assert power[120] < 0.01 * power[10]
+    np.testing.assert_allclose(data, signal_10[2000:-2000], atol=0.05)
+
+    # predictors are only filtered by RawFilter pipes
+    x = NDVar(np.random.default_rng(0).normal(size=500), UTS(0, 0.01, 500), {'sampling': 'continuous'}, 'x')
+    pipes = {'raw': RawSource(), 'notch': RawNotchFilter('raw', 60)}
+    assert filter_predictor(x, pipes, 'notch', True) is x
+    pipes['1-40'] = RawFilter('notch', 1, 40)
+    assert_array_equal(filter_predictor(x, pipes, '1-40', True).x, filter_data(x, 1, 40, pad='edge').x)
