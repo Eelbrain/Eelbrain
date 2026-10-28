@@ -106,7 +106,7 @@ def test_melt_ndvar():
     ds = datasets.get_uts(True)
     ds = ds.sub("A == 'a1'")
 
-    lds = table.melt_ndvar('uts', ds=ds)
+    lds = table.melt_ndvar('uts', data=ds)
     assert 'time' in lds
     assert isinstance(lds['time'], Var)
     assert_array_equal(np.unique(lds['time'].x), ds['uts'].time)
@@ -119,18 +119,18 @@ def test_melt_ndvar():
     assert_dataobj_equal(lds3[0, 'utsnd'], ds[0, 'utsnd'][0])
 
     # sensor
-    lds = table.melt_ndvar("utsnd.summary(time=(0.1, 0.2))", ds=ds, varname='summary')
+    lds = table.melt_ndvar("utsnd.summary(time=(0.1, 0.2))", data=ds, varname='summary')
     assert set(lds['sensor'].cells) == set(ds['utsnd'].sensor.names)
 
     # NDVar out
-    lds = table.melt_ndvar("utsnd", 'sensor', ds=ds)
+    lds = table.melt_ndvar("utsnd", 'sensor', data=ds)
     assert 'utsnd' in lds
     assert isinstance(lds['utsnd'], NDVar)
     assert_dataobj_equal(lds[:ds.n_cases, 'utsnd'], ds.eval("utsnd.sub(sensor='0')"))
 
     # more than one dimensions
     with pytest.raises(ValueError):
-        table.melt_ndvar('utsnd', ds=ds)
+        table.melt_ndvar('utsnd', data=ds)
 
 
 def test_repmeas():

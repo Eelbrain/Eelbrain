@@ -247,7 +247,7 @@ class EventsDerivative(Derivative[Dataset]):
         if n_args == 1:
             ds = self.fix_events_impl(ds)
         else:
-            raise ValueError(f"{self.owner_name}.label_events {self.label_events_impl!r}: number of arguments: {n_args}; should take one argument, {self.owner_name}.label_events(self, ds) or label_events(ds) ")
+            raise ValueError(f"{self.owner_name}.label_events {self.label_events_impl!r}: number of arguments: {n_args}; should take one argument, {self.owner_name}.label_events(self, data) or label_events(data) ")
         return _check_ds(ds, f'{self.owner_name}.fix_events()', info)
 
     def load(self, ctx: Request, path: Path) -> Dataset:
@@ -340,7 +340,7 @@ class LabeledEventsDerivative(Derivative[Dataset]):
         if n_args == 1:
             ds = self.label_events_impl(ds)
         else:
-            raise ValueError(f"{self.owner_name}.label_events {self.label_events_impl!r}: number of arguments: {n_args}; should take one argument, {self.owner_name}.label_events(self, ds) or label_events(ds) ")
+            raise ValueError(f"{self.owner_name}.label_events {self.label_events_impl!r}: number of arguments: {n_args}; should take one argument, {self.owner_name}.label_events(self, data) or label_events(data) ")
         return _check_ds(ds, f'{self.owner_name}.label_events()', info)
 
     def load(self, ctx: Request, path: Path) -> Dataset:

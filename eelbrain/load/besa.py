@@ -186,25 +186,25 @@ def dat_set_paths(path: PathArg, subjects: list = [], conditions: list = []):
     return ds
 
 
-def add_dat_set_epochs(ds: Dataset, name: str = 'src'):
+def add_dat_set_epochs(data: Dataset, name: str = 'src'):
     """
     Read epochs for a Dataset created with :func:`dat_set_paths`
 
     Parameters
     ----------
-    ds
+    data
         Dataset as returned by :func:`dat_set_paths`
     name
         Name for the variable containing the epochs.
 
     Returns
     -------
-    ds : Dataset
-        Reference to the input Dataset ds, which is modified in place.
+    data : Dataset
+        Reference to the input Dataset ``data``, which is modified in place.
     """
     # read dat files
     stcs = []
-    for case in ds.itercases():
+    for case in data.itercases():
         path = case['path']
         stc = dat_file(path)
         stcs.append(stc)
@@ -212,8 +212,8 @@ def add_dat_set_epochs(ds: Dataset, name: str = 'src'):
     # create source estimate NDVar
     src = combine(stcs)
     src.info.update(unit="nA", meas="I")
-    ds[name] = src
-    return ds
+    data[name] = src
+    return data
 
 
 def roi(path: PathArg, adjust_index: bool = True):

@@ -566,7 +566,7 @@ def add_epochs(
 
 
 def add_mne_epochs(
-        ds: Dataset,
+        data: Dataset,
         tmin: float = -0.1,
         tmax: float = None,
         baseline: tuple[float, float] = None,
@@ -586,7 +586,7 @@ def add_mne_epochs(
 
     Parameters
     ----------
-    ds
+    data
         Dataset with events from a raw fiff file (i.e., created by
         load.mne.events).
     tmin
@@ -604,10 +604,10 @@ def add_mne_epochs(
     ...
         See :func:`~eelbrain.load.mne.mne_epochs`.
     """
-    epochs_ = mne_epochs(ds, tmin, tmax, baseline, **kwargs)
-    ds = _trim_ds(ds, epochs_)
-    ds[target] = epochs_
-    return ds
+    epochs_ = mne_epochs(data, tmin, tmax, baseline, **kwargs)
+    data = _trim_ds(data, epochs_)
+    data[target] = epochs_
+    return data
 
 
 def _factor_trigger_to_var(
@@ -747,7 +747,7 @@ def _mne_events(ds=None, i_start='i_start', trigger='trigger'):
 
 
 def mne_epochs(
-        ds: Dataset,
+        data: Dataset,
         tmin: float = -0.1,
         tmax: float = None,
         baseline: tuple[float, float] = None,
@@ -766,7 +766,7 @@ def mne_epochs(
 
     Parameters
     ----------
-    ds
+    data
         Dataset containing a variable which defines epoch cues (i_start).
     tmin
         First sample to include in the epochs in seconds (Default is -0.1).
@@ -814,7 +814,7 @@ def mne_epochs(
     if baseline is False:
         baseline = None
     if raw is None:
-        raw = ds.info['raw']
+        raw = data.info['raw']
     if tmax is None:
         if tstop is None:
             tmax = 0.6
@@ -829,8 +829,8 @@ def mne_epochs(
     if drop_bad_chs and picks is None and raw.info['bads']:
         picks = mne.pick_types(raw.info, meg=True, eeg=True, eog=True, ref_meg=False)
 
-    trigger, event_id = _resolve_trigger(ds, trigger, event_id)
-    events = _mne_events(ds=ds, i_start=i_start, trigger=trigger)
+    trigger, event_id = _resolve_trigger(data, trigger, event_id)
+    events = _mne_events(ds=data, i_start=i_start, trigger=trigger)
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', 'The events passed to the Epochs constructor', RuntimeWarning)
         epochs = mne.Epochs(raw, events, event_id, tmin, tmax, baseline, picks, preload=True, reject=reject, decim=decim, **kwargs)
@@ -838,9 +838,9 @@ def mne_epochs(
         getLogger('eelbrain').warning("%s: MNE generated only %i Epochs for %i events. The raw file might end before the end of the last epoch.", raw.filenames[0], len(epochs), len(events))
 
     #  add bad channels from ds
-    if BAD_CHANNELS in ds.info:
+    if BAD_CHANNELS in data.info:
         invalid = []
-        for ch_name in ds.info[BAD_CHANNELS]:
+        for ch_name in data.info[BAD_CHANNELS]:
             if ch_name in raw.info['bads']:
                 pass
             elif ch_name not in epochs.ch_names:

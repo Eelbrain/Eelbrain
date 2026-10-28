@@ -336,7 +336,7 @@ def melt_ndvar(
         ndvar: NDVarArg,
         dim: str = None,
         cells: Sequence = None,
-        ds: Dataset = None,
+        data: Dataset = None,
         varname: str = None,
         labels: dict | Callable = None,
 ) -> Dataset:
@@ -346,14 +346,14 @@ def melt_ndvar(
     Parameters
     ----------
     ndvar
-        The NDVar (or name of the NDVar in ``ds``).
+        The NDVar (or name of the NDVar in ``data``).
     dim
         The name of the dimension that should be unwrapped (optional if
         ``ndvar`` has only one non-case dimension).
     cells
         The values on ``dim`` that should be included in the output Dataset
         (default is to include all values).
-    ds
+    data
         Dataset with additional variables that should be included in the long
         table.
     varname
@@ -374,7 +374,7 @@ def melt_ndvar(
     --------
     See :ref:`exa-compare-topographies`.
     """
-    ndvar = asndvar(ndvar, data=ds)
+    ndvar = asndvar(ndvar, data=data)
     if dim is None:
         if ndvar.ndim == ndvar.has_case + 1:
             dim = ndvar.dims[-1]
@@ -409,11 +409,11 @@ def melt_ndvar(
             raise TypeError("Need to provide a name")
         varname = ndvar.name
 
-    if ds is None:
+    if data is None:
         base_ds = Dataset()
     else:
-        uv_keys = tuple(k for k, v in ds.items() if isuv(v))
-        base_ds = ds[uv_keys]
+        uv_keys = tuple(k for k, v in data.items() if isuv(v))
+        base_ds = data[uv_keys]
 
     if not ndvar.has_case:
         ndvar = ndvar[np.newaxis]

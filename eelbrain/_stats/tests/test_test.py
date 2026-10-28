@@ -16,38 +16,38 @@ def test_correlations():
     "Test test.correlations()"
     ds = datasets.get_uv()
 
-    res = test.correlations('fltvar', 'fltvar2', ds=ds)
+    res = test.correlations('fltvar', 'fltvar2', data=ds)
     print(res)
     assert str(res[2][0]).strip() == '.398'
-    res = test.correlations('fltvar', 'fltvar2', ds=ds, asds=True)
+    res = test.correlations('fltvar', 'fltvar2', data=ds, asds=True)
     assert res[0, 'r'] == pytest.approx(.398, abs=1e-3)
     res = test.Correlation('fltvar', 'fltvar2', data=ds)
     assert res.r == pytest.approx(.398, abs=1e-3)
 
-    res = test.correlations('fltvar', 'fltvar2', 'A', ds=ds)
+    res = test.correlations('fltvar', 'fltvar2', 'A', data=ds)
     print(res)
     assert str(res[2][0]).strip() == 'a1'
     assert str(res[2][1]).strip() == '-.149'
     assert str(res[3][1]).strip() == '.740'
-    res = test.correlations('fltvar', 'fltvar2', 'A', ds=ds, asds=True)
+    res = test.correlations('fltvar', 'fltvar2', 'A', data=ds, asds=True)
     assert res[0, 'A'] == 'a1'
     assert res[0, 'r'] == pytest.approx(-0.149, abs=1e-3)
     assert res[1, 'r'] == pytest.approx(.740, abs=1e-3)
     res = test.Correlation('fltvar', 'fltvar2', "A == 'a1'", ds)
     assert res.r == pytest.approx(-0.149, abs=1e-3)
 
-    res = test.correlations('fltvar', 'fltvar2', 'A%B', ds=ds)
+    res = test.correlations('fltvar', 'fltvar2', 'A%B', data=ds)
     print(res)
     assert str(res[2][2]).strip() == '-.276'
-    res = test.correlations('fltvar', 'fltvar2', 'A%B', ds=ds, asds=True)
+    res = test.correlations('fltvar', 'fltvar2', 'A%B', data=ds, asds=True)
     assert res[0, 'r'] == pytest.approx(-0.276, abs=1e-3)
 
-    res = test.correlations('fltvar', ('fltvar2', 'intvar'), 'A%B', ds=ds)
+    res = test.correlations('fltvar', ('fltvar2', 'intvar'), 'A%B', data=ds)
     print(res)
     assert str(res[2][1]).strip() == 'a1'
     assert str(res[2][2]).strip() == 'b1'
     assert str(res[2][3]).strip() == '-.276'
-    res = test.correlations('fltvar', ('fltvar2', 'intvar'), 'A%B', ds=ds, asds=True)
+    res = test.correlations('fltvar', ('fltvar2', 'intvar'), 'A%B', data=ds, asds=True)
     assert res[0, 'r'] == pytest.approx(-0.276, abs=1e-3)
     res = test.Correlation('fltvar', 'intvar', "(A=='a1')&(B=='b1')", ds)
     assert res.r == pytest.approx(0.315, abs=1e-3)

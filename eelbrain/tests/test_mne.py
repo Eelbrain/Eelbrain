@@ -111,7 +111,7 @@ def test_source_estimate():
 
     # melt NDVar
     dsa['src_sub'] = dsa['src'].sub(source=['lateraloccipital-lh', 'lateraloccipital-rh'])
-    mdsa = table.melt_ndvar('src_sub', 'source', ds=dsa)
+    mdsa = table.melt_ndvar('src_sub', 'source', data=dsa)
     assert_array_equal(mdsa['hemi'], Factor(['lh'] * 88 * 2 + ['rh'] * 87 * 2))
 
 

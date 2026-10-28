@@ -214,7 +214,7 @@ def _concatenate_values(
 def convolve(
         h: NDVarArg | Sequence[NDVarArg],
         x: NDVarArg | Sequence[NDVarArg],
-        ds: Dataset = None,
+        data: Dataset = None,
         name: str = None,
 ) -> NDVar:
     """Convolve ``h`` and ``x`` along the time dimension
@@ -225,7 +225,7 @@ def convolve(
         Kernel.
     x
         Data to convolve, corresponding to ``h``.
-    ds
+    data
         If provided, elements of ``x`` can be specified as :class:`str`.
     name
         Name for output variable.
@@ -236,12 +236,12 @@ def convolve(
         Convolution, with same time dimension as ``x``.
     """
     if isinstance(x, str):
-        x = asndvar(x, data=ds)
+        x = asndvar(x, data=data)
         is_single = True
     elif isinstance(x, NDVar):
         is_single = True
     else:
-        x = [asndvar(xi, data=ds) for xi in x]
+        x = [asndvar(xi, data=data) for xi in x]
         is_single = False
 
     if isinstance(h, NDVar) != is_single:

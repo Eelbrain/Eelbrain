@@ -1280,7 +1280,7 @@ class PlotData:
             xax: CategorialArg = None,
             match: CategorialArg = None,
             sub: IndexArg = None,
-            ds: Dataset = None,
+            data: Dataset = None,
             dims: tuple[str | None] = None,
             colors: dict = None,
             mask: NDVar | dict[CellArg, NDVar] = None,
@@ -1290,16 +1290,16 @@ class PlotData:
             if level == 2:
                 if x is not None:
                     raise TypeError(f"Nested y, {x=}: x cannot be specified with nested y")
-                data = [cls.from_stats(yi, x, xax, match, sub, ds, dims, colors, mask, level=3) for yi in y]
-                layers = [data_i.plot_data[0].layers[0] for data_i in data]
-                plot_data = [replace(data[0].plot_data[0], layers=layers)]
-                return replace(data[0], plot_data=plot_data)
+                nested = [cls.from_stats(yi, x, xax, match, sub, data, dims, colors, mask, level=3) for yi in y]
+                layers = [data_i.plot_data[0].layers[0] for data_i in nested]
+                plot_data = [replace(nested[0].plot_data[0], layers=layers)]
+                return replace(nested[0], plot_data=plot_data)
             elif level == 3:
                 raise TypeError("Doubly nested y")
             elif xax is not None:
                 raise TypeError(f"{y=}, {xax=}: xax cannot be specified with multiple y")
             plot_used = [yi is not None for yi in y]
-            axes_data = [cls.from_stats(yi, x, xax, match, sub, ds, dims, mask=mask, level=2) for yi in y if yi is not None]
+            axes_data = [cls.from_stats(yi, x, xax, match, sub, data, dims, mask=mask, level=2) for yi in y if yi is not None]
             axes = list(chain.from_iterable(ax.plot_data for ax in axes_data))
             # cells for styles are based on y and x
             for ax in axes:
@@ -1313,28 +1313,28 @@ class PlotData:
             return replace(axes_data[0], plot_data=axes, plot_used=plot_used, plot_names=None, styles=styles)
         x, x_dim = x_arg(x)
         if x_dim is not None:
-            ds = melt_ndvar(y, x_dim, ds=ds)
-            y = ds.info['varname']
+            data = melt_ndvar(y, x_dim, data=data)
+            y = data.info['varname']
             x = combine_x_args(x, x_dim)
         xax, xax_dim = x_arg(xax)
         if xax_dim is not None:
-            ds = melt_ndvar(y, xax_dim, ds=ds)
-            y = ds.info['varname']
+            data = melt_ndvar(y, xax_dim, data=data)
+            y = data.info['varname']
             xax = combine_x_args(xax, xax_dim)
         x_full = combine_x_args(x, xax)
-        ct = Celltable(y, x_full, match, sub, data=ds)
+        ct = Celltable(y, x_full, match, sub, data=data)
         # data dimensions
         agg, dims = find_data_dims(ct.y, dims, 'case')
         if agg:
             raise NotImplementedError
         # reconstruct x/xax
         if x is not None:
-            x = ct._align(x, data=ds, coerce=ascategorial)
+            x = ct._align(x, data=data, coerce=ascategorial)
         if xax is None:
             default_color_cells = None
             ax_cells = [None]
         else:
-            xax = ct._align(xax, data=ds, coerce=ascategorial)
+            xax = ct._align(xax, data=data, coerce=ascategorial)
             ax_cells = xax.cells
             if x is None:
                 default_color_cells = None

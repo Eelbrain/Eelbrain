@@ -1369,7 +1369,7 @@ def correlations(
         x: VarArg | Sequence[VarArg],
         cat: CategorialArg = None,
         sub: IndexArg = None,
-        ds: Dataset = None,
+        data: Dataset = None,
         asds: bool = False,
 ):
     """Correlation with one or more predictors
@@ -1384,7 +1384,7 @@ def correlations(
         Show correlations separately for different groups in the data.
     sub
         Use only a subset of the data
-    ds
+    data
         If a Dataset is given, all data-objects can be specified as names of
         Dataset variables.
     asds
@@ -1395,36 +1395,36 @@ def correlations(
     correlations : Table | Dataset
         Table or Dataset (if ``asds=True``) with correlations.
     """
-    sub = assub(sub, ds)
-    y = asvar(y, sub, ds)
+    sub = assub(sub, data)
+    y = asvar(y, sub, data)
     if isinstance(x, (Var, str)):
         x = (x,)
         print_x_name = False
     else:
         print_x_name = True
-    x = [asvar(x_, sub, ds) for x_ in x]
+    x = [asvar(x_, sub, data) for x_ in x]
     if cat is None:
         cat_cells = [None]
         n_cat = 1
     else:
-        cat = ascategorial(cat, sub, ds)
+        cat = ascategorial(cat, sub, data)
         cat_cells = cat.cells
         n_cat = len(cat_cells)
 
     # correlation Dataset, nested:
     # x -> cat
-    ds = Dataset()
+    data = Dataset()
     if print_x_name:
-        ds['x'] = Factor([dataobj_repr(x_) for x_ in x], repeat=n_cat)
+        data['x'] = Factor([dataobj_repr(x_) for x_ in x], repeat=n_cat)
 
     if n_cat > 1:
         if isinstance(cat, Interaction):
             cat_names = [dataobj_repr(c) for c in cat.base]
             for i, name in enumerate(cat_names):
-                ds[name] = Factor([cell[i] for cell in cat.cells], tile=len(x))
+                data[name] = Factor([cell[i] for cell in cat.cells], tile=len(x))
         elif isinstance(cat, Factor):
             cat_names = (dataobj_repr(cat),)
-            ds[dataobj_repr(cat)] = Factor(cat.cells, tile=len(x))
+            data[dataobj_repr(cat)] = Factor(cat.cells, tile=len(x))
         else:
             raise TypeError(repr(cat))
     else:
@@ -1443,13 +1443,13 @@ def correlations(
             rs.append(r)
             dfs.append(df)
             ps.append(p)
-    ds['r'] = Var(rs)
-    ds['df'] = Var(dfs)
+    data['r'] = Var(rs)
+    data['df'] = Var(dfs)
     p = Var(ps)
-    ds['sig'] = star_factor(p)
-    ds['p'] = p
+    data['sig'] = star_factor(p)
+    data['p'] = p
     if asds:
-        return ds
+        return data
 
     table = fmtxt.Table('l' * (4 + print_x_name + len(cat_names)),
                         title=f"Correlations with {dataobj_repr(y)}")
@@ -1459,7 +1459,7 @@ def correlations(
     table.cells('r', 'df', '*' 'p')
     table.midrule()
     last_x = None
-    for case in ds.itercases():
+    for case in data.itercases():
         if print_x_name:
             if case['x'] == last_x:
                 table.cell('')

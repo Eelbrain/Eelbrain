@@ -829,18 +829,18 @@ class Pipeline(StateModel):
                 self.set(**{field: value})
                 yield value
 
-    def fix_events(self, ds: Dataset) -> Dataset:
+    def fix_events(self, data: Dataset) -> Dataset:
         """Modify event order or timing
 
         Parameters
         ----------
-        ds
+        data
             A Dataset containing events (with variables as returned by
             :func:`load.mne.events`).
 
         Returns
         -------
-        ds : Dataset
+        data : Dataset
             Should return the modified events dataset. Needs to contain at least
             the ``sample`` and ``value`` columns.
 
@@ -857,7 +857,7 @@ class Pipeline(StateModel):
         and is called *before* adding other variables.
 
         The subject and session the events are from can be determined with
-        ``ds.info['subject']`` and ``ds.info['session']``.
+        ``data.info['subject']`` and ``data.info['session']``.
 
         Calling the original (super-class) method is not necessary.
 
@@ -867,26 +867,26 @@ class Pipeline(StateModel):
 
             class Experiment(Pipeline):
 
-                def fix_events(self, ds):
-                    if ds.info['subject'] == 'S01':
-                        return ds[:-1]
+                def fix_events(self, data):
+                    if data.info['subject'] == 'S01':
+                        return data[:-1]
                     else:
-                        return ds
+                        return data
         """
-        return ds
+        return data
 
-    def label_events(self, ds: Dataset) -> Dataset:
+    def label_events(self, data: Dataset) -> Dataset:
         """Add event labels to events loaded from raw files
 
         Parameters
         ----------
-        ds
+        data
             A Dataset containing events (with variables as returned by
             :func:`load.mne.events`).
 
         Returns
         -------
-        ds : Dataset
+        data : Dataset
             Should return the modified events dataset.
 
         See Also
@@ -900,7 +900,7 @@ class Pipeline(StateModel):
         *after* adding other variables.
 
         The subject and session the events are from can be determined with
-        ``ds.info['subject']`` and ``ds.info['session']``.
+        ``data.info['subject']`` and ``data.info['session']``.
 
         Calling the original (super-class) method is not necessary.
 
@@ -910,14 +910,14 @@ class Pipeline(StateModel):
 
             class Experiment(Pipeline):
 
-                def label_events(self, ds):
+                def label_events(self, data):
                     # assign 'no' to all events
-                    ds[:, 'new'] = 'no'
+                    data[:, 'new'] = 'no'
                     # assign 'yes' to events where value 2 follows value 1
-                    for i in range(1, ds.n_cases):
-                        if ds[i, 'value'] == 2 and ds[i-1, 'value'] == 1:
-                            ds[i, 'new'] = 'yes'
-                    return ds
+                    for i in range(1, data.n_cases):
+                        if data[i, 'value'] == 2 and data[i-1, 'value'] == 1:
+                            data[i, 'new'] = 'yes'
+                    return data
 
         Add events based on separate files. This assumes that the events in
         the recording only indicate trial onsets, and separate files contain
@@ -925,11 +925,11 @@ class Pipeline(StateModel):
 
             class Experiment(Pipeline):
 
-                def label_events(self, ds):
-                    samplingrate = ds.info['raw.samplingrate']
+                def label_events(self, data):
+                    samplingrate = data.info['raw.samplingrate']
                     new_events = []
                     # loop through trials
-                    for sample, value in ds.zip('sample', 'value'):
+                    for sample, value in data.zip('sample', 'value'):
                         # load the event file, assuming that the trigger value
                         # in the data was used to indicate the trial ID
                         trial_events = load.tsv(f'/files/trial_{value}.txt')
@@ -944,22 +944,22 @@ class Pipeline(StateModel):
                     # combine the trials to a single dataset
                     return combine(new_events)
         """
-        return ds
+        return data
 
-    def label_subjects(self, ds: Dataset) -> None:
-        """Label the subjects in ds
+    def label_subjects(self, data: Dataset) -> None:
+        """Label the subjects in data
 
-        Creates a boolean :class:`Var` in ``ds`` for each group marking group
+        Creates a boolean :class:`Var` in ``data`` for each group marking group
         membership.
 
         Parameters
         ----------
-        ds
+        data
             A Dataset with 'subject' entry.
         """
-        subject = ds['subject']
+        subject = data['subject']
         for name, subjects in self._groups.items():
-            ds[name] = Var(subject.isin(subjects))
+            data[name] = Var(subject.isin(subjects))
 
     def label_groups(self, subject: Factor, groups: Sequence[str] | dict) -> Factor:
         """Generate Factor for group membership

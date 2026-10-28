@@ -21,7 +21,7 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
         Variable to aggregate cases into lines (default is to plot each line).
     sub
         Only use a subset of the data provided.
-    ds
+    data
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables.
     offset
@@ -71,7 +71,7 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
             y: NDVar | Sequence[NDVar],
             x: CategorialArg = None,
             sub: IndexArg = None,
-            ds: Dataset = None,
+            data: Dataset = None,
             offset: float | str = 'y.max() - y.min()',
             ylim: float | tuple[float, float] = None,
             xlim: float | tuple[float, float] = None,
@@ -87,7 +87,7 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
             clip: bool = None,
             **kwargs,
     ):
-        sub = assub(sub, ds)
+        sub = assub(sub, data)
         if isinstance(y, (tuple, list)):
             if x is not None:
                 raise TypeError(
@@ -96,7 +96,7 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
             elif order is not None:
                 raise TypeError("The order parameter only applies if y is a "
                                 "single NDVar")
-            ys = tuple(asndvar(y_, sub, ds) for y_ in y)
+            ys = tuple(asndvar(y_, sub, data) for y_ in y)
             xdims = {y_.get_dimnames((None,))[0] for y_ in ys}
             if len(xdims) > 1:
                 raise ValueError(f"NDVars must have same dimension, got {tuple(xdims)}")
@@ -116,9 +116,9 @@ class LineStack(LegendMixin, XAxisMixin, EelFigure):
                 ylabel = AxisScale(ys[0], ylabel).label
             epochs = (ys,)
         else:
-            y = asndvar(y, sub, ds)
+            y = asndvar(y, sub, data)
             if x is not None:
-                x = ascategorial(x, sub, ds)
+                x = ascategorial(x, sub, data)
                 y = y.aggregate(x)
             # find plotting dims
             if xdim is None and y.has_dim('time'):
