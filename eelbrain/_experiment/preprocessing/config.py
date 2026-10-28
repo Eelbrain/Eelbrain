@@ -913,7 +913,7 @@ class RawMaxwell(CachedRawPipe):
         'st_duration', 'st_correlation', 'st_fixed', 'st_only', 'st_overlap',
     ))
     _valid_kwargs = _shared_kwargs | _detector_only_kwargs | _maxwell_filter_only_kwargs
-    # Peak-to-peak limits between consecutive samples for flat segments; the same values find_bad_channels_maxwell uses for its flat channel detection
+    # Limits for the difference between consecutive samples in flat segments. The values are borrowed from find_bad_channels_maxwell, which however applies them to the SD over 30 ms windows, so the two criteria are not equivalent
     _flat_limits = {'mag': 0.01e-15, 'grad': 0.01e-13}
 
     def __init__(
