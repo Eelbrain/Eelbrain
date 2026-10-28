@@ -842,7 +842,7 @@ class RawMaxwell(CachedRawPipe):
         amplifier saturation) for at least this duration (in s) are marked with
         a ``BAD_flat`` annotation (see :func:`mne.preprocessing.annotate_amplitude`)
         and skipped by bad channel detection and Maxwell filtering (default
-        0.03). Channels that are flat for more than 5% of the recording are
+        0.03). Channels that are flat for at least 5% of the recording are
         marked as bad instead. Set to ``None`` to disable.
     filter_chpi
         Remove cHPI signals and line noise with :func:`mne.chpi.filter_chpi`
@@ -918,7 +918,7 @@ class RawMaxwell(CachedRawPipe):
     _valid_kwargs = _shared_kwargs | _detector_only_kwargs | _maxwell_filter_only_kwargs
     # Limits for the difference between consecutive samples in flat segments. The values are borrowed from find_bad_channels_maxwell, which however applies them to the SD over 30 ms windows, so the two criteria are not equivalent
     _flat_limits = {'mag': 0.01e-15, 'grad': 0.01e-13}
-    # Channels that are flat for more than this percentage of the recording are marked as bad instead of annotated
+    # Channels that are flat for at least this percentage of the recording are marked as bad instead of annotated
     _flat_bad_percent = 5
 
     def __init__(
@@ -997,7 +997,7 @@ class RawMaxwell(CachedRawPipe):
         if self.flat_duration is not None:
             annotations, flat_bads = mne.preprocessing.annotate_amplitude(raw, flat=self._flat_limits, bad_percent=self._flat_bad_percent, min_duration=self.flat_duration, picks='meg', verbose=False)
             if flat_bads:
-                logger.info("Raw %s: marking channels that are flat for more than %s%% of the recording as bad: %s", raw_name, self._flat_bad_percent, ', '.join(flat_bads))
+                logger.info("Raw %s: marking channels that are flat for at least %s%% of the recording as bad: %s", raw_name, self._flat_bad_percent, ', '.join(flat_bads))
                 raw.info['bads'] = sorted(raw.info['bads'] + flat_bads)
             if len(annotations):
                 logger.info("Raw %s: annotating %s as BAD_flat (%.1f s)", raw_name, n_of(len(annotations), 'segment'), annotations.duration.sum())
