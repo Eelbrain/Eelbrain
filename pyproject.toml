@@ -31,7 +31,6 @@ dependencies = [
   'nibabel >= 2.5',
   'numpy >= 1.20',
   'pillow',
-  'psutils',
   'pymatreader',
   'pyparsing >= 3',
   'scipy >= 1.5',
