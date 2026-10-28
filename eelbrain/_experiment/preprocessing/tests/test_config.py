@@ -294,9 +294,11 @@ def test_maxwell_ill_conditioned_context():
 
         # a later interval, after excluding channels from it
         heavy['find_bad_channels_maxwell'].side_effect = detector_log("Interval   1:    0.000 -    4.999", "Flat ( 1): MEG0112", "Bad:       MEG0113 12.3", "Interval   2:    5.000 -    9.999", "Bad:       MEG0122 9.0", "Bad:       MEG0123 7.1")
-        with pytest.raises(DataError, match=r"in Interval 2: 5.000 - 9.999, after excluding 2 noisy channels from this interval \(MEG0122 \(z=9.0\), MEG0123 \(z=7.1\)\); Flat \(1\): MEG0112\. Excluding many channels .* clipping") as exc_info:
+        with pytest.raises(DataError, match=r"in Interval 2: 5.000 - 9.999, after excluding 2 noisy channels from this interval \(MEG0122 \(z=9.0\), MEG0123 \(z=7.1\)\); Flat \(1\): MEG0112\. Excluding many channels .* clipping.*Set flat_duration to annotate") as exc_info:
             RawMaxwell('raw', flat_duration=None)._make(raw.copy(), path=path)
         assert 'digitization' not in str(exc_info.value)
+        with pytest.raises(DataError, match=r"Excluding many channels .* clipping.*flat are annotated and skipped automatically"):
+            RawMaxwell('raw')._make(raw.copy(), path=path)
 
         # a misplaced sensor is reported even after channels were excluded from the interval
         raw_misplaced = raw.copy()
