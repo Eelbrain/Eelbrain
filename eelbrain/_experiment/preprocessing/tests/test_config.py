@@ -269,6 +269,13 @@ def test_maxwell_ill_conditioned_context():
             RawMaxwell('raw', flat_duration=None)._make(raw.copy(), path=path)
         assert 'digitization' not in str(exc_info.value)
 
+        # a misplaced sensor is reported even after channels were excluded from the interval
+        raw_misplaced = raw.copy()
+        raw_misplaced.info['chs'][mne.pick_types(raw.info, meg=True)[0]]['loc'][:3] = 0.
+        with pytest.raises(DataError, match=r"after excluding 2 noisy channels .* 1 MEG sensor located inside the head sphere .*: MEG0113\. Mark") as exc_info:
+            RawMaxwell('raw', flat_duration=None)._make(raw_misplaced, path=path)
+        assert 'Excluding many channels' not in str(exc_info.value)
+
 
 def test_raw_filter_predictor_nyquist():
     "A low-pass at or above the predictor's Nyquist frequency is skipped; the high-pass is kept"

@@ -1024,32 +1024,33 @@ class RawMaxwell(CachedRawPipe):
                 flat_context = f"; {mne_log.flat}"
             else:
                 flat_context = ''
-            if phase == 'detection' and mne_log.excluded:
+            if phase == 'filter':
+                context = "The error occurred in the Maxwell filter, after bad channel detection."
+            elif mne_log.excluded:
                 # The detection excludes the noisiest channel from the interval and repeats until none exceeds the limit; an artifact affecting many channels at once (e.g., clipping) shrinks the basis until it is ill-conditioned
                 context = f"The error occurred during bad channel detection in {mne_log.interval}, after excluding {n_of(len(mne_log.excluded), 'noisy channel')} from this interval ({', '.join(mne_log.excluded)}){flat_context}."
-                hint = "Excluding many channels from one interval indicates an artifact affecting many channels in that segment (e.g., clipping), not a problem with the sensor geometry. Segments in which channels are flat are annotated and skipped automatically (see flat_duration); mark other artifacts with BAD_ annotations and list them in skip_by_annotation, or use RawMaxwell(bad_condition='warning') to proceed anyway."
             else:
-                if phase == 'filter':
-                    context = "The error occurred in the Maxwell filter, after bad channel detection."
-                else:
-                    context = f"The error occurred during bad channel detection in {mne_log.interval or 'the first interval'}, with the initial sensor geometry{flat_context}."
-                generic_hint = "This usually indicates an inaccurate head digitization or device-to-head transform, which misplace the automatically fitted origin, or too many bad channels. Check the recording's digitization and head position; alternatively, set the origin explicitly, lower int_order, or use RawMaxwell(bad_condition='warning') to proceed anyway."
-                # A sensor with a wrong location close to the origin dominates the internal basis; MNE does not check sensor positions, so list the MEG sensors inside the head sphere
-                try:
-                    radius, origin = mne.bem.fit_sphere_to_headshape(raw.info, units='m', verbose=False)[:2]
-                except (RuntimeError, ValueError) as fit_error:
-                    # No or too few digitization points; MNE only needs them itself for origin='auto', so the filter can get this far without them
-                    hint = f"{generic_hint} MEG sensor positions could not be checked against the head sphere: {fit_error}"
-                else:
-                    if not isinstance(shared_kwargs.get('origin', 'auto'), str):
-                        origin = numpy.asarray(shared_kwargs['origin'], float)
-                    picks = mne.pick_types(raw.info, meg=True, ref_meg=False, exclude='bads')
-                    sensor_locs = mne.transforms.apply_trans(raw.info['dev_head_t'], numpy.array([raw.info['chs'][i]['loc'][:3] for i in picks]))
-                    misplaced = [raw.ch_names[i] for i, distance in zip(picks, numpy.linalg.norm(sensor_locs - origin, axis=1)) if distance < radius]
-                    if misplaced:
-                        hint = f"{n_of(len(misplaced), 'MEG sensor')} located inside the head sphere (radius {radius * 1000:.0f} mm), indicating wrong channel positions: {', '.join(misplaced)}. Mark these channels as bad or fix their positions."
-                    else:
-                        hint = generic_hint
+                context = f"The error occurred during bad channel detection in {mne_log.interval or 'the first interval'}, with the initial sensor geometry{flat_context}."
+            # A sensor with a wrong location close to the origin dominates the internal basis; MNE does not check sensor positions, so list the MEG sensors inside the head sphere
+            try:
+                radius, origin = mne.bem.fit_sphere_to_headshape(raw.info, units='m', verbose=False)[:2]
+            except (RuntimeError, ValueError) as fit_error:
+                # No or too few digitization points; MNE only needs them itself for origin='auto', so the filter can get this far without them
+                misplaced = []
+                sensor_check = f" MEG sensor positions could not be checked against the head sphere: {fit_error}"
+            else:
+                if not isinstance(shared_kwargs.get('origin', 'auto'), str):
+                    origin = numpy.asarray(shared_kwargs['origin'], float)
+                picks = mne.pick_types(raw.info, meg=True, ref_meg=False, exclude='bads')
+                sensor_locs = mne.transforms.apply_trans(raw.info['dev_head_t'], numpy.array([raw.info['chs'][i]['loc'][:3] for i in picks]))
+                misplaced = [raw.ch_names[i] for i, distance in zip(picks, numpy.linalg.norm(sensor_locs - origin, axis=1)) if distance < radius]
+                sensor_check = ''
+            if misplaced:
+                hint = f"{n_of(len(misplaced), 'MEG sensor')} located inside the head sphere (radius {radius * 1000:.0f} mm), indicating wrong channel positions: {', '.join(misplaced)}. Mark these channels as bad or fix their positions."
+            elif phase == 'detection' and mne_log.excluded:
+                hint = f"Excluding many channels from one interval indicates an artifact affecting many channels in that segment (e.g., clipping), not a problem with the sensor geometry. Segments in which channels are flat are annotated and skipped automatically (see flat_duration); mark other artifacts with BAD_ annotations and list them in skip_by_annotation, or use RawMaxwell(bad_condition='warning') to proceed anyway.{sensor_check}"
+            else:
+                hint = f"This usually indicates an inaccurate head digitization or device-to-head transform, which misplace the automatically fitted origin, or too many bad channels. Check the recording's digitization and head position; alternatively, set the origin explicitly, lower int_order, or use RawMaxwell(bad_condition='warning') to proceed anyway.{sensor_check}"
             raise DataError(f"{fpath}: the SSS basis is ill-conditioned ({'; '.join([str(error), *mne_log.messages])}). {context} {hint}") from error
         finally:
             logging.getLogger('mne').removeFilter(mne_log)
