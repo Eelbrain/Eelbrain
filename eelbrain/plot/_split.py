@@ -7,7 +7,6 @@ import numpy
 
 from .._trf.shared import Splits, split_data
 from .._data_obj import Dataset, CategorialArg, NDVarArg, asndvar
-from .._utils import deprecate_ds_arg
 from ._base import EelFigure, Layout, LegendMixin, LegendArg
 from ._styles import colors_for_oneway
 
@@ -82,7 +81,6 @@ class DataSplit(EelFigure, LegendMixin):
         LegendMixin._fill_toolbar(self, tb)
 
 
-@deprecate_ds_arg
 def preview_partitions(
     cases: int | NDVarArg = 0,
     partitions: int = None,

@@ -21,7 +21,6 @@ from scipy.spatial import ConvexHull
 from .._colorspaces import UNAMBIGUOUS_COLORS
 from .._data_obj import NDVar, NDVarArg, CategorialArg, IndexArg, Dataset, Sensor
 from .._text import ms
-from .._utils import deprecate_ds_arg
 from ._base import (
     CMapArg, ColorArg,
     PlotType, EelFigure, PlotData, AxisData, DataLayer,
@@ -119,7 +118,7 @@ class Topomap(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
      - ``T``: open a larger ``Topomap`` plot with visible sensor names for the
        map under the mouse pointer.
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: NDVarArg | Sequence[NDVarArg],
@@ -269,7 +268,7 @@ class TopomapBins(SensorMapMixin, ColorMapMixin, TopoMapKey, EelFigure):
      - ``T``: open a larger ``Topomap`` plot with visible sensor names for the
        map under the mouse pointer.
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: NDVarArg | Sequence[NDVarArg],
@@ -472,7 +471,6 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
     """
     _default_xlabel_ax = -2
 
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg | Sequence[NDVarArg] | Sequence[Sequence[NDVarArg]],
@@ -1024,7 +1022,6 @@ class TopoArray(ColorMapMixin, TopoMapKey, XAxisMixin, EelFigure):
     """
     _make_axes = False
 
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg | Sequence[NDVarArg],

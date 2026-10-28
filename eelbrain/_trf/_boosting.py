@@ -37,7 +37,7 @@ from .._data_obj import Case, Dataset, Dimension, SourceSpaceBase, NDVar, Catego
 from .._exceptions import OldVersionError
 from .._ndvar.ndvar import _concatenate_values, set_adjacency, set_parc
 from .._ndvar._convolve import convolve_1d, convolve_2d
-from .._utils import PickleableDataClass, deprecate_ds_arg, user_activity
+from .._utils import PickleableDataClass, user_activity
 from .shared import PredictorData, DeconvolutionData, Split, Splits, merge_segments
 from ._fit_metrics import get_evaluators
 from . import _boosting_opt as opt
@@ -411,7 +411,6 @@ class BoostingResult(PickleableDataClass):
             # Due to the normalization:
             return self.n_samples
 
-    @deprecate_ds_arg
     def cross_predict(
             self,
             x: NDVarArg | Sequence[NDVarArg] = None,
@@ -1032,7 +1031,6 @@ class Boosting:
 
 
 @user_activity
-@deprecate_ds_arg
 def boosting(
         y: NDVarArg,
         x: NDVarArg | Sequence[NDVarArg],

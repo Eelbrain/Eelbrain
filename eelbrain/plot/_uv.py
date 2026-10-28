@@ -16,7 +16,6 @@ import matplotlib as mpl
 from .._celltable import Celltable
 from .._data_obj import VarArg, CategorialArg, UVArg, IndexArg, CellArg, Dataset, Var, asuv, asvar, ascategorial, assub, cellname
 from .._stats import test, stats
-from .._utils import deprecate_ds_arg
 from ._base import EelFigure, Layout, LegendArg, LegendMixin, CategorialAxisMixin, ColorBarMixin, XAxisMixin, YLimMixin, frame_title
 from ._styles import ColorArg, ColorsArg, find_cell_styles
 
@@ -254,7 +253,7 @@ class Boxplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
         Also accepts :ref:`general-layout-parameters` and
         :meth:`~matplotlib.axes.Axes.boxplot` parameters.
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: VarArg,
@@ -388,7 +387,7 @@ class Barplot(CategorialAxisMixin, YLimMixin, _SimpleFigure):
     ...
         Also accepts :ref:`general-layout-parameters`.
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: VarArg,
@@ -524,7 +523,7 @@ class BarplotHorizontal(XAxisMixin, CategorialAxisMixin, _SimpleFigure):
     ...
         Also accepts :ref:`general-layout-parameters`.
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: VarArg,
@@ -842,7 +841,7 @@ class Timeplot(LegendMixin, YLimMixin, EelFigure):
     ...
         Also accepts :ref:`general-layout-parameters`.
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: VarArg,
@@ -1080,7 +1079,7 @@ class Scatter(EelFigure, LegendMixin, ColorBarMixin):
     ...
         Also accepts :ref:`general-layout-parameters`.
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: VarArg,
@@ -1206,7 +1205,7 @@ class Regression(EelFigure, LegendMixin):
     ...
         Also accepts :ref:`general-layout-parameters`.
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: VarArg,
@@ -1332,7 +1331,7 @@ class Histogram(EelFigure):
         Match cases for a repeated measures design.
     sub
         Use a subset of the data.
-    ds : Dataset
+    data : Dataset
         If a Dataset is specified, all data-objects can be specified as
         names of Dataset variables
     pooled
@@ -1356,7 +1355,7 @@ class Histogram(EelFigure):
     ...
         Also accepts :ref:`general-layout-parameters`.
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: VarArg | Sequence[float],

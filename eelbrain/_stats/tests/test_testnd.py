@@ -164,7 +164,7 @@ def test_anova_parc():
     y = ds['src'].sub(source=('lateraloccipital-lh', 'cuneus-lh'))
     y1 = y.sub(source='lateraloccipital-lh')
     y2 = y.sub(source='cuneus-lh')
-    kwa = dict(ds=ds, tstart=0.2, tstop=0.3, samples=100)
+    kwa = dict(data=ds, tstart=0.2, tstop=0.3, samples=100)
 
     resp = testnd.ANOVA(y, "side*modality", pmin=0.05, parc='source', **kwa)
     c1p = resp.find_clusters(source='lateraloccipital-lh')

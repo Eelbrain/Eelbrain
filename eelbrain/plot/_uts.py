@@ -11,7 +11,6 @@ import numpy as np
 from .._colorspaces import oneway_colors
 from .._data_obj import NDVarArg, Case, CategorialArg, CellArg, IndexArg, Dataset, NDVar, asndvar, cellname, longname
 from .._stats.testnd import NDTest
-from .._utils import deprecate_ds_arg
 from . import _base
 from ._base import AxisData, EelFigure, Layout, LegendArg, LegendMixin, PlotType, PlotData, StatLayer, DataLayer, TimeSlicerEF, XAxisMixin, YLimMixin
 from ._styles import Style, to_styles_dict
@@ -138,18 +137,18 @@ class UTSStat(LegendMixin, XAxisMixin, YLimMixin, EelFigure):
     --------
     Single :class:`NDVar` from a Dataset::
 
-        plot.UTSStat('uts', 'A', 'B', match='rm', ds=ds)
+        plot.UTSStat('uts', 'A', 'B', match='rm', data=ds)
 
     Multiple :class:`NDVar` in different axes
 
-        plot.UTSStat(['uts1', 'uts2'], 'A', match='rm', ds=ds)
+        plot.UTSStat(['uts1', 'uts2'], 'A', match='rm', data=ds)
 
     Multiple :class:`NDVar` in a single axes::
 
-        plot.UTSStat([['uts1', 'uts2']], match=True, ds=ds)
+        plot.UTSStat([['uts1', 'uts2']], match=True, data=ds)
 
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: NDVarArg | Sequence[NDVarArg],
@@ -412,7 +411,7 @@ class UTS(TimeSlicerEF, LegendMixin, YLimMixin, XAxisMixin, EelFigure):
      - ``r``: y-axis zoom in (reduce y-axis range)
      - ``c``: y-axis zoom out (increase y-axis range)
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: NDVarArg | Sequence | NDTest,

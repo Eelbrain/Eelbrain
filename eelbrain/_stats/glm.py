@@ -21,7 +21,6 @@ from .._data_obj import (
     ModelArg, IndexArg, VarArg,
     Dataset, Model, asmodel, assub, asvar, assert_has_no_empty_cells, find_factors,
     hasrandom, is_higher_order_effect, isbalanced, iscategorial, isnestedin)
-from .._utils import deprecate_ds_arg
 from .opt import anova_fmaps, anova_full_fmaps, lm_res_ss, ss
 from . import test
 
@@ -801,7 +800,6 @@ class IncrementalFTest:
         return f"<{self.__class__.__name__}{name}: {self._asfmtext()}"
 
 
-@deprecate_ds_arg
 class ANOVA:
     """Univariate ANOVA.
 

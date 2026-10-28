@@ -16,7 +16,6 @@ from .._data_obj import (
     ascategorial, asnumeric, assub, asvar, asndvar,
     combine, cellname, dataobj_repr, nice_label,
 )
-from .._utils import deprecate_ds_arg
 from . import stats
 
 
@@ -73,7 +72,6 @@ class Correlation:
 
     _statistic = 'r'
 
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NumericArg,
@@ -128,7 +126,7 @@ class RankCorrelation(Correlation):
         Second variable. Needs to have same type/shape as ``y``.
     sub : index
         Use only a subset of the data
-    ds : Dataset
+    data : Dataset
         If a Dataset is given, all data-objects can be specified as names of
         Dataset variables.
 
@@ -453,7 +451,6 @@ def _related_measures_args(y, x, c1, c0, match, data, sub, nd_data=False):
     return y1, y0, c1, c0, match, n, x_name, c1_name, c0_name
 
 
-@deprecate_ds_arg
 def ttest(
         y: VarArg,
         x: CategorialArg = None,
@@ -652,7 +649,6 @@ class TTestOneSample(TTest):
     df: int
     d: float
 
-    @deprecate_ds_arg
     def __init__(
             self,
             y: VarArg,
@@ -739,7 +735,6 @@ class TTestIndependent(TTest):
     tail: int
     df: int
 
-    @deprecate_ds_arg
     def __init__(
             self,
             y: VarArg,
@@ -856,7 +851,6 @@ class MannWhitneyU:
 
     _statistic = 'U'
 
-    @deprecate_ds_arg
     def __init__(
             self,
             y: VarArg,
@@ -976,7 +970,6 @@ class TTestRelated(TTest):
     c0_mean: float
     d: float
 
-    @deprecate_ds_arg
     def __init__(
             self,
             y: VarArg,
@@ -1097,7 +1090,6 @@ class WilcoxonSignedRank:
 
     _statistic = 'W'
 
-    @deprecate_ds_arg
     def __init__(
             self,
             y: VarArg,
@@ -1149,7 +1141,6 @@ class WilcoxonSignedRank:
         return fmtxt.Stars.from_p(self.p)
 
 
-@deprecate_ds_arg
 def pairwise(
         y: VarArg,
         x: CategorialArg,
@@ -1325,7 +1316,6 @@ def _pairwise(
     }
 
 
-@deprecate_ds_arg
 def pairwise_correlations(
         xs: Sequence[str | Var | NDVar],
         sub: IndexArg = None,

@@ -10,7 +10,6 @@ from .. import _info, fmtxt
 from ..fmtxt import FMTextLike
 from .._data_obj import Dataset, Factor, Var, NDVar, Case, IndexArg, ModelArg, NDVarArg, Parametrization, PermutedParametrization, asmodel, asndvar, assub, combine
 from .._exceptions import DimensionMismatchError
-from .._utils import deprecate_ds_arg
 from . import stats
 from .glm import MPTestMapper
 from .test import star
@@ -109,7 +108,6 @@ class LM(MultiEffectNDTest):
     _state_specific = ('model', 'coding', '_coeffs_flat', '_se_flat', 'subject_variables', '_parametrization', '_y_info')
     # _statistic = 't'  # would be consistent with testnd but require turning LM.t() into an attr
 
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg,

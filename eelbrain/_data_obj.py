@@ -89,10 +89,10 @@ plot.Scatter('y.log()', ..., data=data)  # -> 'log(Cluster value)'
 
 # This situation is ambiguous / could go either way
 data['ydiv'] = 1 / data['y']
-plot.Scatter('ydiv', ..., ds=ds)  # -> '1 / Cluster value'
+plot.Scatter('ydiv', ..., data=ds)  # -> '1 / Cluster value'
 # This is probably more conservative:
 ds['Realname'] = 1 / ds['y']
-plot.Scatter('Realname', ..., ds=ds)  # -> 'Realname'
+plot.Scatter('Realname', ..., data=ds)  # -> 'Realname'
 ```
 """
 from __future__ import annotations

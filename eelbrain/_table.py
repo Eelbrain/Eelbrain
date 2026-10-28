@@ -15,10 +15,8 @@ from ._data_obj import (
     Categorial, Dataset, Factor, Interaction, NDVar, Scalar, UTS,
     Var, ascategorial, as_legal_dataset_key, asndvar, asvar, assub, asuv,
     cellname, combine, isuv)
-from ._utils import deprecate_ds_arg
 
 
-@deprecate_ds_arg
 def difference(
         y: NDVar | VarArg | Sequence[NDVar | VarArg],
         x: CategorialArg,
@@ -106,7 +104,6 @@ def difference(
     return out
 
 
-@deprecate_ds_arg
 def frequencies(
         y: UVArg,
         x: CategorialArg = None,
@@ -434,7 +431,6 @@ def melt_ndvar(
     return out
 
 
-@deprecate_ds_arg
 def cast_to_ndvar(
         y: VarArg | Sequence[VarArg],
         dim_values: VarArg | Factor,
@@ -550,7 +546,6 @@ def cast_to_ndvar(
     return out
 
 
-@deprecate_ds_arg
 def stats(
         y: Var,
         row: CategorialArg,

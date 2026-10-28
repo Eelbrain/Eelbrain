@@ -9,7 +9,6 @@ import numpy as np
 from .._data_obj import NDVar, NDVarArg, CategorialArg, IndexArg, Datalist, Dataset
 from .._stats.testnd import NDTest
 from .._info import INTERPOLATE_CHANNELS
-from .._utils import deprecate_ds_arg
 from . import _base
 from ._base import (
     PlotType, CMapArg,
@@ -246,7 +245,7 @@ class Array(TimeSlicerEF, ColorMapMixin, XAxisMixin, EelFigure):
      - ``f``: zoom in (reduce x axis range)
      - ``d``: zoom out (increase x axis range)
     """
-    @deprecate_ds_arg
+
     def __init__(
             self,
             y: NDVarArg | Sequence[NDVarArg],
@@ -469,7 +468,6 @@ class Butterfly(TimeSlicerEF, LegendMixin, TopoMapKey, YLimMixin, XAxisMixin, Ee
     # keep track of open butterfly combo plots to optimally position new plots on screen
     _OPEN_PLOTS = []
 
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg | Sequence | NDTest,

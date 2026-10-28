@@ -6,10 +6,8 @@ from collections.abc import Sequence
 import numpy as np
 
 from .._data_obj import NDVarArg, NDVar, Case, Dataset, UTS, asndvar, asarray
-from .._utils import deprecate_ds_arg
 
 
-@deprecate_ds_arg
 def epoch_impulse_predictor(
         shape: NDVarArg | tuple[int, UTS],
         value: float | Sequence[float] | str = 1,
@@ -70,7 +68,6 @@ def epoch_impulse_predictor(
     return NDVar(x, (Case, time), name)
 
 
-@deprecate_ds_arg
 def event_impulse_predictor(
         shape: NDVarArg | UTS,
         time: str | Sequence[float] = 'time',

@@ -30,7 +30,6 @@ from .._mne import complete_source_space
 from .._stats.adjacency import Adjacency
 from .._stats.adjacency import find_peaks as _find_peaks
 from .._trf._fit_metrics import error_for_indexes
-from .._utils import deprecate_ds_arg
 from .._utils.numpy_utils import aslice
 from ._convolve import convolve_2d
 
@@ -915,7 +914,6 @@ def neighbor_correlation(
     return NDVar(ncs, (dim_obj,), name, info)
 
 
-@deprecate_ds_arg
 def normalize_in_cells(
         y: NDVarArg,
         for_dim: str,

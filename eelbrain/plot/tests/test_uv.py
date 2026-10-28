@@ -110,12 +110,12 @@ def test_scatter():
 def test_histogram():
     "Test plot.Histogram"
     ds = datasets.get_uts()
-    plot.Histogram('Y', 'A%B', ds=ds)
-    plot.Histogram('Y', 'A%B', match='rm', ds=ds)
-    plot.Histogram('Y', 'A%B', match='rm', ds=ds, density=True)
-    plot.Histogram('Y', 'A%B', ds=ds, test=True)
-    plot.Histogram('Y', 'A%B', match='rm', ds=ds, test=True)
-    plot.Histogram('Y', 'A%B', match='rm', ds=ds, density=True, test=True)
+    plot.Histogram('Y', 'A%B', data=ds)
+    plot.Histogram('Y', 'A%B', match='rm', data=ds)
+    plot.Histogram('Y', 'A%B', match='rm', data=ds, density=True)
+    plot.Histogram('Y', 'A%B', data=ds, test=True)
+    plot.Histogram('Y', 'A%B', match='rm', data=ds, test=True)
+    plot.Histogram('Y', 'A%B', match='rm', data=ds, density=True, test=True)
 
 
 @hide_plots

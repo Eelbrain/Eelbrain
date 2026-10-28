@@ -50,7 +50,7 @@ from .._data_obj import (
     ascategorial, asmodel, asndvar, asvar, assub,
     cellname, combine, dataobj_repr, longname)
 from .._exceptions import OldVersionError, WrongDimensionError, ZeroVarianceError
-from .._utils import deprecate_ds_arg, user_activity, restore_main_spec
+from .._utils import user_activity, restore_main_spec
 from .._utils.numpy_utils import FULL_AXIS_SLICE
 from .._utils.notebooks import trange
 from . import opt, stats, vector
@@ -539,7 +539,6 @@ class TContrastRelated(NDTest):
     _statistic = 't'
 
     @user_activity
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg,
@@ -700,7 +699,6 @@ class Correlation(NDTest):
     _statistic = 'r'
 
     @user_activity
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg,
@@ -960,7 +958,6 @@ class TTestOneSample(NDDifferenceTest):
     _statistic = 't'
 
     @user_activity
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg,
@@ -1180,7 +1177,6 @@ class TTestIndependent(NDDifferenceTest):
     _statistic = 't'
 
     @user_activity
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg,
@@ -1422,7 +1418,6 @@ class TTestRelated(NDMaskedC1Mixin, NDDifferenceTest):
     _statistic = 't'
 
     @user_activity
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg,
@@ -1855,7 +1850,6 @@ class ANOVA(MultiEffectNDTest):
     _statistic_tail = 1
 
     @user_activity
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg,
@@ -2152,7 +2146,6 @@ class Vector(NDDifferenceTest):
     _state_specific = ('difference', 'n', '_v_dim', 't2')
 
     @user_activity
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg,
@@ -2330,7 +2323,6 @@ class VectorDifferenceIndependent(Vector):
     _statistic = 'norm'
 
     @user_activity
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg,
@@ -2502,7 +2494,6 @@ class VectorDifferenceRelated(NDMaskedC1Mixin, Vector):
     _state_specific = ('x', 'c1', 'c0', 'difference', 'c1_mean', 'c0_mean', 'n', '_v_dim', 't2')
 
     @user_activity
-    @deprecate_ds_arg
     def __init__(
             self,
             y: NDVarArg,
