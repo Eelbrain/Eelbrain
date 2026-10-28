@@ -151,7 +151,10 @@ class EventsInput(Input[Dataset]):
         path = self.path(ctx)
         if not path.exists():
             return None
-        df = pd.read_csv(path, sep='\t', converters=dict.fromkeys(self.event_factors, str))
+        # BIDS designates missing values as 'n/a'; event_factors keep 'n/a' as a literal label
+        # (pandas >= 3.1 applies NA detection to converter output, so restore the label after reading)
+        df = pd.read_csv(path, sep='\t', dtype=dict.fromkeys(self.event_factors, str), keep_default_na=False, na_values=['n/a'])
+        df = df.fillna(dict.fromkeys(self.event_factors, 'n/a'))
         entities = {k: ctx.state[k] for k in BIDS_ENTITY_KEYS}
         return Dataset.from_dataframe(df, info=entities)
 
