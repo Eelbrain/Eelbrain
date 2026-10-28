@@ -211,6 +211,14 @@ def test_maxwell_log_filter():
     assert not filter_message("        Processing 4 data chunks")
     assert filter_message("All-flat segment detected", logging.WARNING)
     assert log.info.call_count == 1
+    # excluded channels are tracked per interval; an unexpected format is kept as is
+    assert not filter_message("        Interval   2:    5.000 -    9.999")
+    assert not filter_message("            Bad:       MEG 046 12.3", logging.DEBUG)
+    assert not filter_message("            Bad:       MEG0113", logging.DEBUG)
+    assert mne_log.interval == "Interval 2: 5.000 - 9.999"
+    assert mne_log.excluded == ["MEG 046 (z=12.3)", "MEG0113"]
+    assert not filter_message("        Interval   3:   10.000 -   14.999")
+    assert mne_log.excluded == []
 
 
 @requires_mne_testing_data

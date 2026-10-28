@@ -791,8 +791,12 @@ class _MNELogFilter(logging.Filter):
             self.interval = ' '.join(message.split())
             self.excluded = []
         elif message.startswith('Bad:'):  # "Bad:       MEG 046 12.3"
-            name, z = message[4:].strip().rsplit(' ', 1)
-            self.excluded.append(f"{name} (z={z})")
+            # An exception here would propagate out of MNE's logging call, so keep the text as is if the format is unexpected
+            excluded = message[4:].strip()
+            name, _, z = excluded.rpartition(' ')
+            if name:
+                excluded = f"{name} (z={z})"
+            self.excluded.append(excluded)
         elif message.startswith('Flat ('):  # "Flat ( 2): MEG 046 MEG 086"
             self.flat = ' '.join(message.split()).replace('( ', '(')
         return False
