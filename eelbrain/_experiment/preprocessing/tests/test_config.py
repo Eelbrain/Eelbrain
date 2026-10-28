@@ -207,10 +207,13 @@ def test_maxwell_log_filter():
     assert not filter_message("    Scanning for bad channels in 0 intervals (5.0 s) ...")
     log.warning.assert_called_once()
     assert "no stretch without BAD_ annotations" in log.warning.call_args.args[0]
+    assert mne_log.messages == []  # not relevant for the ill-conditioned basis error
+    assert not filter_message("    Using origin -1.5, 3.2, 44.9 mm in the head frame")
+    assert mne_log.messages == ["Using origin -1.5, 3.2, 44.9 mm in the head frame"]
     # per-chunk progress is dropped, warnings pass through
     assert not filter_message("        Processing 4 data chunks")
     assert filter_message("All-flat segment detected", logging.WARNING)
-    assert log.info.call_count == 1
+    assert log.info.call_count == 2
     # excluded channels are tracked per interval; an unexpected format is kept as is
     assert not filter_message("        Interval   2:    5.000 -    9.999")
     assert not filter_message("            Bad:       MEG 046 12.3", logging.DEBUG)
