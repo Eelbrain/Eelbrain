@@ -25,7 +25,6 @@ dependencies = [
   'appnope',
   'colormath >= 2.1',
   'keyring >= 5',
-  'libclang',
   'matplotlib >= 3.6',
   'mne >= 1.13',
   'nibabel >= 2.5',
