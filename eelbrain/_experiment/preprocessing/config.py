@@ -1042,8 +1042,10 @@ class RawMaxwell(CachedRawPipe):
             elif mne_log.excluded:
                 # The detection excludes the noisiest channel from the interval and repeats until none exceeds the limit; an artifact affecting many channels at once (e.g., clipping) shrinks the basis until it is ill-conditioned
                 context = f"The error occurred during bad channel detection in {mne_log.interval}, after excluding {n_of(len(mne_log.excluded), 'noisy channel')} from this interval ({', '.join(mne_log.excluded)}){flat_context}."
+            elif mne_log.interval:
+                context = f"The error occurred during bad channel detection in {mne_log.interval}, with the initial sensor geometry{flat_context}."
             else:
-                context = f"The error occurred during bad channel detection in {mne_log.interval or 'the first interval'}, with the initial sensor geometry{flat_context}."
+                context = f"The error occurred during bad channel detection, while preparing the SSS basis for the whole recording with the initial sensor geometry, before any interval was processed{flat_context}."
             # A sensor with a wrong location close to the origin dominates the internal basis; MNE does not check sensor positions, so list the MEG sensors inside the head sphere
             try:
                 radius, origin = mne.bem.fit_sphere_to_headshape(raw.info, units='m', verbose=False)[:2]

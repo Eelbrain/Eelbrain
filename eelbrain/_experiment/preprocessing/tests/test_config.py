@@ -291,6 +291,11 @@ def test_maxwell_ill_conditioned_context():
             RawMaxwell('raw', flat_duration=None)._make(raw.copy(), path=path)
         assert 'Bad MEG channels' not in str(exc_info.value)
 
+        # before any interval was processed
+        heavy['find_bad_channels_maxwell'].side_effect = detector_log()
+        with pytest.raises(DataError, match=r"during bad channel detection, while preparing the SSS basis .* before any interval was processed\. This usually indicates"):
+            RawMaxwell('raw', flat_duration=None)._make(raw.copy(), path=path)
+
         # the first interval, with the initial sensor geometry
         heavy['find_bad_channels_maxwell'].side_effect = detector_log("Interval   1:    0.000 -    4.999")
         with pytest.raises(DataError, match=r"\(Matrix is badly conditioned: 5494 >= 1000; Bad MEG channels being reconstructed: \['MEG0111'\]\)\. The error occurred during bad channel detection in Interval 1: 0.000 - 4.999, with the initial sensor geometry\. This usually indicates an inaccurate head digitization"):
