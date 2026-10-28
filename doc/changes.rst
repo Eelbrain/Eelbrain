@@ -27,6 +27,9 @@ New in 0.43
 
 * Experiment :class:`Pipeline`:
 
+  - ``MneExperiment`` has been renamed to :class:`Pipeline`.
+  - The pipeline now expects `BIDS <https://bids.neuroimaging.org>`_ datasets.
+  - In event variables, the reserved column ``T`` has been renamed to ``time``.
   - New :func:`load_pipeline` helper and ``eelbrain-gui`` command for loading
     a project from a ``pipeline.py`` file and managing data preparation in one
     place.
@@ -108,21 +111,17 @@ New in 0.43
   weight is ~0 in multiple components with a realistic field pattern, while the
   surrounding channels share the same polarity.
 
+* Permutation tests:
 
-New in 0.42
------------
+  - :class:`testnd.Vector` now supports 2D vector fields (e.g., complex valued
+    phase amplitude data) in addition to 3D vector fields (e.g., 3D source
+    space data). The test automatically determines the appropriate
+    randomization scheme based on the dimensionality of the input data.
+  - Due to a bug fix in stats computation, the permutation distribution for
+    vector-based tests may be slightly different.
 
-  * Experiment :class:`Pipeline`:
-    - ``MneExperiment`` has been renamed to :class:`Pipeline`.
-    - The pipeline now expects `BIDS <https://bids.neuroimaging.org>`_ datasets.
-    - In event variables, the reserved column ``T`` has been renamed to ``time``.
-
-  * Permutation tests:
-    - Now ``testnd.Vector()`` supports 2D vector fields (e.g., complex valued phase amplitude data) in addition to 3D vector fields (e.g., 3D source space data). The test will automatically determine the appropriate randomization scheme based on the dimensionality of the input data.
-    - Due to a bug fix in stats computation, the permutation distribution for vector-based tests may be slightly different.
-
-  * Source space:
-    - :func:`morph_source_space` now supports volume source spaces (:class:`VolumeSourceSpace`).
+* Source space: :func:`morph_source_space` now supports volume source spaces
+  (:class:`VolumeSourceSpace`).
 
 
 New in 0.41
