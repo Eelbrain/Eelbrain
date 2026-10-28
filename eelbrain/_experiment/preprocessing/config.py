@@ -764,7 +764,7 @@ class _MNELogFilter(logging.Filter):
 
     Currently only used for Maxwell filtering, with a purpose-built mechanism for tracking the time interval being processed.
     """
-    MESSAGES = ('Automatic origin fit', 'Using origin', 'Bad MEG channels being reconstructed', 'No bad MEG channels', 'Static bad channels', 'Static flat channels')
+    MESSAGES = ('Automatic origin fit', 'Using origin', 'Bad MEG channels being reconstructed', 'No bad MEG channels', 'Scanning for bad channels', 'Static bad channels', 'Static flat channels')
 
     def __init__(self, logger: logging.Logger, raw_name: str):
         super().__init__()
@@ -782,7 +782,11 @@ class _MNELogFilter(logging.Filter):
         if message.startswith(self.MESSAGES):
             if message not in self.messages:
                 self.messages.append(message)
-                self.logger.info("Raw %s: %s", self.raw_name, message)
+                # Bad channel detection only scans good stretches of at least `duration`; frequent BAD_ annotations can leave none
+                if message.startswith('Scanning for bad channels in 0 '):
+                    self.logger.warning("Raw %s: %s (no stretch without BAD_ annotations is long enough for bad channel detection)", self.raw_name, message)
+                else:
+                    self.logger.info("Raw %s: %s", self.raw_name, message)
         elif message.startswith('Interval'):  # "Interval   3:   10.000 -   14.999"
             self.interval = ' '.join(message.split())
             self.excluded = []

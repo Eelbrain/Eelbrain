@@ -11,6 +11,7 @@ import pytest
 from eelbrain import NDVar, UTS, filter_data
 from eelbrain._exceptions import ConfigurationError, DataError
 from eelbrain._experiment.preprocessing import RawFilter, RawMaxwell, RawSource
+from eelbrain._experiment.preprocessing.config import _MNELogFilter
 from eelbrain._experiment.trf import filter_predictor
 from eelbrain.testing import requires_mne_testing_data
 
@@ -190,6 +191,26 @@ def test_maxwell_movement_annotations():
         annotate_movement.reset_mock()
         pipe._make(raw, path=path, head_pos=head_pos[:1])
         annotate_movement.assert_not_called()
+
+
+def test_maxwell_log_filter():
+    "MNE's messages about the bad channel detection are forwarded to the pipeline log; a detection without intervals is a warning"
+    log = MagicMock()
+    mne_log = _MNELogFilter(log, 'raw')
+
+    def filter_message(message, level=logging.INFO):
+        return mne_log.filter(logging.LogRecord('mne', level, '', 0, message, None, None))
+
+    assert not filter_message("    Scanning for bad channels in 3 intervals (5.0 s) ...")
+    log.info.assert_called_once_with("Raw %s: %s", 'raw', "Scanning for bad channels in 3 intervals (5.0 s) ...")
+    log.warning.assert_not_called()
+    assert not filter_message("    Scanning for bad channels in 0 intervals (5.0 s) ...")
+    log.warning.assert_called_once()
+    assert "no stretch without BAD_ annotations" in log.warning.call_args.args[0]
+    # per-chunk progress is dropped, warnings pass through
+    assert not filter_message("        Processing 4 data chunks")
+    assert filter_message("All-flat segment detected", logging.WARNING)
+    assert log.info.call_count == 1
 
 
 @requires_mne_testing_data
