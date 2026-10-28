@@ -31,8 +31,7 @@ New in 0.43
   - The pipeline now expects `BIDS <https://bids.neuroimaging.org>`_ datasets.
   - Event variables use the column names of BIDS ``events.tsv`` files:
     ``i_start`` is now ``sample``, ``trigger`` is now ``value``, and event
-    times in seconds are in ``onset`` (for events read from ``events.tsv``
-    files). The derived ``T`` and ``SOA`` columns are no longer added.
+    times in seconds are in ``onset``.
   - New :func:`load_pipeline` helper and ``eelbrain-gui`` command for loading
     a project from a ``pipeline.py`` file and managing data preparation in one
     place.
