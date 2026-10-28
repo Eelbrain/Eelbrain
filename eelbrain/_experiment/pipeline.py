@@ -842,7 +842,7 @@ class Pipeline(StateModel):
         -------
         ds : Dataset
             Should return the modified events dataset. Needs to contain at least
-            the ``i_start`` and ``trigger`` columns.
+            the ``sample`` and ``value`` columns.
 
 
         See Also
