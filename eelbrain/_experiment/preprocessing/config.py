@@ -1055,6 +1055,7 @@ class RawMaxwell(CachedRawPipe):
                 sensor_locs = mne.transforms.apply_trans(raw.info['dev_head_t'], numpy.array([raw.info['chs'][i]['loc'][:3] for i in picks]))
                 misplaced = [raw.ch_names[i] for i, distance in zip(picks, numpy.linalg.norm(sensor_locs - origin, axis=1)) if distance < radius]
                 sensor_check = ''
+            generic_hint = "an inaccurate head digitization or device-to-head transform, which misplace the automatically fitted origin, or too many bad channels. Check the recording's digitization and head position; alternatively, set the origin explicitly, lower int_order, or use RawMaxwell(bad_condition='warning') to proceed anyway."
             if misplaced:
                 hint = f"{n_of(len(misplaced), 'MEG sensor')} located inside the head sphere (radius {radius * 1000:.0f} mm), indicating wrong channel positions: {', '.join(misplaced)}. Mark these channels as bad or fix their positions."
             elif phase == 'detection' and mne_log.excluded:
@@ -1062,9 +1063,9 @@ class RawMaxwell(CachedRawPipe):
                     flat_hint = "Set flat_duration to annotate and skip segments in which channels are flat"
                 else:
                     flat_hint = "Segments in which channels are flat are annotated and skipped automatically (see flat_duration)"
-                hint = f"Excluding many channels from one interval indicates an artifact affecting many channels in that segment (e.g., clipping), not a problem with the sensor geometry. {flat_hint}; mark other artifacts with BAD_ annotations and list them in skip_by_annotation, or use RawMaxwell(bad_condition='warning') to proceed anyway.{sensor_check}"
+                hint = f"Excluding many channels from one interval indicates an artifact affecting many channels in that segment (e.g., clipping) rather than a problem with the sensor geometry. {flat_hint}; mark other artifacts with BAD_ annotations and list them in skip_by_annotation. Otherwise, this usually indicates {generic_hint}{sensor_check}"
             else:
-                hint = f"This usually indicates an inaccurate head digitization or device-to-head transform, which misplace the automatically fitted origin, or too many bad channels. Check the recording's digitization and head position; alternatively, set the origin explicitly, lower int_order, or use RawMaxwell(bad_condition='warning') to proceed anyway.{sensor_check}"
+                hint = f"This usually indicates {generic_hint}{sensor_check}"
             raise DataError(f"{fpath}: the SSS basis is ill-conditioned ({'; '.join([str(error), *mne_log.messages])}). {context} {hint}") from error
         finally:
             logging.getLogger('mne').removeFilter(mne_log)
