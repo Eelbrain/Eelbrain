@@ -250,11 +250,12 @@ def test_maxwell_flat_segments():
         RawMaxwell('raw', skip_by_annotation='bad_mov')._make(raw.copy(), path=path)
         assert heavy['maxwell_filter'].call_args.kwargs['skip_by_annotation'] == ('bad_mov', 'bad_flat')
 
-        # flat_duration=None disables the annotation; find_bad_channels_maxwell then finds the dead channel
+        # flat_duration=None disables the annotation and leaves the dead channel to find_bad_channels_maxwell (mocked here)
         raw_sss = RawMaxwell('raw', flat_duration=None)._make(raw.copy(), path=path)
         detector_raw = heavy['find_bad_channels_maxwell'].call_args.args[0]
         assert detector_raw.info['bads'] == []
         assert 'BAD_flat' not in raw_sss.annotations.description
+        assert 'skip_by_annotation' not in heavy['find_bad_channels_maxwell'].call_args.kwargs
         assert 'skip_by_annotation' not in heavy['maxwell_filter'].call_args.kwargs
 
         # a stretch shorter than flat_duration is not annotated
