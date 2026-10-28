@@ -29,7 +29,7 @@ from ._ndvar.uts import pad
 from ._stats.testnd import NDTest, MultiEffectNDTest
 from ._trf._boosting import boosting, BoostingResult
 from ._trf._predictors import epoch_impulse_predictor, event_impulse_predictor
-from ._trf.shared import Splits
+from ._trf.shared import Split, Splits, split_data
 from ._utils import set_log_level
 from ._utils.system import system_info
 
@@ -42,6 +42,7 @@ from . import save
 from . import table
 from . import test
 from . import testnd
+from . import trf
 
 from .fmtxt import Report
 

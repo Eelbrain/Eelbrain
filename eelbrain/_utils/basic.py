@@ -2,7 +2,7 @@
 "A few basic operations needed throughout Eelbrain"
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from dataclasses import fields
 import functools
 import inspect
 import logging
@@ -294,7 +294,6 @@ def intervals(seq, first=None):
         last = item
 
 
-@dataclass
 class PickleableDataClass:
 
     def __getstate__(self) -> dict:

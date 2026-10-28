@@ -9,6 +9,7 @@ try:
 except ImportError:
     from scipy.stats import SpearmanRConstantInputWarning as ConstantInputWarning  # < 1.9
 
+from .. import _info
 from ._boosting_opt import error_for_indexes
 from .shared import DeconvolutionData
 
@@ -24,11 +25,11 @@ class Evaluator:
             data: DeconvolutionData,
             segments: list[np.ndarray] = None,  # evaluations for different test-segments
     ):
-        n = len(data.y)
+        n = data.y.n_rows
         if self.vector:
-            if not data.vector_dim:
+            if not data.y.vector_dim:
                 raise ValueError(f"{self.__class__.__name__}: Vector evaluator for non-vector data")
-            n //= len(data.vector_dim)
+            n //= len(data.y.vector_dim)
         self.data = data
         self.segments = segments
         self.xs = [np.empty(n, np.float64) for _ in segments]
@@ -57,7 +58,8 @@ class Evaluator:
 
     def get(self, i: int = 0):
         "Fit metric for the ``i``-th entry of ``segments``"
-        return self.data.package_value(self.xs[i], self.name, meas=self.meas)
+        info = _info.for_stat_map(self.meas) if self.meas else None
+        return self.data.y.package_values(self.xs[i], self.name, info)[0]
 
 
 class L1(Evaluator):
@@ -254,7 +256,7 @@ class VectorCorrelation(Evaluator):
         y_scale = (y_norm ** 2).mean() ** 0.5
         if y_scale == 0:
             return 0
-        elif self.data.scale_data == 'l2':
+        elif self.data.y.scale_norm == 'l2':
             y_l2 = y
         else:
             y_l2 = y / y_scale
@@ -281,7 +283,7 @@ class VectorCorrelationL1(VectorCorrelation):
         y_scale = y_norm.mean()
         if y_scale == 0:
             return 0
-        elif self.data.scale_data == 'l1':
+        elif self.data.y.scale_norm == 'l1':
             y_l1 = y
         else:
             y_l1 = y / y_scale
