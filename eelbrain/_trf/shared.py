@@ -191,9 +191,9 @@ class Splits(PickleableDataClass, EQMixIn):
         ``(n_sections, 2)`` array of the sections into which the data was
         subdivided to form partitions.
     split
-        The partitioning scheme, ``'cases'``, ``'time'`` or ``'within_cases'``
-        (see :func:`split_data`; ``None`` for splits created before this
-        attribute was added).
+        The partitioning scheme, ``'cases'``, ``'time'``, ``'within_cases'``
+        or ``'walk-forward'`` (see :func:`split_data`; ``None`` for splits
+        created before this attribute was added).
     """
     splits: list[Split]
     partitions_arg: int | None
@@ -203,7 +203,7 @@ class Splits(PickleableDataClass, EQMixIn):
     model: CategorialArg = None
     segments: np.ndarray = None
     split_segments: np.ndarray = None
-    split: Literal['cases', 'time', 'within_cases'] = None
+    split: Literal['cases', 'time', 'within_cases', 'walk-forward'] = None
 
     def __setstate__(self, state: dict):
         # Backwards compatibility for BoostingResult version < 18
@@ -264,7 +264,7 @@ def split_data(
         data: Dataset | None = None,
         validate: int = 1,
         test: int = 1,
-        split: Literal['cases', 'time', 'within_cases'] = None,
+        split: Literal['cases', 'time', 'within_cases', 'walk-forward'] = None,
         min_section: int = 0,
 ) -> Splits:
     """Split data segments into train, validate and test segments
@@ -291,8 +291,11 @@ def split_data(
         partition from whole segments; ``'time'`` to form partitions from
         contiguous spans of the concatenated time axis; ``'within_cases'`` to
         divide each segment into ``partitions`` pieces of equal length and
-        form partition *i* from the *i*-th piece of every segment. The default
-        is ``'cases'`` for segmented data and ``'time'`` for continuous data.
+        form partition *i* from the *i*-th piece of every segment;
+        ``'walk-forward'`` (a single segment or segments of equal length) to
+        hold out ``partitions`` short windows at the end of every segment, each
+        with only the data preceding it as training set. The default is
+        ``'cases'`` for segmented data and ``'time'`` for continuous data.
     min_section
         With ``split='time'``, minimum length (in samples) of the pieces left
         when a segment is cut: a span boundary that would leave a shorter piece
@@ -368,6 +371,19 @@ def split_data(
     relative position within the segments (e.g., the first partition contains
     the beginning of every segment).
 
+    **Walk-forward** (``split='walk-forward'``): the training data always
+    precedes the held-out data. This is the scheme the NCRF package uses to
+    select its regularization parameter, for a single segment or segments of
+    equal length. The last ``partitions`` windows of every segment, each
+    ``ceil(0.05 / 1.05 * n)`` samples long for segments of ``n`` samples
+    (NCRF's ``r=0.05``), are held out one at a time as validation set, each
+    with the data preceding it as training set; the data following the window
+    is not used in that split. ``partitions`` thus is the number of splits
+    (default 3; NCRF's ``n_splits``) and :attr:`Splits.n_partitions` is
+    ``partitions + 1``. Steps 3 and 4 above do not apply, and the scheme
+    requires ``validate=1`` and ``test=0``. Note that the training sets of the
+    splits differ by one window only.
+
     See :ref:`exa-data_split` for illustrations of these schemes, and use
     :meth:`Splits.plot` (or :func:`plot.preview_partitions`) to inspect a
     specific configuration.
@@ -378,8 +394,6 @@ def split_data(
         raise TypeError(f"{validate=}")
     if int(test) != test:
         raise TypeError(f"{test=}")
-    if partitions is not None and partitions <= validate + test:
-        raise ValueError(f"{partitions=}: need at least {validate + test + 1} partitions with {validate=} and {test=}")
     partitions_arg = partitions
     if validate < 0:
         raise ValueError(f"{validate=}")
@@ -391,8 +405,10 @@ def split_data(
         raise NotImplementedError(f"{test=}: currently has to be 0 or 1")
     if split is None:
         split = 'cases' if len(segments) > 1 else 'time'
-    elif split not in ('cases', 'time', 'within_cases'):
-        raise ValueError(f"{split=}: must be 'cases', 'time' or 'within_cases'")
+    elif split not in ('cases', 'time', 'within_cases', 'walk-forward'):
+        raise ValueError(f"{split=}: must be 'cases', 'time', 'within_cases' or 'walk-forward'")
+    if split != 'walk-forward' and partitions is not None and partitions <= validate + test:
+        raise ValueError(f"{partitions=}: need at least {validate + test + 1} partitions with {validate=} and {test=}")
     if model is not None and split != 'cases':
         raise TypeError(f"model={dataobj_repr(model)!r} with {split=}: model can only be used with split='cases'")
     if split == 'cases':
@@ -424,10 +440,34 @@ def split_data(
             piece_partition[cell_index] = np.arange(len(cell_index)) % partitions
     else:
         if partitions is None:
-            partitions = 5
+            partitions = 3 if split == 'walk-forward' else 5
         if split == 'within_cases':
             # the i-th piece of every segment forms partition i
             split_segments, soft_splits = cut_segments(segments, partitions)
+            piece_partition = np.tile(np.arange(partitions), len(segments))
+        elif split == 'walk-forward':
+            # partition 0 is the beginning of every segment, the remaining partitions are windows at its end
+            if test or not validate:
+                raise NotImplementedError(f"{split=} with {validate=}, {test=}: the walk-forward scheme only implements validation splits (validate=1, test=0)")
+            elif partitions < 1:
+                raise ValueError(f"{partitions=} with {split=}: need at least one window")
+            n_times = np.unique(np.diff(segments, axis=1))
+            if len(n_times) > 1:
+                raise NotImplementedError(f"{split=} with segments of different lengths ({', '.join(map(str, n_times))} samples): the walk-forward scheme needs a single segment or segments of equal length")
+            # window length of NCRF's TimeSeriesSplit(r=0.05)
+            n_window = ceil(0.05 / 1.05 * n_times[0])
+            n_train = n_times[0] - partitions * n_window
+            if n_train < 1:
+                raise ValueError(f"{partitions=} with {split=}: segments of {n_times[0]} samples are too short for {partitions} windows of {n_window} samples and training data before them; use fewer partitions")
+            split_segments = []
+            soft_splits = []
+            for start, stop in segments:
+                split_points = np.concatenate([[start], start + n_train + n_window * np.arange(partitions + 1)])
+                soft_splits.append(split_points[1:-1])
+                split_segments.extend(split_points[i: i + 2] for i in range(partitions + 1))
+            soft_splits = np.concatenate(soft_splits)
+            split_segments = np.vstack(split_segments)
+            partitions += 1
             piece_partition = np.tile(np.arange(partitions), len(segments))
         else:
             # partitions with equal numbers of samples, cut additionally at segment boundaries
@@ -472,7 +512,9 @@ def split_data(
         return Split(train, reserved, i_reserved, is_test, inner_splits)
 
     all_partitions = list(range(partitions))
-    if test:
+    if split == 'walk-forward':
+        splits = [make_split(all_partitions[:i], i, False) for i in all_partitions[1:]]
+    elif test:
         splits = [make_split([p for p in all_partitions if p != i], i, True, bool(validate)) for i in all_partitions]
     elif validate:
         splits = [make_split([p for p in all_partitions if p != i], i, False) for i in all_partitions]

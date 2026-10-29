@@ -6,7 +6,7 @@ from typing import Literal
 
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import MaxNLocator
-import numpy
+import numpy as np
 
 from .._trf.shared import TIME_SPLIT_MIN_SECTION, Splits, split_data
 from .._data_obj import Dataset, CategorialArg, NDVar, NDVarArg, asndvar
@@ -32,11 +32,12 @@ class DataSplit(EelFigure, LegendMixin):
         splits
             The data splits.
         legend
-            Matplotlib figure legend location argument or 'fig' to plot the
-            legend in a separate figure.
+            Matplotlib figure legend location argument
+            (see ``loc`` argument to :class:`matplotlib.legend.Legend`)
+            or 'fig' to plot the legend in a separate figure.
         colors
             Customize colors (uses the following keys: ``'train', 'validate',
-            'test'``).
+            'test', 'unused'``).
         xlabel
             X-axis label (default ``'Time [s]'`` with ``tstep``, otherwise
             ``'Segment'``).
@@ -51,14 +52,16 @@ class DataSplit(EelFigure, LegendMixin):
         Each row corresponds to one boosting run (a leaf :class:`Split`). For
         cross-validation with a test set, rows are grouped by test partition
         (separated by black lines), and the y-axis labels the test partition.
+        Data that a run uses neither for training nor as held-out set is
+        grayed out.
 
         This plot can also be generated from a :class:`BoostingResult` object
         through :meth:`BoostingResult.splits.plot` method.
         """
         roles = ['train', 'validate', 'test']
-        labels = {'train': 'Training', 'validate': 'Validation', 'test': 'Testing'}
+        labels = {'train': 'Training', 'validate': 'Validation', 'test': 'Testing', 'unused': 'Unused'}
         if colors is None:
-            colors = colors_for_oneway(roles, unambiguous=[6, 3, 5])
+            colors = {**colors_for_oneway(roles, unambiguous=[6, 3, 5]), 'unused': '0.85'}
         if tstep is None:
             scale = 1
             if xlabel is None:
@@ -77,6 +80,8 @@ class DataSplit(EelFigure, LegendMixin):
         EelFigure.__init__(self, None, layout)
         ax = self.figure.axes[0]
 
+        x_start, x_stop = splits.segments[0, 0], splits.segments[-1, 1]
+        n_samples = np.diff(splits.segments, axis=1).sum()
         for x in splits.segments[:-1, 1]:
             ax.axvline(x * scale, color='k')
         handles = {}
@@ -85,6 +90,9 @@ class DataSplit(EelFigure, LegendMixin):
             for split_i in ([split] if split is top_split else [split, top_split]):
                 if split_i.reserved is not None:
                     sets.append((split_i.reserved, 'test' if split_i.is_test else 'validate'))
+            # gray background for data the run does not use
+            if sum(np.diff(segments, axis=1).sum() for segments, _ in sets) < n_samples:
+                handles['unused'] = ax.add_artist(Rectangle((x_start * scale, y - 0.5), (x_stop - x_start) * scale, 1, color=colors['unused']))
             for segments, role in sets:
                 for x0, x1 in segments:
                     rect = Rectangle((x0 * scale, y - 0.5), (x1 - x0) * scale, 1, color=colors[role])
@@ -97,7 +105,7 @@ class DataSplit(EelFigure, LegendMixin):
         ax.set_ylim(-0.5, len(rows) - 0.5)
         if is_nested:
             # label groups by top-level split
-            ticks = [numpy.mean([y for y, (top_split, _) in enumerate(rows) if top_split is top_split_i]) for top_split_i in splits.splits]
+            ticks = [np.mean([y for y, (top_split, _) in enumerate(rows) if top_split is top_split_i]) for top_split_i in splits.splits]
             ax.set_yticks(ticks, [str(top_split.i_reserved) for top_split in splits.splits])
             ax.set_ylabel('Test partition')
         else:
@@ -105,7 +113,7 @@ class DataSplit(EelFigure, LegendMixin):
             ax.yaxis.set_major_locator(MaxNLocator(integer=True))
         if xlabel:
             ax.set_xlabel(xlabel)
-        ax.set_xlim(splits.segments[0, 0] * scale, splits.segments[-1, 1] * scale)
+        ax.set_xlim(x_start * scale, x_stop * scale)
         LegendMixin.__init__(self, legend, handles, labels)
         self._show()
 
@@ -119,7 +127,7 @@ def preview_partitions(
     model: CategorialArg = None,
     validate: int = 1,
     test: int = 1,
-    split: Literal['cases', 'time', 'within_cases'] = None,
+    split: Literal['cases', 'time', 'within_cases', 'walk-forward'] = None,
     min_section: float = None,
     data: Dataset = None,
     **kwargs,
@@ -150,7 +158,11 @@ def preview_partitions(
     """
     tstep = None  # trials specified by number: no time information
     if isinstance(cases, int):
-        if cases == 0:
+        if split == 'walk-forward':
+            # trials need enough samples for the windows
+            ns = [100] * max(cases, 1)
+            xlabel = 'Sample'
+        elif cases == 0:
             if partitions is None:
                 partitions = 5
             ns = [partitions]
@@ -179,7 +191,7 @@ def preview_partitions(
         if min_section is None:
             min_section = TIME_SPLIT_MIN_SECTION
         min_section = int(round(min_section / tstep))
-    index = numpy.cumsum([0] + ns)
-    segments = numpy.hstack([index[:-1, None], index[1:, None]])
+    index = np.cumsum([0] + ns)
+    segments = np.hstack([index[:-1, None], index[1:, None]])
     splits = split_data(segments, partitions, model, data, validate, test, split, min_section)
     return DataSplit(splits, tstep=tstep, **kwargs)

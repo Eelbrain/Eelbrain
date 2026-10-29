@@ -15,7 +15,6 @@ Validation set
 --------------
 During boosting, every training step consists in modifying one element of the kernel/TRF. After every such step, the new TRF is evaluated against the validation data. To illustrate the validation set by itself, the plots in this section disable the test set (``test=0``). For continuous data (without :class:`Case` dimension), the default is then to split the data into 5 equal-length segments, and perform 5 model fits, each using one of the segments as validation set. In the plots below, each "Split" shown on the y-axis corresponds to a separate run of the boosting algorithm. The TRF returned by the :func:`boosting` function is based on the average TRF of those 5 runs.
 """
-# sphinx_gallery_thumbnail_number = 4
 from eelbrain import *
 
 
@@ -24,8 +23,8 @@ p = plot.preview_partitions(test=0)
 ###############################################################################
 # The number of partitions can be controlled with the `partitions` parameter:
 
-p = plot.preview_partitions(partitions=7, test=0)
-p = plot.preview_partitions(partitions=10, test=0)
+p = plot.preview_partitions(partitions=7, test=0, legend=False)
+p = plot.preview_partitions(partitions=10, test=0, legend=False)
 
 ###############################################################################
 # Validation and testing sets
@@ -100,3 +99,11 @@ p = plot.preview_partitions(20, partitions=5)
 # Choosing a scheme
 # -----------------
 # Partitions that consist of whole trials or contiguous periods of time test whether the model generalizes to a different period of the experiment. However, when the trials differ systematically (e.g., different conditions, learning or fatigue effects), a test partition that stems from a single trial may not represent the data as a whole. Partitions within trials (``split='within_cases'``) avoid this because every partition samples every trial, at the cost of more segment boundaries. For trial-based experiments with different conditions, the ``model`` parameter achieves the same without cutting trials.
+
+###############################################################################
+# Walk-forward validation
+# -----------------------
+# In all the splits above, the validation data is surrounded by training data. With ``split='walk-forward'``, each split instead trains only on the data preceding its validation set; the data after it is not used and is grayed out in the plot. This is the scheme with which the `NCRF <https://proloyd.github.io/neuro-currentRF>`_ package selects its regularization parameter: the last ``partitions`` short windows of every trial (each about 5% of the trial) are held out one at a time, so that ``partitions`` corresponds to the number of splits.
+
+p = plot.preview_partitions(1, partitions=3, test=0, split='walk-forward', legend='upper center')
+p = plot.preview_partitions(2, partitions=3, test=0, split='walk-forward', legend=False)
