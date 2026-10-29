@@ -42,6 +42,14 @@ def test_preview_partitions():
     p = plot.preview_partitions('uts', data=ds, partitions=4)
     assert p.figure.axes[0].get_xlabel() == 'Time [s]'
     p.close()
+    # continuous data without time information: one sample per partition, labeled at its center
+    p = plot.preview_partitions(partitions=4, test=0)
+    ax = p.figure.axes[0]
+    assert ax.get_xlabel() == 'Partition'
+    assert_array_equal(ax.get_xticks(), [0.5, 1.5, 2.5, 3.5])
+    assert [label.get_text() for label in ax.get_xticklabels()] == ['0', '1', '2', '3']
+    assert_array_equal(p.splits.split_segments, [[0, 1], [1, 2], [2, 3], [3, 4]])
+    p.close()
     # walk-forward: windows at the end of every trial; unused data is grayed out
     p = plot.preview_partitions(ds['uts'][0], partitions=3, test=0, split='walk-forward')
     assert_array_equal(p.splits.split_segments[:, 1], [85, 90, 95, 100])

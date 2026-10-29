@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from typing import Literal
 
 from matplotlib.patches import Rectangle
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator
 import numpy as np
 
 from .._trf.shared import TIME_SPLIT_MIN_SECTION, Splits, split_data
@@ -23,6 +23,7 @@ class DataSplit(EelFigure, LegendMixin):
             colors: dict = None,
             xlabel: str = None,
             tstep: float = None,
+            center_xticks: bool = False,
             **kwargs,
     ):
         """Plot data splits
@@ -40,10 +41,14 @@ class DataSplit(EelFigure, LegendMixin):
             'test', 'unused'``).
         xlabel
             X-axis label (default ``'Time [s]'`` with ``tstep``, otherwise
-            ``'Segment'``).
+            ``'Sample'``).
         tstep
             Time step between samples; if specified, the x-axis shows time in
             seconds instead of sample indices.
+        center_xticks
+            Label each sample at its center instead of placing ticks at sample
+            boundaries (for previews in which each sample stands for one
+            partition or trial).
         ...
             Also accepts :ref:`general-layout-parameters`.
 
@@ -65,7 +70,7 @@ class DataSplit(EelFigure, LegendMixin):
         if tstep is None:
             scale = 1
             if xlabel is None:
-                xlabel = 'Segment'
+                xlabel = 'Sample'
         else:
             scale = tstep
             if xlabel is None:
@@ -114,6 +119,9 @@ class DataSplit(EelFigure, LegendMixin):
         if xlabel:
             ax.set_xlabel(xlabel)
         ax.set_xlim(x_start * scale, x_stop * scale)
+        if center_xticks:
+            ax.xaxis.set_major_locator(FixedLocator(np.arange(x_start, x_stop) + 0.5, nbins=10))
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: str(int(x))))
         LegendMixin.__init__(self, legend, handles, labels)
         self._show()
 
@@ -157,6 +165,7 @@ def preview_partitions(
     :ref:`exa-data_split` example
     """
     tstep = None  # trials specified by number: no time information
+    center_xticks = False  # each sample stands for one partition or trial
     if isinstance(cases, int):
         if split == 'walk-forward':
             # trials need enough samples for the windows
@@ -166,7 +175,8 @@ def preview_partitions(
             if partitions is None:
                 partitions = 5
             ns = [partitions]
-            xlabel = 'Segment'
+            xlabel = 'Partition'
+            center_xticks = True
         elif split in ('time', 'within_cases'):
             # cases need enough samples to be cut into partitions
             ns = [partitions or 5] * cases
@@ -176,6 +186,7 @@ def preview_partitions(
                 raise NotImplementedError('Automatic partitions with trials')
             ns = [1] * cases
             xlabel = 'Case'
+            center_xticks = True
     elif isinstance(cases, (str, NDVar)):
         y = asndvar(cases, data=data)
         n_cases = len(y) if y.has_case else 1
@@ -194,4 +205,4 @@ def preview_partitions(
     index = np.cumsum([0] + ns)
     segments = np.hstack([index[:-1, None], index[1:, None]])
     splits = split_data(segments, partitions, model, data, validate, test, split, min_section)
-    return DataSplit(splits, tstep=tstep, **kwargs)
+    return DataSplit(splits, tstep=tstep, center_xticks=center_xticks, **kwargs)
