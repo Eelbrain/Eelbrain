@@ -92,10 +92,10 @@ class DataSplit(EelFigure, LegendMixin):
                     sets.append((split_i.reserved, 'test' if split_i.is_test else 'validate'))
             # gray background for data the run does not use
             if sum(np.diff(segments, axis=1).sum() for segments, _ in sets) < n_samples:
-                handles['unused'] = ax.add_artist(Rectangle((x_start * scale, y - 0.5), (x_stop - x_start) * scale, 1, color=colors['unused']))
+                handles['unused'] = ax.add_artist(Rectangle((x_start * scale, y - 0.5), (x_stop - x_start) * scale, 1, facecolor=colors['unused'], linewidth=0))
             for segments, role in sets:
                 for x0, x1 in segments:
-                    rect = Rectangle((x0 * scale, y - 0.5), (x1 - x0) * scale, 1, color=colors[role])
+                    rect = Rectangle((x0 * scale, y - 0.5), (x1 - x0) * scale, 1, facecolor=colors[role], linewidth=0)
                     ax.add_artist(rect)
                     handles[role] = rect
             # separate splits (black line between groups of nested splits)
