@@ -34,7 +34,7 @@ UNIX_COMPILE_ARGS = ['-Wno-unreachable-code', '-O3']
 if IS_WINDOWS:
     open_mp_args = {
         **base_args,
-        'extra_compile_args': '/openmp',
+        'extra_compile_args': ['/openmp'],
     }
 elif IS_MACOS:
     # Not everyone will have OpenMP installed, so give a code path that allows building
@@ -64,9 +64,12 @@ if IS_AMD64 and not IS_WINDOWS:
 # Boosting: let the compiler reorder floating point sums so that the error loops vectorize (~3.5x faster) and fuse multiply-add across statements (L2).
 # Not -ffast-math, which implies -ffinite-math-only and would break the inf sentinels in the kernel.
 if IS_WINDOWS:
-    boosting_args = open_mp_args
+    boosting_compile_args = open_mp_args['extra_compile_args']
 else:
-    boosting_args = {**open_mp_args, 'extra_compile_args': open_mp_args['extra_compile_args'] + ['-fno-math-errno', '-fassociative-math', '-fno-signed-zeros', '-fno-trapping-math', '-ffp-contract=fast']}
+    boosting_compile_args = open_mp_args['extra_compile_args'] + ['-fno-math-errno', '-fassociative-math', '-fno-signed-zeros', '-fno-trapping-math', '-ffp-contract=fast']
+# Record the flags in the extension (exposed as _boosting_opt.COMPILE_FLAGS) because they affect numerical results
+boosting_define_macros = open_mp_args['define_macros'] + [('EELBRAIN_BOOSTING_FLAGS', '"' + ' '.join(boosting_compile_args) + '"')]
+boosting_args = {**open_mp_args, 'extra_compile_args': boosting_compile_args, 'define_macros': boosting_define_macros}
 ext = '.pyx' if cythonize else '.c'
 ext_cpp = '.pyx' if cythonize else '.cpp'
 extensions = [

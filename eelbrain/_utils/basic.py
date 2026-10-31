@@ -2,7 +2,7 @@
 "A few basic operations needed throughout Eelbrain"
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from dataclasses import fields
 import functools
 import inspect
 import logging
@@ -283,8 +283,8 @@ def intervals(seq, first=None):
         last = item
 
 
-@dataclass
 class PickleableDataClass:
+    "Pickle a dataclass by its fields, so that fields added later get their default when loading older pickles"
 
     def __getstate__(self) -> dict:
         return {f.name: getattr(self, f.name) for f in fields(self)}

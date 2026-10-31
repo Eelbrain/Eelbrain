@@ -1,8 +1,10 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from datetime import datetime
 from itertools import product
 from math import floor
 from pathlib import Path
+import time
 from warnings import catch_warnings, filterwarnings
 
 import numpy as np
@@ -12,7 +14,7 @@ import pytest
 from pytest import approx
 import scipy.io
 import scipy.stats
-from eelbrain import datasets, boosting, combine, convolve, correlation_coefficient, epoch_impulse_predictor, NDVar, UTS, Scalar
+from eelbrain import datasets, boosting, combine, concatenate, convolve, correlation_coefficient, epoch_impulse_predictor, BoostingResult, ExecutionContext, NDVar, UTS, Scalar
 
 from eelbrain.testing import assert_dataobj_equal
 from eelbrain._trf._boosting import Boosting, DeconvolutionData, Split, convolve_1d
@@ -80,6 +82,7 @@ def test_boosting():
     # persistence
     res_p = pickle.loads(pickle.dumps(res, pickle.HIGHEST_PROTOCOL))
     assert_res_equal(res_p, res)
+    assert res_p.execution_context == res.execution_context
 
     # L1 error
     res = boosting(y, x1 * 2000, 0, 1, error='l1', debug=True)
@@ -332,6 +335,92 @@ def test_result_transform():
     assert_allclose(res_old.proportion_explained.x, proportion_explained.x)
     res_old._apply_ndvar_transform(lambda obj: obj * 0.5)
     assert_allclose(res_old.proportion_explained.x, proportion_explained.x)
+
+
+def test_execution_context():
+    import eelbrain
+
+    ds = datasets._get_continuous()
+    res = boosting(ds['y'], ds['x1'], 0, 0.5, partitions=3, partition_results=True)
+    context = res.execution_context
+    assert isinstance(context, ExecutionContext)
+    assert context.eelbrain_version == eelbrain.__version__
+    assert context.numpy_version == np.__version__
+    timestamp = datetime.fromisoformat(context.timestamp)
+    assert timestamp.tzinfo is not None
+    assert abs(timestamp.timestamp() - time.time()) < 600
+    assert isinstance(context.compiler, str) and context.compiler
+    assert isinstance(context.compile_flags, tuple)
+    assert context.n_workers > 0
+    assert context.duration >= 0
+    for partition_result in res.partition_results:
+        assert partition_result.execution_context == context
+    # subclass for another estimator
+
+    @dataclass(frozen=True)
+    class OtherContext(ExecutionContext):
+        other_version: str = None
+
+    other = OtherContext.collect(time.time() - 2, time.time(), other_version='1.0')
+    assert other.eelbrain_version == context.eelbrain_version
+    assert other.compiler is None
+    assert other.compile_flags is None
+    assert other.other_version == '1.0'
+    assert other.duration == approx(2, abs=0.1)
+    # concatenation deduplicates
+    ds = datasets._get_continuous(ynd=True)
+    res = boosting(ds['ynd'], ds['x1'], 0, 0.5, partitions=3)
+    res_c = concatenate([res, res], 'xdim')
+    assert res_c.execution_context == res.execution_context
+    context_2 = replace(res.execution_context, timestamp='2026-01-01T00:00:00')
+    res_2 = replace(res, execution_context=context_2)
+    res_c = concatenate([res, res_2, res], 'xdim')
+    assert res_c.execution_context == (res.execution_context, context_2)
+    # results from older versions stored a dict
+    state = res.__getstate__()
+    state['version'] = 16
+    state['execution_context'] = {'machine': 'arm64', 'architecture': ('64bit', ''), 'processor': 'arm', 'platform': 'darwin', 'platform_version': 'Darwin Kernel Version 24.0.0', 'eelbrain_version': '0.40.0'}
+    state['partition_results'] = None
+    state['t_run'] = 1.5
+    res_old = BoostingResult.__new__(BoostingResult)
+    res_old.__setstate__(state)
+    assert res_old.execution_context == ExecutionContext(duration=1.5, eelbrain_version='0.40.0', platform='darwin', os_version='Darwin Kernel Version 24.0.0', machine='arm64')
+    assert res_old.execution_context.timestamp is None
+    # concatenated results from older versions stored a list of dicts
+    state = res.__getstate__()
+    state['version'] = 16
+    state['execution_context'] = [{'eelbrain_version': '0.40.0'}, {'eelbrain_version': '0.40.0'}, {'eelbrain_version': '0.41.0'}]
+    state['partition_results'] = None
+    state['t_run'] = 3.0
+    res_old = BoostingResult.__new__(BoostingResult)
+    res_old.__setstate__(state)
+    assert res_old.execution_context == (ExecutionContext(eelbrain_version='0.40.0'), ExecutionContext(eelbrain_version='0.41.0'))
+    # ... including None for parts without execution context
+    state['execution_context'] = [None, {'eelbrain_version': '0.40.0'}]
+    state['t_run'] = 3.0
+    state['version'] = 16
+    res_old = BoostingResult.__new__(BoostingResult)
+    res_old.__setstate__(state)
+    assert res_old.execution_context == ExecutionContext(eelbrain_version='0.40.0')
+    # version 14 stored only the Eelbrain version
+    state = res.__getstate__()
+    state['version'] = 14
+    del state['execution_context']
+    state['eelbrain_version'] = '0.39.0'
+    state['partition_results'] = None
+    state['t_run'] = 1.5
+    res_old = BoostingResult.__new__(BoostingResult)
+    res_old.__setstate__(state)
+    assert res_old.execution_context == ExecutionContext(duration=1.5, eelbrain_version='0.39.0')
+    # results without execution context
+    state = res.__getstate__()
+    state['version'] = 14
+    del state['execution_context']
+    state['partition_results'] = None
+    state['t_run'] = 1.5
+    res_old = BoostingResult.__new__(BoostingResult)
+    res_old.__setstate__(state)
+    assert res_old.execution_context == ExecutionContext(duration=1.5)
 
 
 @pytest.mark.file_test
