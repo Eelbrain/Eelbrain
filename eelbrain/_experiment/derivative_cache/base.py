@@ -1322,7 +1322,10 @@ def dependencies_match(stored: dict[str, Any], current: dict[str, Any]) -> bool:
     return all(_dep_entry_matches(stored[k], current[k]) for k in stored)
 
 
-def _comparable_dependencies(entries: dict[str, Any], other: dict[str, Any]) -> dict[str, Any]:
+def _comparable_dependencies(
+        entries: dict[str, Any],
+        other: dict[str, Any],
+) -> dict[str, Any]:
     """``entries`` without the fields that :func:`_dep_entry_matches` ignores when comparing them with ``other``"""
     out = {}
     for label, entry in entries.items():
@@ -1336,12 +1339,28 @@ def _comparable_dependencies(entries: dict[str, Any], other: dict[str, Any]) -> 
     return out
 
 
-def dependency_difference(stored: dict[str, Any], current: dict[str, Any]) -> tuple[tuple[str, ...], Any, Any] | None:
+def dependency_difference(
+        stored: dict[str, Any],
+        current: dict[str, Any],
+) -> tuple[tuple[str, ...], Any, Any] | None:
     """Locate the first difference between two dependency manifests that :func:`dependencies_match` would report.
 
     Like :func:`~eelbrain._experiment.logging.find_difference`, but ignoring
     quick fingerprints, manifest paths, and the cache key of a dependency that
     is only cached on one side.
+
+    Parameters
+    ----------
+    stored
+        Dependency manifest recorded when the artifact was built.
+    current
+        Dependency manifest for the current request.
+
+    Returns
+    -------
+    difference
+        ``(path, old_value, new_value)`` for the first differing field, or
+        ``None`` if the manifests match.
     """
     return find_difference(_comparable_dependencies(stored, current), _comparable_dependencies(current, stored), strip_quick=True)
 
