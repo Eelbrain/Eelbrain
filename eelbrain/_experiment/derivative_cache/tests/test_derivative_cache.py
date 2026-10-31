@@ -1249,8 +1249,8 @@ def test_uncached_derivative_rebuilds_every_time():
 
 
 def test_dep_entry_matches_after_caching_node():
-    "A dependency recorded while its node was uncached (no key) stays valid once the node is cached"
-    from eelbrain._experiment.derivative_cache.base import _dep_entry_matches
+    "A dependency recorded while its node was uncached (no key) stays valid once the node is cached, and vice versa"
+    from eelbrain._experiment.derivative_cache.base import _dep_entry_matches, dependency_difference
 
     stored = {'name': 'pos', 'fingerprint': {'a': 1}, 'dependencies': {}}
     current = {**stored, 'key': {'subject': 's1'}, 'manifest': 'pos/pos.json'}
@@ -1259,6 +1259,42 @@ def test_dep_entry_matches_after_caching_node():
     # a recorded key still has to match
     assert not _dep_entry_matches({**stored, 'key': {'subject': 's0'}}, current)
     assert _dep_entry_matches(current, current)
+    # the node's cache was turned off: the recorded key no longer has a counterpart
+    assert _dep_entry_matches(current, stored)
+    assert not _dep_entry_matches(current, {**stored, 'fingerprint': {'a': 2}})
+
+    # the reported difference ignores the same bookkeeping fields
+    assert dependency_difference({'pos': stored}, {'pos': current}) is None
+    assert dependency_difference({'pos': current}, {'pos': stored}) is None
+    changed = {'name': 'other', 'fingerprint': {'b': 1}, 'dependencies': {}}
+    previous = {'pos': current, 'other': changed}
+    now = {'pos': stored, 'other': {**changed, 'fingerprint': {'b': 2}}}
+    assert dependency_difference(previous, now) == (('other', 'fingerprint', 'b'), 1, 2)
+    # nested dependency entries are treated the same way
+    assert dependency_difference({'top': {**stored, 'dependencies': {'pos': current}}}, {'top': {**stored, 'dependencies': {'pos': stored}}}) is None
+
+
+def test_dependency_cache_toggle_keeps_parent_valid():
+    "Turning a dependency's cache off (or back on) does not invalidate the artifacts depending on it"
+    _, registry, _, value, summary, _, _, _, _root = make_registry()
+
+    assert registry.resolve('summary', state=DEFAULT_STATE).load() == 'summary:alpha'
+    assert 'key' in registry.resolve('summary', state=DEFAULT_STATE)._manifest().dependencies['value']
+
+    value.cache_policy = CachePolicy.NEVER
+    assert registry.resolve('summary', state=DEFAULT_STATE).is_valid()
+    assert registry.resolve('summary', state=DEFAULT_STATE).load() == 'summary:alpha'
+    assert summary.build_calls == 1
+    # an artifact built while the dependency is uncached stays valid once it is cached again
+    registry.resolve('summary', state=DEFAULT_STATE).manifest_path.unlink()
+    assert registry.resolve('summary', state=DEFAULT_STATE).load() == 'summary:alpha'
+    assert summary.build_calls == 2
+    assert 'key' not in registry.resolve('summary', state=DEFAULT_STATE)._manifest().dependencies['value']
+
+    value.cache_policy = CachePolicy.REQUIRED
+    assert registry.resolve('summary', state=DEFAULT_STATE).is_valid()
+    assert registry.resolve('summary', state=DEFAULT_STATE).load() == 'summary:alpha'
+    assert summary.build_calls == 2
 
 
 def test_registry_resolve_returns_request_for_input_and_derivative():
@@ -2030,6 +2066,27 @@ def test_gc_dead_node_dir():
     report.collect()
     assert not ghost_dir.exists()
     assert ctx.artifact_path.exists()
+
+
+def test_gc_uncached_node_dir():
+    "The cache directory of a node whose cache was turned off is dead, while its dependents stay valid"
+    registry, configured, downstream, root = make_gc_registry()
+    registry.resolve('downstream', state=DEFAULT_STATE).load()
+    configured_dir = registry.resolve('configured', state=DEFAULT_STATE).manifest_path.parent
+    assert configured_dir.is_relative_to(registry.cache_dir / 'configured')
+
+    configured.cache_policy = CachePolicy.NEVER
+    report = registry.scan_cache()
+    entry = _single_entry(report, GCCategory.DEAD_NODE_DIR)
+    assert entry.path == registry.cache_dir / 'configured'
+    assert entry.node == 'configured'
+    assert entry.reason == 'node is no longer cached'
+    assert len(report.entries) == 1
+    assert report.scanned_manifests == 1
+    report.collect()
+    assert not (registry.cache_dir / 'configured').exists()
+    assert registry.resolve('downstream', state=DEFAULT_STATE).is_valid()
+    assert registry.scan_cache().entries == []
 
 
 def test_gc_schema_mismatch():

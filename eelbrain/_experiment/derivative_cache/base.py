@@ -78,7 +78,7 @@ import numpy as np
 from ..._data_obj import Factor, Interaction, NDVar, Var
 from ..._utils import user_activity
 from ..configuration import Configuration
-from ..logging import CacheInvalidation, diff_invalidation
+from ..logging import CacheInvalidation, diff_invalidation, find_difference
 from ..pathing import CACHE_DIR, DERIV_DIR, LOG_DIR
 from .dependency_tree import DependencyTree, DependencyTreeNode
 
@@ -1296,14 +1296,15 @@ def _dep_entry_matches(stored: dict[str, Any], current: dict[str, Any]) -> bool:
     ``key`` participates because fingerprints often describe configuration
     only: a dependency that resolves to a different artifact (different cache
     key) must invalidate the parent even when its fingerprint is unchanged.
-    A stored entry without ``key`` was recorded while the node was not cached;
-    its fingerprint and sub-dependencies validated it then and still do, so
-    caching a node does not invalidate the artifacts depending on it.
+    Only a cached node has a key, and the fingerprint and sub-dependencies
+    describe an uncached node completely, so the key is compared only when
+    both entries have one: caching a node, or turning its cache off, does not
+    invalidate the artifacts depending on it.
     """
     for key in ('name', 'view'):
         if stored.get(key) != current.get(key):
             return False
-    if 'key' in stored and stored['key'] != current.get('key'):
+    if 'key' in stored and 'key' in current and stored['key'] != current['key']:
         return False
     stored_quick = stored.get('quick_fingerprint')
     current_quick = current.get('quick_fingerprint')
@@ -1319,6 +1320,49 @@ def dependencies_match(stored: dict[str, Any], current: dict[str, Any]) -> bool:
     if stored.keys() != current.keys():
         return False
     return all(_dep_entry_matches(stored[k], current[k]) for k in stored)
+
+
+def _comparable_dependencies(
+        entries: dict[str, Any],
+        other: dict[str, Any],
+) -> dict[str, Any]:
+    """``entries`` without the fields that :func:`_dep_entry_matches` ignores when comparing them with ``other``"""
+    out = {}
+    for label, entry in entries.items():
+        other_entry = other.get(label)
+        if isinstance(entry, dict) and isinstance(other_entry, dict):
+            ignored = {'manifest'} if 'key' in other_entry else {'manifest', 'key'}
+            entry = {k: v for k, v in entry.items() if k not in ignored}
+            if isinstance(entry.get('dependencies'), dict):
+                entry['dependencies'] = _comparable_dependencies(entry['dependencies'], other_entry.get('dependencies', {}))
+        out[label] = entry
+    return out
+
+
+def dependency_difference(
+        stored: dict[str, Any],
+        current: dict[str, Any],
+) -> tuple[tuple[str, ...], Any, Any] | None:
+    """Locate the first difference between two dependency manifests that :func:`dependencies_match` would report.
+
+    Like :func:`~eelbrain._experiment.logging.find_difference`, but ignoring
+    quick fingerprints, manifest paths, and the cache key of a dependency that
+    is only cached on one side.
+
+    Parameters
+    ----------
+    stored
+        Dependency manifest recorded when the artifact was built.
+    current
+        Dependency manifest for the current request.
+
+    Returns
+    -------
+    difference
+        ``(path, old_value, new_value)`` for the first differing field, or
+        ``None`` if the manifests match.
+    """
+    return find_difference(_comparable_dependencies(stored, current), _comparable_dependencies(current, stored), strip_quick=True)
 
 
 def compare_manifests(stored: ArtifactManifest | None, current: ArtifactManifest) -> CacheInvalidation | None:
@@ -1340,7 +1384,10 @@ def compare_manifests(stored: ArtifactManifest | None, current: ArtifactManifest
     if stored.fingerprint != current.fingerprint:
         return diff_invalidation('fingerprint', stored.fingerprint, current.fingerprint)
     if not dependencies_match(stored.dependencies, current.dependencies):
-        return diff_invalidation('dependencies', stored.dependencies, current.dependencies, strip_quick=True)
+        diff = dependency_difference(stored.dependencies, current.dependencies)
+        if diff is None:
+            return CacheInvalidation('dependencies')
+        return CacheInvalidation('dependencies', *diff)
     return None
 
 
