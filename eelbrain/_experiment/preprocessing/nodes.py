@@ -31,7 +31,7 @@ from ..._exceptions import DataError
 from ..derivative_cache import (
     ALLOW_PROTECTED_OVERWRITE, ArtifactManifest, CachePolicy, Dependency, Derivative, UncachedDerivative,
     JobProvenance, Request, Input, ProtectedArtifactError, UnverifiableArtifactError,
-    compare_manifests, file_fingerprint,
+    compare_manifests, dependency_difference, file_fingerprint,
 )
 from ..logging import find_difference, format_difference_path
 from ..exceptions import FileMissingError, ICAMissingError
@@ -723,7 +723,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             field = self._format_pipe_setting(path)
             return f"The ICA step {self.raw_name!r} changed ({field}: {old!r} -> {new!r})."
 
-        diff = find_difference(previous.dependencies, current.dependencies, strip_quick=True)
+        diff = dependency_difference(previous.dependencies, current.dependencies)
         if diff is not None:
             path, old, new = diff
             dep = path[0]

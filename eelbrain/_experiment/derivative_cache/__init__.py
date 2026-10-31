@@ -29,6 +29,7 @@ from .base import (
     canonical_state_subset,
     compare_manifests,
     dependencies_match,
+    dependency_difference,
     file_fingerprint,
 )
 from .dependency_tree import DependencyTree, DependencyTreeNode

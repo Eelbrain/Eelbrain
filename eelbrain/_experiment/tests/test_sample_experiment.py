@@ -445,6 +445,16 @@ def test_sample(samples_experiment):
     assert ica_manifest_data['resolve_options'] == {}
     assert not [entry for entry in e._derivatives.scan_cache().entries if entry.manifest_path == Path(ica_manifest)]
 
+    # turning the cache of a source step off does not change the data the ICA was estimated from
+    class UncachedExperiment(Experiment):
+        raw = {
+            **Experiment.raw,
+            '1-40': RawFilter('tsss', 1, 40, cache=False),
+        }
+    e_uncached = UncachedExperiment(root)
+    assert isinstance(e_uncached.load_ica(raw='ica'), mne.preprocessing.ICA)
+    assert json.loads(Path(ica_manifest).read_text()) == ica_manifest_data
+
     class ChangedExperiment(Experiment):
         raw = {
             **Experiment.raw,

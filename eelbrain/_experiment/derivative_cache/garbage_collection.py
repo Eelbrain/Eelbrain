@@ -37,7 +37,7 @@ from .base import CACHE_DISAMBIGUATION_SUFFIX, MANIFEST_SCHEMA_VERSION, MANIFEST
 class GCCategory(str, Enum):
     """Classification of one cache path during garbage collection (see :meth:`DerivativeRegistry.scan_cache`)."""
 
-    DEAD_NODE_DIR = 'dead_node_dir'                # top-level cache dir with no registered node
+    DEAD_NODE_DIR = 'dead_node_dir'                # top-level cache dir with no registered node, or whose node is no longer cached
     SCHEMA = 'schema'                              # manifest schema_version is outdated
     DERIVATIVE_VERSION = 'derivative_version'      # manifest derivative_version differs from the registered node
     ORPHAN_MANIFEST = 'orphan_manifest'            # in-cache artifact is missing
@@ -254,10 +254,13 @@ def scan_cache(registry: DerivativeRegistry, revalidate: bool = True) -> GCRepor
                 report.entries.append(GCEntry(child, GCCategory.TMP, size=_path_size(child)))
             elif not child.is_dir():
                 report.entries.append(GCEntry(child, GCCategory.UNKNOWN, size=_path_size(child)))
-            elif child.name in registry._nodes:
-                _scan_node_dir(registry, registry._nodes[child.name], child, report, scanned, revalidate)
-            else:
+            elif child.name not in registry._nodes:
                 report.entries.append(GCEntry(child, GCCategory.DEAD_NODE_DIR, size=_path_size(child), reason='no registered node with this name'))
+            elif isinstance(node := registry._nodes[child.name], Derivative) and node.cache_policy is CachePolicy.NEVER:
+                # Never walked, so its manifests are not scanned and dependents are not marked stale: they validated through the dependency's fingerprint, which still describes the uncached node
+                report.entries.append(GCEntry(child, GCCategory.DEAD_NODE_DIR, node=node.name, size=_path_size(child), reason='node is no longer cached'))
+            else:
+                _scan_node_dir(registry, node, child, report, scanned, revalidate)
         _propagate_stale_dependencies(registry, report, scanned)
     return report
 
@@ -382,8 +385,6 @@ def _classify_manifest(
             return None, f"cannot reconstruct request ({error})"
         if ctx is None:
             return None, 'manifest predates offline revalidation'
-        if isinstance(ctx.node, Derivative) and ctx.node.cache_policy is CachePolicy.NEVER:
-            return None, 'node is no longer a cached derivative'
         return ctx, None
 
     def validate_input(owner: Input, ctx: Request[Any]) -> GCEntry | None:
