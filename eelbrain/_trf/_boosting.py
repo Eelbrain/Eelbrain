@@ -725,7 +725,8 @@ class ExecutionContext(PickleableDataClass):
     Attributes
     ----------
     timestamp
-        Local time at which the fit started (ISO 8601).
+        Local time at which the fit started (ISO 8601 with UTC offset, e.g.
+        ``'2026-10-31T11:29:38-04:00'``).
     duration
         Time it took to run the fit (in seconds).
     eelbrain_version
@@ -788,7 +789,7 @@ class ExecutionContext(PickleableDataClass):
         **fields
             Values for additional fields of a subclass.
         """
-        timestamp = datetime.fromtimestamp(t_start).isoformat(timespec='seconds')
+        timestamp = datetime.fromtimestamp(t_start).astimezone().isoformat(timespec='seconds')
         return cls(timestamp, t_done - t_start, n_workers=n_workers, compile_flags=compile_flags, **_environment(), **fields)
 
     @classmethod

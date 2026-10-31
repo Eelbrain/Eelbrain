@@ -346,7 +346,9 @@ def test_execution_context():
     assert isinstance(context, ExecutionContext)
     assert context.eelbrain_version == eelbrain.__version__
     assert context.numpy_version == np.__version__
-    assert abs(datetime.fromisoformat(context.timestamp).timestamp() - time.time()) < 600
+    timestamp = datetime.fromisoformat(context.timestamp)
+    assert timestamp.tzinfo is not None
+    assert abs(timestamp.timestamp() - time.time()) < 600
     assert isinstance(context.compile_flags, tuple)
     assert context.n_workers > 0
     assert context.duration >= 0
