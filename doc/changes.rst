@@ -112,6 +112,11 @@ New in 0.43
   detects defective channels through gaps in the component maps — channels whose
   weight is ~0 in multiple components with a realistic field pattern, while the
   surrounding channels share the same polarity.
+* ICA-GUI (:func:`gui.select_components`): New *Use as Cardiac Reference*
+  context menu item for components with a clearly recognizable heartbeat. It
+  detects the heartbeats in that component and lists other components whose
+  activity is time-locked to them, with their peak-locked averages, to identify
+  cardiac components without a recognizable time course.
 
 * Permutation tests:
 

@@ -31,6 +31,7 @@ from .._colorspaces import UNAMBIGUOUS_COLORS
 from .._data_obj import Dataset, Factor, NDVar, Categorial, Scalar, combine
 from .._io.fiff import _picks, sensor_dim
 from .._meeg.ica_bad_channels import CH_TYPE_DEFAULT, CONSISTENCY_DEFAULT, FLAT_DEFAULT, GAP_RATIO_DEFAULT, MIN_COMPONENTS_DEFAULT, SMOOTHNESS_DEFAULT, ChannelGapResult, find_channel_gaps, map_smoothness, neighbor_matrix
+from .._meeg.ica_cardiac import MIN_INTERVAL_DEFAULT, PEAK_THRESHOLD_DEFAULT, TSTART_DEFAULT, TSTOP_DEFAULT, peak_locked_sources
 from .._ndvar import concatenate, neighbor_correlation
 from .._types import PathArg
 from .._utils.numpy_utils import INT_TYPES
@@ -70,6 +71,22 @@ _THRESHOLD_DEFAULT_SI = {
 _CHANNEL_RATIO_DEFAULT = 3.
 # Maximum number of defective channels listed with a topomap
 _GAP_MAX_ROWS = 20
+# Cardiac candidates: default minimum proportion of a component's variance that is time-locked
+# to the heartbeat [%]; minimum peak-locking score (~1 for a component unrelated to the
+# heartbeat), which only matters with few heartbeats; maximum number of components listed
+_CARDIAC_MIN_VARIANCE_DEFAULT = 10.
+_CARDIAC_MIN_SCORE = 3.
+_CARDIAC_MAX_ROWS = 20
+# CardiacReferenceDialog settings: (key, label, unit, default, pattern, description)
+_CARDIAC_REFERENCE_SETTINGS = (
+    ('tstart', "Window start", "s", TSTART_DEFAULT, FLOAT_PATTERN, "Start of the window around each heartbeat"),
+    ('tstop', "Window end", "s", TSTOP_DEFAULT, FLOAT_PATTERN, "End of the window around each heartbeat. ICA often splits the heartbeat into a sharp component and slower components that lag the peak by a few hundred milliseconds."),
+    ('min_interval', "Min. interval", "s", MIN_INTERVAL_DEFAULT, POS_FLOAT_PATTERN, "Minimum interval between heartbeats"),
+    ('threshold', "Peak threshold", "SD", PEAK_THRESHOLD_DEFAULT, POS_FLOAT_PATTERN, "Minimum prominence of a peak in the reference component to count as a heartbeat, in standard deviations of the reference component"),
+    ('min_variance', "Min. variance", "%", _CARDIAC_MIN_VARIANCE_DEFAULT, POS_FLOAT_PATTERN, "Minimum proportion of a component's variance that is time-locked to the heartbeat for the component to be listed. ICA components are rarely perfectly independent, so many components contain a small trace of the heartbeat."),
+)
+# Marker for accepted (green) and rejected (red) components in reports
+_HASH_CHAR = {True: fmtxt.FMTextElement('#', 'font', {'color': 'green'}), False: fmtxt.FMTextElement('#', 'font', {'color': 'red'})}
 # ComponentMapDialog: size of each component map, and initial dialog size, in pixels
 _COMPONENT_MAP_SIZE = 90
 _COMPONENT_DIALOG_SIZE = (700, 600)
@@ -175,6 +192,7 @@ class Document(FileDocument):
         self.continuous = isinstance(data, mne.io.BaseRaw)
         if self.continuous:
             mne_events = mne.make_fixed_length_events(data)
+            self._window_samples = data.info['sfreq']  # raw samples per 1 s display window
             if decim is None:
                 decim = int(round(data.info['sfreq'] / 100))
             ds = Dataset({'epochs': mne.Epochs(data, mne_events, 1, 0, 1, baseline=None, proj=False, decim=decim, preload=True)})
@@ -295,6 +313,22 @@ class Document(FileDocument):
             return [self.ica.apply(i.copy()) for i in inst]
         else:
             return self.ica.apply(inst.copy())
+
+    def source_segments(self) -> list[np.ndarray]:
+        """ICA sources as ``(n_components, n_times)`` arrays, one per contiguous data segment
+
+        For continuous data, the 1 s display windows are joined back together, with a
+        separate segment for each run of consecutive windows (windows with extreme values
+        can be dropped when the document is created).
+        """
+        x = self.sources.x  # (case, component, time)
+        if not self.continuous:
+            return list(x)
+        # consecutive windows share their last sample with the first sample of the next window
+        n_keep = int(round(1 / self.sources.time.tstep))
+        steps = np.diff(self.epochs.events[:, 0])  # in raw samples
+        breaks = np.flatnonzero(steps > 1.5 * self._window_samples) + 1
+        return [x[run, :, :n_keep].transpose(1, 0, 2).reshape(x.shape[1], -1) for run in np.split(np.arange(len(x)), breaks)]
 
     def set_case(self, index, state):
         self.accept[index] = state
@@ -581,7 +615,6 @@ class SharedToolsMenu:  # Frame mixin
             res_by_component = None
 
         # format output
-        n_types = len(self.doc.components_by_type)
         threshold_descs = ", ".join(d for _, _, d in type_thresholds)
         doc = fmtxt.Section("Noisy epochs")
         doc.add_paragraph(f"Epochs with signal exceeding {threshold_descs}")
@@ -595,14 +628,7 @@ class SharedToolsMenu:  # Frame mixin
                 max_channel_ratio = channel_values[-1] / channel_values[-2]
                 if max_ch_ratio and max_channel_ratio > max_ch_ratio:
                     continue
-                # plot all channel-type topomaps side by side
-                figure = matplotlib.figure.Figure(figsize=(n_types, 1))
-                canvas = FigureCanvasAgg(figure)
-                for j, (ch_type, comp_ndvar) in enumerate(self.doc.components_by_type):
-                    ax = figure.add_subplot(1, n_types, j + 1)
-                    plot.Topomap(comp_ndvar[component], axes=ax)
-                image = fmtxt.Image(f'#{component}', 'jpg')
-                canvas.print_jpeg(image)
+                image = _component_maps_image(self.doc.components_by_type, component)
                 # Component properties
                 sec = doc
                 heading = fmtxt.FMTextElement(f"#{component}", 'h2')
@@ -659,14 +685,115 @@ class SharedToolsMenu:  # Frame mixin
         doc = fmtxt.Section("Rare Events")
         doc.add_paragraph(f"Components that disproportionally affect a small number of epochs (z-scored peak-to-peak > {threshold:g}). Epochs are ranked by peak-to-peak.")
         doc.append(fmtxt.linebreak)
-        hash_char = {True: fmtxt.FMTextElement('# ', 'font', {'color': 'green'}),
-                     False: fmtxt.FMTextElement('# ', 'font', {'color': 'red'})}
         for c, ft, epochs in res:
-            doc.append(hash_char[self.doc.accept[c]])
-            doc.append(f"{c} ({ft:.1f}):  ")
+            doc.append(_HASH_CHAR[self.doc.accept[c]])
+            doc.append(f" {c} ({ft:.1f}):  ")
             doc.append(fmtxt.delim_list(fmtxt.Link(self.doc.epoch_labels[e], f'component:{c} epoch:{e}') for e in epochs))
             doc.append(fmtxt.linebreak)
         InfoFrame(self, "Rare Events", doc, 500)
+
+    def OnUseAsCardiacReference(self, event):
+        reference = event.EventObject.i_comp
+        dlg = CardiacReferenceDialog(self, reference)
+        rcode = dlg.ShowModal()
+        if rcode != wx.ID_OK:
+            dlg.Destroy()
+            return
+        parameters = dlg.get_parameters()
+        dlg.StoreConfig()
+        dlg.Destroy()
+        self.ShowCardiacCandidates(reference, **parameters)
+
+    def ShowCardiacCandidates(
+            self,
+            reference: int,
+            tstart: float = TSTART_DEFAULT,
+            tstop: float = TSTOP_DEFAULT,
+            min_interval: float = MIN_INTERVAL_DEFAULT,
+            threshold: float = PEAK_THRESHOLD_DEFAULT,
+            min_variance: float = _CARDIAC_MIN_VARIANCE_DEFAULT,
+    ):
+        """Find and display components that follow the heartbeat of a reference component (separate from :class:`CardiacReferenceDialog` for testing)
+
+        Parameters
+        ----------
+        reference
+            Component with a clearly recognizable heartbeat.
+        tstart
+            Start of the window around each heartbeat [s].
+        tstop
+            End of the window around each heartbeat [s].
+        min_interval
+            Minimum interval between heartbeats [s].
+        threshold
+            Minimum prominence of a peak in the reference component to count as a heartbeat
+            [SD of the reference component].
+        min_variance
+            Minimum proportion of a component's variance that is time-locked to the
+            heartbeat for the component to be listed [%].
+        """
+        try:
+            result = peak_locked_sources(self.doc.source_segments(), reference, self.doc.sources.time.tstep, tstart, tstop, min_interval, threshold)
+        except ValueError as error:
+            wx.MessageBox(str(error), "Use as Cardiac Reference", style=wx.ICON_WARNING)
+            return
+        candidates = [c for c in np.argsort(result.explained)[::-1] if c != reference and result.explained[c] >= min_variance / 100 and result.score[c] >= _CARDIAC_MIN_SCORE]
+
+        # format output
+        doc = fmtxt.Section("Cardiac Candidates")
+        doc.add_paragraph(f"Components with activity that is time-locked to the heartbeats in component #{reference}. Heartbeats are peaks in #{reference} that exceed {threshold:g} SD and are at least {min_interval:g} s apart. Components are ranked by the proportion of their variance that is time-locked to the heartbeat (the variance of the peak-locked average relative to the total variance across heartbeats). The score is the same variance relative to what is expected for a component that is unrelated to the heartbeat (~1 for an unrelated component); it grows with the number of heartbeats, so in a long recording even a small trace of the heartbeat reaches a high score. The plots show the peak-locked average (black) with the standard deviation of single heartbeats around it (gray): a component that is dominated by the heartbeat has an average that stands out from the band, whereas a component that merely contains a trace of it has an average buried in the band.")
+        desc = f"{result.n_beats} heartbeats"
+        if result.n_beats < result.n_peaks:
+            desc += f" ({result.n_peaks} detected; the {tstart:g} - {tstop:g} s window extends past the data for the others)"
+        if len(result.intervals):
+            median = np.median(result.intervals)
+            irregular = np.mean(np.abs(result.intervals - median) > 0.25 * median)
+            desc += f"; median interval {median:.2f} s ({60 / median:.0f} bpm), {irregular:.0%} of intervals deviate from the median by more than 25%"
+            if irregular > 0.1:
+                desc += "; heartbeat detection may be unreliable, check the peak threshold and the minimum interval"
+        doc.add_paragraph(desc + '.')
+
+        def add_row(table: fmtxt.Table, component: int):
+            topomaps = _component_maps_image(self.doc.components_by_type, component)
+            # peak-locked average with the spread of single heartbeats
+            evoked = result.evoked[component]
+            sd = result.sd[component]
+            figure = matplotlib.figure.Figure(figsize=(3, 1))
+            canvas = FigureCanvasAgg(figure)
+            axes = figure.add_axes((0.03, 0.25, 0.94, 0.72))
+            axes.fill_between(result.time, evoked - sd, evoked + sd, color='0.8', lw=0)
+            axes.plot(result.time, evoked, color='k', lw=1)
+            axes.axvline(0, color='r', lw=0.5)
+            axes.axhline(0, color='0.5', lw=0.5)
+            axes.set_xlim(tstart, tstop)
+            axes.set_xticks([tstart, 0, tstop])
+            axes.set_yticks([])
+            axes.tick_params(labelsize=7)
+            for side in ('top', 'right', 'left'):
+                axes.spines[side].set_visible(False)
+            average = fmtxt.Image(f'#{component} peak-locked average', 'png')
+            canvas.print_png(average)
+            # description
+            desc = fmtxt.FMText([_HASH_CHAR[self.doc.accept[component]], fmtxt.Link(f"{component}", f'component:{component}'), fmtxt.linebreak, f"{result.explained[component]:.0%} of variance", fmtxt.linebreak, f"score {result.score[component]:.0f}"])
+            table.cells(topomaps, desc, average)
+
+        section = doc.add_section("Reference")
+        table = fmtxt.Table('lll', rules=False)
+        section.add_paragraph(table)
+        add_row(table, reference)
+
+        section = doc.add_section("Candidates")
+        criteria = f"at least {min_variance:g}% of the variance time-locked to the heartbeat and a score of at least {_CARDIAC_MIN_SCORE:g}"
+        if not candidates:
+            section.add_paragraph(f"No other component has {criteria}.")
+        else:
+            if len(candidates) > _CARDIAC_MAX_ROWS:
+                section.add_paragraph(f"Showing the {_CARDIAC_MAX_ROWS} highest-ranking of {len(candidates)} components with {criteria}.")
+            table = fmtxt.Table('lll', rules=False)
+            section.add_paragraph(table)
+            for component in candidates[:_CARDIAC_MAX_ROWS]:
+                add_row(table, component)
+        InfoFrame(self, f"Cardiac Candidates for #{reference}", doc, 600)
 
     def OnFindBadChannels(self, event):
         dlg = FindBadChannelsDialog(self, self.doc.components_by_type)
@@ -1751,6 +1878,8 @@ class Frame(NavigableFrame, SharedToolsMenu, FileFrame):
             self.Bind(wx.EVT_MENU, self.OnPlotCompSourceArray, item)
             item = menu.Append(wx.ID_ANY, "Plot Source FFT")
             self.Bind(wx.EVT_MENU, self.OnPlotCompFFT, item)
+            item = menu.Append(wx.ID_ANY, "Use as Cardiac Reference", "Find components with activity time-locked to the heartbeats in this component")
+            self.Bind(wx.EVT_MENU, self.OnUseAsCardiacReference, item)
         if i_comp is not None and i_epoch is not None:
             menu.AppendSeparator()
         if i_epoch is not None:
@@ -2014,6 +2143,8 @@ class TopoFrame(SharedToolsMenu, FileFrameChild):
         self.Bind(wx.EVT_MENU, self.OnPlotCompSourceArray, item)
         item = menu.Append(wx.ID_ANY, "Plot Source FFT")
         self.Bind(wx.EVT_MENU, self.OnPlotCompFFT, item)
+        item = menu.Append(wx.ID_ANY, "Use as Cardiac Reference", "Find components with activity time-locked to the heartbeats in this component")
+        self.Bind(wx.EVT_MENU, self.OnUseAsCardiacReference, item)
         return menu
 
 
@@ -2340,6 +2471,18 @@ class HelpDialog(EelbrainDialog):
         self.SetSize(_HELP_DIALOG_SIZE)
 
 
+def _component_maps_image(components_by_type: Sequence[tuple[str, NDVar]], component: int) -> fmtxt.Image:
+    "Render the maps of one component for all channel types side by side, for a report"
+    n_types = len(components_by_type)
+    figure = matplotlib.figure.Figure(figsize=(n_types, 1))
+    canvas = FigureCanvasAgg(figure)
+    for j, (ch_type, comp_ndvar) in enumerate(components_by_type):
+        plot.Topomap(comp_ndvar[component], axes=figure.add_subplot(1, n_types, j + 1), **TOPO_ARGS)
+    image = fmtxt.Image(f'#{component}', 'jpg')
+    canvas.print_jpeg(image)
+    return image
+
+
 def _topomap_bitmap(component: NDVar, size: int = _COMPONENT_MAP_SIZE, dpi: float = 100.) -> wx.Bitmap:
     "Render a component map for display in a dialog"
     figure = matplotlib.figure.Figure(figsize=(size / dpi, size / dpi), dpi=dpi)
@@ -2449,6 +2592,73 @@ class FindRareEventsDialog(EelbrainDialog):
     def StoreConfig(self):
         config = self.Parent.config
         config.WriteFloat("FindRareEvents/threshold", float(self.threshold.GetValue()))
+        config.Flush()
+
+
+class CardiacReferenceDialog(EelbrainDialog):
+
+    def __init__(self, parent, reference: int, **kwargs):
+        super().__init__(parent, wx.ID_ANY, "Use as Cardiac Reference", **kwargs)
+        config = parent.config
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(wx.StaticText(self, label=f"Find components with activity that is time-locked\nto the heartbeats in component #{reference}"), border=5, flag=wx.ALL)
+
+        # One row per setting: [label] [value] [unit]
+        grid = wx.FlexGridSizer(cols=3, vgap=3, hgap=5)
+        self.ctrls = {}
+        for key, label, unit, default, pattern, description in _CARDIAC_REFERENCE_SETTINGS:
+            value = config.ReadFloat(f"CardiacReference/{key}", default)
+            validator = REValidator(pattern, "Invalid entry: {value}. Please specify a number.", False)
+            ctrl = wx.TextCtrl(self, value=f'{value:g}', validator=validator, style=wx.TE_RIGHT)
+            ctrl.SetHelpText(description)
+            ctrl.SetToolTip(description)
+            grid.Add(wx.StaticText(self, label=label), flag=wx.ALIGN_CENTER_VERTICAL)
+            grid.Add(ctrl)
+            grid.Add(wx.StaticText(self, label=unit), flag=wx.ALIGN_CENTER_VERTICAL)
+            self.ctrls[key] = ctrl
+        sizer.Add(grid, border=5, flag=wx.ALL)
+
+        # default button
+        btn = wx.Button(self, wx.ID_DEFAULT, "Default Settings")
+        sizer.Add(btn, border=2)
+        btn.Bind(wx.EVT_BUTTON, self.OnSetDefault)
+
+        # buttons
+        button_sizer = wx.StdDialogButtonSizer()
+        btn = wx.Button(self, wx.ID_OK)
+        btn.SetDefault()
+        btn.Bind(wx.EVT_BUTTON, self.OnOK)
+        button_sizer.AddButton(btn)
+        btn = wx.Button(self, wx.ID_CANCEL)
+        button_sizer.AddButton(btn)
+        button_sizer.Realize()
+        sizer.Add(button_sizer)
+
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+
+    def get_parameters(self) -> dict[str, float]:
+        "Settings as keyword arguments for :meth:`SharedToolsMenu.ShowCardiacCandidates`"
+        return {key: float(ctrl.GetValue()) for key, ctrl in self.ctrls.items()}
+
+    def OnOK(self, event):
+        if not self.Validate():
+            return
+        parameters = self.get_parameters()
+        if parameters['tstart'] >= parameters['tstop']:
+            wx.MessageBox("The window end must be later than the window start.", "Invalid Window", wx.ICON_EXCLAMATION)
+            return
+        event.Skip()
+
+    def OnSetDefault(self, event):
+        for key, _, _, default, _, _ in _CARDIAC_REFERENCE_SETTINGS:
+            self.ctrls[key].SetValue(f'{default:g}')
+
+    def StoreConfig(self):
+        config = self.Parent.config
+        for key, value in self.get_parameters().items():
+            config.WriteFloat(f"CardiacReference/{key}", value)
         config.Flush()
 
 

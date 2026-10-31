@@ -1,6 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from ._channel_model import ChannelModel
 from .ica_bad_channels import ChannelGap, ChannelGapResult, find_channel_gaps
+from .ica_cardiac import CardiacResult, peak_locked_sources
 from .base import (
     BadChannelWindow,
     channel_listlist_to_dict,
