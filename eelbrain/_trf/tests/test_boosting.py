@@ -349,6 +349,7 @@ def test_execution_context():
     timestamp = datetime.fromisoformat(context.timestamp)
     assert timestamp.tzinfo is not None
     assert abs(timestamp.timestamp() - time.time()) < 600
+    assert isinstance(context.compiler, str) and context.compiler
     assert isinstance(context.compile_flags, tuple)
     assert context.n_workers > 0
     assert context.duration >= 0
@@ -362,6 +363,7 @@ def test_execution_context():
 
     other = OtherContext.collect(time.time() - 2, time.time(), other_version='1.0')
     assert other.eelbrain_version == context.eelbrain_version
+    assert other.compiler is None
     assert other.compile_flags is None
     assert other.other_version == '1.0'
     assert other.duration == approx(2, abs=0.1)

@@ -741,10 +741,14 @@ class ExecutionContext(PickleableDataClass):
         Operating system release (e.g. ``'macOS-15.1'``).
     machine
         Processor architecture (e.g. ``'arm64'``, ``'x86_64'``).
+    compiler
+        Compiler with which the compiled extension used for the fit was built
+        (e.g. ``'Apple LLVM 21.0.0 (clang-2100.4.1.1)'``; ``None`` for
+        estimators without a compiled extension).
     compile_flags
         Compiler flags with which the compiled extension used for the fit was
-        built (``None`` for estimators without a compiled extension). These can
-        affect floating point results.
+        built (``None`` for estimators without a compiled extension). Together
+        with the compiler, these can affect floating point results.
     n_workers
         Number of parallel workers configured for the fit (what this counts
         depends on the estimator, e.g. OpenMP threads for :func:`boosting`).
@@ -762,6 +766,7 @@ class ExecutionContext(PickleableDataClass):
     platform: str = None
     os_version: str = None
     machine: str = None
+    compiler: str = None
     compile_flags: tuple[str, ...] = None
     n_workers: int = None
 
@@ -772,6 +777,7 @@ class ExecutionContext(PickleableDataClass):
             t_done: float,
             n_workers: int = None,
             compile_flags: tuple[str, ...] = None,
+            compiler: str = None,
             **fields,
     ) -> ExecutionContext:
         """Describe a fit that was run in the current process
@@ -786,11 +792,13 @@ class ExecutionContext(PickleableDataClass):
             Number of parallel workers configured for the fit.
         compile_flags
             Compiler flags of the compiled extension used for the fit.
+        compiler
+            Compiler with which the compiled extension was built.
         **fields
             Values for additional fields of a subclass.
         """
         timestamp = datetime.fromtimestamp(t_start).astimezone().isoformat(timespec='seconds')
-        return cls(timestamp, t_done - t_start, n_workers=n_workers, compile_flags=compile_flags, **_environment(), **fields)
+        return cls(timestamp, t_done - t_start, n_workers=n_workers, compiler=compiler, compile_flags=compile_flags, **_environment(), **fields)
 
     @classmethod
     def _from_legacy(cls, state: dict, duration: float = None) -> ExecutionContext:
@@ -1117,7 +1125,7 @@ class Boosting:
         if debug:
             evaluations['y_pred'] = self.data.package_y_like(self.y_pred, 'y-pred')
             evaluations['fit'] = self
-        execution_context = ExecutionContext.collect(self.t_fit_start, self.t_fit_done, self.n_workers, opt.COMPILE_FLAGS)
+        execution_context = ExecutionContext.collect(self.t_fit_start, self.t_fit_done, self.n_workers, opt.COMPILE_FLAGS, opt.COMPILER)
         # partition-specific results
         if partition_results:
             partition_results_list = []

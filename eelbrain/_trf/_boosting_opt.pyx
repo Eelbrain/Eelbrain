@@ -11,16 +11,27 @@ ctypedef np.int8_t INT8
 ctypedef np.int64_t INT64
 ctypedef np.float64_t FLOAT64
 
-# Compiler flags used to build this extension (set in setup.py); they affect floating point results
+# Compiler and compiler flags used to build this extension (flags set in setup.py); they affect floating point results
 cdef extern from *:
     """
     #ifndef EELBRAIN_BOOSTING_FLAGS
     #define EELBRAIN_BOOSTING_FLAGS ""
     #endif
+    #if defined(__VERSION__)
+    #define EELBRAIN_BOOSTING_COMPILER __VERSION__
+    #elif defined(_MSC_FULL_VER)
+    #define EELBRAIN_STRINGIFY_(x) #x
+    #define EELBRAIN_STRINGIFY(x) EELBRAIN_STRINGIFY_(x)
+    #define EELBRAIN_BOOSTING_COMPILER "MSVC " EELBRAIN_STRINGIFY(_MSC_FULL_VER)
+    #else
+    #define EELBRAIN_BOOSTING_COMPILER ""
+    #endif
     """
     const char* EELBRAIN_BOOSTING_FLAGS
+    const char* EELBRAIN_BOOSTING_COMPILER
 
 COMPILE_FLAGS: tuple[str, ...] = tuple(EELBRAIN_BOOSTING_FLAGS.decode('ascii').split())
+COMPILER: str = EELBRAIN_BOOSTING_COMPILER.decode('ascii')
 
 
 cdef double inf = float('inf')
