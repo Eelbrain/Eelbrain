@@ -108,10 +108,14 @@ New in 0.43
     computed relative to the variability in all data, which strongly
     overestimated it.
 
-* ICA-GUI (:func:`gui.select_components`): The *Find Bad Channels* tool now also
-  detects defective channels through gaps in the component maps — channels whose
-  weight is ~0 in multiple components with a realistic field pattern, while the
-  surrounding channels share the same polarity.
+* ICA-GUI (:func:`gui.select_components`):
+
+  - The *Find Bad Channels* tool now also detects defective channels through gaps
+    in the component maps — channels whose weight is ~0 in multiple components with an
+    otherwise realistic field pattern.
+  - New *Use as Cardiac Reference* context menu item for components with a clearly
+    recognizable heartbeat. It detects the heartbeats in that component and lists other
+    components that exhibit time-locked activity to the heart beat.
 
 * Permutation tests:
 
