@@ -21,14 +21,14 @@ IS_AMD64 = platform.machine().lower() in ('x86_64', 'amd64')
 
 # Cython extensions
 base_args = {'define_macros': [("NPY_NO_DEPRECATED_API", "NPY_1_11_API_VERSION")]}
-ext_kwargs = {}
 setup_kwargs = {}
 # Adapt ab3 from (Apache)
 # https://github.com/joerick/python-abi3-package-sample
 if sys.version_info.minor >= 11 and platform.python_implementation() == "CPython":
     # Can create an abi3 wheel (typed memoryviews first available in 3.11)!
     base_args["define_macros"].append(("Py_LIMITED_API", "0x030B0000"))
-    ext_kwargs["py_limited_api"] = True
+    # Without this, setuptools names the modules *.cpython-311-*.so, which newer Pythons do not load
+    base_args["py_limited_api"] = True
     setup_kwargs["options"] = {"bdist_wheel": {"py_limited_api": "cp311"}}
 UNIX_COMPILE_ARGS = ['-Wno-unreachable-code', '-O3']
 if IS_WINDOWS:

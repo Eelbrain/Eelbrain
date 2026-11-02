@@ -55,6 +55,26 @@ jobs:
         env:
           CIBW_BUILD: "cp311-${{ matrix.buildplat[1] }} "
 
+      # cibuildwheel only tests on 3.11; check that the abi3 wheel's compiled modules also load on a newer Python
+      - uses: actions/setup-python@v7.0.0
+        if: ${{ !startsWith(matrix.buildplat[1], 'musllinux') }}
+        with:
+          python-version: "3.12"
+      - name: Import compiled modules on Python 3.12
+        if: ${{ !startsWith(matrix.buildplat[1], 'musllinux') }}
+        shell: bash
+        run: |
+          python -m pip install wheelhouse/*.whl
+          cd "$RUNNER_TEMP"
+          python -c "
+          import importlib, pathlib, eelbrain
+          root = pathlib.Path(eelbrain.__file__).parent
+          for path in [*root.rglob('*.so'), *root.rglob('*.pyd')]:
+              module = '.'.join(['eelbrain', *path.relative_to(root).parent.parts, path.name.split('.')[0]])
+              importlib.import_module(module)
+              print(f'{module}: {path.name}')
+          "
+
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.buildplat[1] }}-dist
