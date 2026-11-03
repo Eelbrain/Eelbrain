@@ -1400,7 +1400,7 @@ class LoadProfile:
     nested load from the load that made it, so the times sum to the total.
 
     Switched on per experiment with :attr:`DerivativeRegistry.profile_loads`
-    (``eelbrain-gui --debug``); off, no measurement is taken at all.
+    (``eelbrain --debug``); off, no measurement is taken at all.
     """
 
     def __init__(self):

@@ -146,7 +146,7 @@ spaces_before_inline_comment = 2
 trailing_comma_inline_array = true
 
 [project.scripts]
-eelbrain-gui = "eelbrain._experiment.gui:main"
+eelbrain = "eelbrain._experiment.gui:main"
 
 [project.urls]
 documentation = 'https://eelbrain.readthedocs.io'

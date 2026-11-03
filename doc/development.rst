@@ -50,7 +50,7 @@ The development version of Eelbrain can then be installed with ``pip``:
     $ mamba activate eeldev
     $ pip install -e .
 
-On macOS, the ``$ eelbrain`` shell script to run ``iPython`` with the framework
+On macOS, the ``$ eelbrain-ipython`` shell script to run ``iPython`` with the framework
 build is not installed properly by ``pip``; in order to fix this, run:
 
 .. code-block:: console

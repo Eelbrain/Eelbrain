@@ -8,7 +8,7 @@ import re
 NEW = '/python.app/Contents/MacOS/python'
 
 argparser = ArgumentParser(description=__doc__)
-argparser.add_argument('exe', type=str, nargs='?', default='eelbrain', help="Name of the executable to fix")
+argparser.add_argument('exe', type=str, nargs='?', default='eelbrain-ipython', help="Name of the executable to fix")
 
 if __name__ == '__main__':
     args = argparser.parse_args()

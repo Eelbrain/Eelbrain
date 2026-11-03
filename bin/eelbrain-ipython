@@ -15,7 +15,7 @@ with catch_warnings():
     import eelbrain
 
 
-parser = ArgumentParser('eelbrain', description='Start iPython with eelbrain profile')
+parser = ArgumentParser('eelbrain-ipython', description='Start iPython with eelbrain profile')
 parser.add_argument('--version', action='version', version=eelbrain.__version__)
 parser.add_argument('--debug-warnings', action='store_true', help='Print tracebacks for warnings')
 parser.add_argument('--show-warnings', action='store_true', help='Show all warnings; by default, many warnings that are probably irrelevant are suppressed')

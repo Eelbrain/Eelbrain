@@ -1,4 +1,4 @@
-"""Pipeline supervisor GUI launched by ``eelbrain-gui``."""
+"""Pipeline supervisor GUI launched by ``eelbrain``."""
 from __future__ import annotations
 
 import logging
@@ -103,7 +103,7 @@ def _timed_rows(
     :meth:`PipelineFrame._iter_rows` builds its table by looping over
     :meth:`PipelineFrame._iter_combos`, so the interval between two yields is the work
     that goes into one table row, whichever task's branch produced it. Visible on the
-    terminal with ``eelbrain-gui --debug``.
+    terminal with ``eelbrain --debug``.
 
     Parameters
     ----------
@@ -1512,7 +1512,7 @@ class PipelineFrame(EelbrainFrame):
                 t_locked = time.time()
                 combos = list(self._iter_combos(scope))
             # A refresh that is queued behind a running computation waits for the lock,
-            # so the two intervals are logged separately (see eelbrain-gui --debug)
+            # so the two intervals are logged separately (see eelbrain --debug)
             log.debug(f"Pipeline GUI {task.name}: {len(combos)} rows in {time.time() - t_locked:.3f} s, after waiting {t_locked - t_start:.3f} s for the pipeline")
             if token is not self._refresh_token:
                 return  # the table was replaced while the rows were being determined

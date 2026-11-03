@@ -89,6 +89,6 @@ setup(
     include_dirs=[np.get_include()],
     packages=find_packages(),
     ext_modules=extensions,
-    scripts=['bin/eelbrain'],
+    scripts=['bin/eelbrain-ipython'],
     **setup_kwargs,
 )
