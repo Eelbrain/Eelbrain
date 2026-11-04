@@ -936,6 +936,8 @@ class TRFModelTestDerivative(Derivative[Any]):
                 raise ValueError("xhemi_mask=True needs p-values from the non-lateralized test (samples > 0)")
             mask_lh, mask_rh = xhemi(base_res.p <= 0.05, parc=parc)
             mask = (mask_lh > 0.5) | (mask_rh > 0.5)
+            if not mask.x.any():
+                raise ValueError("xhemi_mask=True: no source is significant in the non-lateralized test (use xhemi_mask=False to test the whole hemisphere)")
             lh = lh * mask
             rh = rh * mask
         ds = ds[[key for key in ds if isuv(ds[key])]]

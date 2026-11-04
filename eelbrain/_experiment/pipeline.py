@@ -3936,7 +3936,9 @@ class Pipeline(StateModel):
             each comparison, as a second table and a second brain plot.
         xhemi_mask
             For the ``xhemi`` test, only consider sources that are significant
-            in the test of predictive power (see :meth:`load_model_test`).
+            in the test of predictive power (see :meth:`load_model_test`);
+            comparisons without any significant source get no lateralization
+            test.
         ...
             Parameters for :meth:`load_model_test` (including ``tstart``,
             ``tstop``, ``data`` and state parameters).
@@ -3951,7 +3953,11 @@ class Pipeline(StateModel):
             x = {x: x}
         ress = {label: self.load_model_test(comparison, **test_args) for label, comparison in x.items()}
         if xhemi:
-            ress_hemi = {label: self.load_model_test(comparison, xhemi=True, xhemi_mask=xhemi_mask, **test_args) for label, comparison in x.items()}
+            ress_hemi = {}
+            for label, comparison in x.items():
+                if xhemi_mask and ress[label].p is not None and ress[label].p.min() > 0.05:
+                    continue  # no significant source to test for lateralization
+                ress_hemi[label] = self.load_model_test(comparison, xhemi=True, xhemi_mask=xhemi_mask, **test_args)
         else:
             ress_hemi = None
 

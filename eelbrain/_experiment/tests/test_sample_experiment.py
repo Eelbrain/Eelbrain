@@ -3398,6 +3398,7 @@ def test_load_model_test_xhemi(samples_experiment):
     assert base_res.p.source.subject == 'fsaverage'
     mask_lh, mask_rh = xhemi(base_res.p <= 0.05, parc='temporal')
     expected_mask = (mask_lh > 0.5) | (mask_rh > 0.5)
+    assert expected_mask.x.any()
     assert_array_equal(ds['ev'].x.any(0), expected_mask.x)
     cache_dir = Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'trf-model-test'
     manifests = [json.loads(path.read_text()) for path in cache_dir.rglob('*.manifest.json')]
@@ -3409,8 +3410,10 @@ def test_load_model_test_xhemi(samples_experiment):
     assert_array_equal(ds['ev'].x, ds_unmasked['ev'].x * expected_mask.x)  # the masked data is the unmasked data times the mask
     assert len(list(cache_dir.rglob('*.pickle'))) == 3
 
-    # A named test applies to the lh - rh difference
-    ds_diff, res_diff = e.load_model_test('full > base', 0, 0.1, test='trf-one-sample', pmin=None, samples=4, xhemi=True, return_data=True)
+    # A named test applies to the lh - rh difference; its (two-tailed) non-lateralized test is not significant, so the mask is empty
+    with pytest.raises(ValueError, match='no source is significant'):
+        e.load_model_test('full > base', 0, 0.1, test='trf-one-sample', pmin=None, samples=4, xhemi=True)
+    ds_diff, res_diff = e.load_model_test('full > base', 0, 0.1, test='trf-one-sample', pmin=None, samples=4, xhemi=True, xhemi_mask=False, return_data=True)
     assert isinstance(res_diff, testnd.TTestOneSample)
     assert ds_diff.n_cases == 3
     assert 'hemi' not in ds_diff
@@ -3434,6 +3437,13 @@ def test_load_model_test_xhemi(samples_experiment):
         doc = e.show_model_test('full > base', heading='Modality', tstart=0, tstop=0.1, pmin=None, samples=4, xhemi=True)
     assert 'Test of lateralization' in str(doc)
     assert source_brain_table.call_count == (base_res.p.min() <= 0.05) + (res.p.min() <= 0.05)
+    # A comparison without significant predictive power gets no lateralization test
+    with patch('eelbrain.report.source_brain_table') as source_brain_table:
+        doc = e.show_model_test('full > base', heading='Modality', tstart=0, tstop=0.1, test='trf-one-sample', pmin=None, samples=4, xhemi=True)
+    text = str(doc)
+    assert 'Test of predictive power' in text
+    assert 'Test of lateralization' not in text
+    assert source_brain_table.call_count == 0
 
 
 @requires_mne_sample_data
