@@ -1,4 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+from collections.abc import Sequence
+from typing import Any
+
 import numpy as np
 
 from .. import fmtxt
@@ -9,6 +12,8 @@ from .._data_obj import Dataset, combine
 from .._stats.stats import ttest_t
 from .._text import ms
 from ..fmtxt import Section, linebreak
+from ..plot._brain import ImageTable
+from ._results import effect_map
 
 
 def source_results(res, surfer_kwargs={}, title="Results", diff_cmap=None,
@@ -317,3 +322,52 @@ def cluster_timecourse(section, cluster, y, dim, model, ds, colors, match):
         section.add_figure("Pairwise t-tests of average value in cluster by condition", res)
     else:
         section.add_figure("Time course in cluster area, and average value in cluster.", [image_tc, image_bar, image_box])
+
+
+def source_brain_table(
+        ress: dict[str, testnd.NDTest],
+        brain_view: Sequence[float] = None,
+        axw: float = None,
+        surf: str = 'inflated',
+        cortex: Any = ((1.00,) * 3, (.4,) * 3),
+        sig: bool = True,
+        vmax: float = None,
+        cmap: str = None,
+        alpha: float = 1.,
+        view: str | Sequence[str] = 'lateral',
+) -> ImageTable:
+    """Brain plots of the effects of several source-space tests, one row per test
+
+    Parameters
+    ----------
+    ress
+        ``{label: result}`` mapping of source-space test results.
+    brain_view
+        Parallel view parameters ``(forward [mm], up [mm], scale)`` (see
+        :meth:`~plot._brain_object.Brain.set_parallel_view`).
+    axw
+        Width of each brain image in inches (default 2.5).
+    surf
+        FreeSurfer surface to plot.
+    cortex
+        Brain color scheme (see :meth:`plot.brain.SequencePlotter.set_brain_args`).
+    sig
+        Mask the maps by significance (default ``True``).
+    vmax
+        Colormap range.
+    cmap
+        Colormap.
+    alpha
+        Alpha of the colormap.
+    view
+        Brain view(s) to plot.
+    """
+    sp = plot.brain.SequencePlotter()
+    if brain_view:
+        sp.set_parallel_view(*brain_view)
+    sp.set_brain_args(surf=surf, cortex=cortex)
+    for label, res in ress.items():
+        sp.add_ndvar(effect_map(res, sig), label=label, cmap=cmap, vmax=vmax, alpha=alpha)
+    if axw is None:
+        axw = 2.5
+    return sp.plot_table(view=view, orientation='vertical', dpi=144, axw=axw, show=False)

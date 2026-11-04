@@ -57,7 +57,8 @@ New in 0.43
     The built-in ``cov`` options are now ``'emptyroom'`` (the default) and
     ``'ad_hoc'``; for epoch-based options see :attr:`pipeline.Pipeline.noise_covariance`.
   - Temporal response function analyses: :meth:`pipeline.Pipeline.load_trf`,
-    :meth:`pipeline.Pipeline.load_trfs`, :meth:`pipeline.Pipeline.load_model_test`
+    :meth:`pipeline.Pipeline.load_trfs`, :meth:`pipeline.Pipeline.load_model_test`,
+    :meth:`pipeline.Pipeline.show_model_test`
   - New :meth:`pipeline.Pipeline.clean_cache` reviews and deletes invalid or
     stale cache files, including artifacts whose configuration changed since
     they were built and everything downstream of them.

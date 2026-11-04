@@ -11,14 +11,16 @@ import numpy as np
 from ... import load, save
 from ..._data_obj import Dataset, Datalist, Factor, NDVar, Var, combine, isuv
 from ..._io.pickle import update_subjects_dir
-from ..._mne import morph_source_space
+from ..._mne import morph_source_space, xhemi
 from ..._ndvar import set_tmin
 from ..._ndvar.uts import pad
+from ..._stats.testnd import MultiEffectNDTest
 from ..._utils.mne_utils import is_fake_mri
 from ..configuration import Configuration
 from ..data import DataSpec
 from ..derivative_cache import Dependency, Derivative, OptionSpec, Request, UncachedDerivative, VersionedInput, file_fingerprint
 from ..epochs.config import EpochBase
+from ..exceptions import FileMissingError
 from ..pathing import BIDS_ENTITY_KEYS, MRI_SDIR, mri_dir
 from ..preprocessing import RawFilter, RawPipe, RawSource
 from ..source.nodes import _drop_unknown_labels, _source_parc, _subject_state
@@ -711,6 +713,13 @@ class TRFModelTestDerivative(Derivative[Any]):
     contains only the statistical result; ``return_data`` is a view option that
     reconstructs the uncached input dataset on demand.
 
+    With ``xhemi``, the metric (difference) maps of both hemispheres are
+    projected onto the left hemisphere of ``fsaverage_sym`` (see
+    :func:`eelbrain.xhemi`) and the hemispheres are compared. With
+    ``xhemi_mask``, the comparison is restricted to sources that are significant
+    in at least one hemisphere in the corresponding non-lateralized test, which
+    is a further dependency.
+
     Parameters
     ----------
     estimators
@@ -736,6 +745,8 @@ class TRFModelTestDerivative(Derivative[Any]):
         'test': None,
         'pmin': 'tfce',
         'samples': 10000,
+        'xhemi': OptionSpec(False, bool),
+        'xhemi_mask': OptionSpec(True, bool),
     }
     view_options = {
         'return_data': OptionSpec(False, bool),
@@ -761,6 +772,17 @@ class TRFModelTestDerivative(Derivative[Any]):
         # A reducer always leaves one value per case; that an unreduced metric is already univariate only the data shows (checked in _test_data)
         if reducer and (pmin is not None or samples):
             raise ValueError(f"{metric=} leaves one value per case, which is tested parametrically; {pmin=} and {samples=} do not apply (use pmin=None, samples=0)")
+        if ctx.options['xhemi']:
+            if reducer or ctx.options['data'].aggregate:
+                raise ValueError(f"{metric=}, data={ctx.options['data'].string!r} with xhemi=True: the lateralization test needs the full source map")
+            if not ctx.options['data'].source:
+                raise ValueError(f"xhemi=True requires source-space data (data={ctx.options['data'].string!r})")
+            if ctx.state['src'].startswith('vol'):
+                raise ValueError(f"xhemi=True requires a surface source space (src={ctx.state['src']!r})")
+            if not (ctx.root / MRI_SDIR / 'fsaverage_sym').exists():
+                raise FileMissingError(f"xhemi=True needs the fsaverage_sym brain, which is missing from {ctx.root / MRI_SDIR}")
+        elif not ctx.options['xhemi_mask']:
+            raise ValueError("xhemi_mask=False only applies to xhemi=True")
 
     def _test_obj(self, ctx: Request) -> Test | None:
         "The named test, or ``None`` for the default incremental model test"
@@ -789,6 +811,12 @@ class TRFModelTestDerivative(Derivative[Any]):
         if test_obj and test_obj._test_vars:
             # The same dataset's shell to fingerprint the columns used by the test's variables
             deps.append(Dependency('trf-group-dataset', label='events', view='shell', options=x1_options))
+        if ctx.options['xhemi']:
+            deps.append(Dependency('annot', label='xhemi-annot', state={'mrisubject': 'fsaverage_sym', 'parc': self._xhemi_parc(ctx)}))
+            deps.append(Dependency('src', label='xhemi-src', state={'mrisubject': 'fsaverage_sym'}))
+            if ctx.options['xhemi_mask']:
+                base_keys = [key for key in self.key_options if not key.startswith('xhemi')]
+                deps.append(Dependency('trf-model-test', label='base', options=ctx.options_for('trf-model-test', *base_keys, xhemi=False)))
         return tuple(deps)
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
@@ -801,6 +829,12 @@ class TRFModelTestDerivative(Derivative[Any]):
         if dep.label != 'events':
             return None
         return self._test_obj(ctx)._resolve_vars(ctx.load(dep.label), self.groups)
+
+    @staticmethod
+    def _xhemi_parc(ctx: Request) -> str:
+        "Parcellation for the fsaverage_sym target: 'lobes' exists only for fsaverage, so it is replaced by the cortex mask"
+        parc = ctx.state['parc']
+        return 'cortex' if parc == 'lobes' else parc
 
     @staticmethod
     def _metric_parts(metric: str) -> tuple[str, str | None]:
@@ -829,6 +863,7 @@ class TRFModelTestDerivative(Derivative[Any]):
     ) -> tuple[Dataset, Var | NDVar, Test]:
         comparison = ctx.options['x']
         metric, reducer = self._metric_parts(ctx.options['metric'])
+        xhemi_test = ctx.options['xhemi']
         test_obj = self._test_obj(ctx)
         ds1 = ctx.load('x1')
         if metric not in ds1:
@@ -840,7 +875,7 @@ class TRFModelTestDerivative(Derivative[Any]):
             self._assert_aligned(ds1, ds0)
             # Only variables that are identical between the datasets should matter for tests
             keep = tuple([key for key in ds1 if key in ds0 and isuv(ds1[key]) and isuv(ds0[key]) and np.all(ds1[key] == ds0[key])])
-            if test_obj is None:
+            if test_obj is None and not xhemi_test:
                 keep += (metric,)
                 ds = combine((ds1[keep], ds0[keep]))
                 ds['model'] = Factor(('test', 'baseline'), repeat=ds1.n_cases)
@@ -853,9 +888,11 @@ class TRFModelTestDerivative(Derivative[Any]):
                     ds[metric] = ds1[metric] - ds0[metric]
         else:
             ds = ds1
-            if test_obj is None:
+            if test_obj is None and not xhemi_test:
                 test_obj = TTestOneSample(comparison.tail)
 
+        if xhemi_test:
+            ds, test_obj = self._xhemi_data(ctx, ds, metric, test_obj)
         test_obj._resolve_vars(ds, self.groups)
         y = ds[metric]
         if reducer is None:
@@ -870,6 +907,46 @@ class TRFModelTestDerivative(Derivative[Any]):
             dim = 'sensor' if y.has_dim('sensor') else 'source'
             y = getattr(y, reducer)(dim)
         return ds, y, test_obj
+
+    def _xhemi_data(
+            self,
+            ctx: Request,
+            ds: Dataset,
+            metric: str,
+            test_obj: Test | None,
+    ) -> tuple[Dataset, Test]:
+        """Project both hemispheres onto the left hemisphere of fsaverage_sym
+
+        Without a named test, the dataset gets one case per hemisphere and a
+        ``hemi`` factor for a related-measures test; a named test is applied
+        to the ``lh - rh`` difference.
+        """
+        y = ds[metric]
+        if isinstance(y, Datalist):
+            raise ValueError(f"{metric=} has inconsistent spatial dimensions across cases; xhemi needs a common source space")
+        parc = self._xhemi_parc(ctx)
+        ctx.ensure('xhemi-annot')
+        ctx.ensure('xhemi-src')
+        lh, rh = xhemi(y, parc=parc)
+        if ctx.options['xhemi_mask']:
+            base_res = ctx.load('base')
+            if isinstance(base_res, MultiEffectNDTest):
+                raise NotImplementedError("xhemi_mask for multi-effect tests")
+            elif base_res.p is None:
+                raise ValueError("xhemi_mask=True needs p-values from the non-lateralized test (samples > 0)")
+            mask_lh, mask_rh = xhemi(base_res.p <= 0.05, parc=parc)
+            mask = (mask_lh > 0.5) | (mask_rh > 0.5)
+            lh = lh * mask
+            rh = rh * mask
+        ds = ds[[key for key in ds if isuv(ds[key])]]
+        if test_obj is None:
+            ds = combine((ds, ds))
+            ds['hemi'] = Factor(('lh', 'rh'), repeat=lh.shape[0])
+            ds[metric] = combine((lh, rh))
+            test_obj = TTestRelated('hemi', 'lh', 'rh')
+        else:
+            ds[metric] = lh - rh
+        return ds, test_obj
 
     def build(self, ctx: Request) -> Any:
         ds, y, test_obj = self._test_data(ctx)
