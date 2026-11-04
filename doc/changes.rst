@@ -32,9 +32,10 @@ New in 0.43
   - Event variables use the column names of BIDS ``events.tsv`` files:
     ``i_start`` is now ``sample``, ``trigger`` is now ``value``, and event
     times in seconds are in ``onset``.
-  - New :func:`load_pipeline` helper and ``eelbrain`` command for loading
+  - New :func:`load_pipeline` helper and ``$ eelbrain`` command for loading
     a project from a ``pipeline.py`` file and managing data preparation in one
-    place.
+    place. The shortcut to start IPython with the ``eelbrain`` profile, which
+    was previously ``$ eelbrain``, is now ``$ eelbrain-ipython``.
   - Pipeline-managed derivative files now follow a BIDS-style layout under
     ``derivatives/mne``. The ``eelbrain --migrate`` command can move
     legacy ICA, coregistration, bad-channel, and epoch-rejection files to the
@@ -133,9 +134,6 @@ New in 0.43
 
 * Source space: :func:`morph_source_space` now supports volume source spaces
   (:class:`VolumeSourceSpace`).
-
-* The ``$ eelbrain`` command now launches the pipeline GUI. The shortcut to
-  start IPython with the ``eelbrain`` profile is now ``$ eelbrain-ipython``.
 
 
 New in 0.41
