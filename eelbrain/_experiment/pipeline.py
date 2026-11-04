@@ -2532,7 +2532,8 @@ class Pipeline(StateModel):
         task
             One or more tasks for which to plot the raw data (this parameter
             can not be used together with ``epoch``; default is the task used
-            for ICA estimation).
+            for ICA estimation). For a :class:`pipeline.RawICA` step with
+            ``per_task=True``, this is a single task and selects the ICA.
         ...
             State parameters.
 
@@ -2547,20 +2548,30 @@ class Pipeline(StateModel):
             ...
         """
         debug = state.pop('debug', False)
+        if epoch is not None:
+            if task is not None:
+                raise TypeError(f"{task=} with {epoch=}")
+            state['epoch'] = epoch  # with per_task, the epoch determines the task and thus the ICA
+        elif task is not None:
+            task = sequence_arg('task', task)
+            raw_name = self.get('raw', **state)
+            if self._raw.ica_pipe(raw_name).per_task:  # one ICA per task: the task selects the ICA
+                if len(task) != 1:
+                    raise ValueError(f"{task=}: the ICA is estimated separately for each task (per_task=True), specify a single task")
+                state = {'task': task[0]}
         # ICA
         path = self.make_ica(**state)  # sets raw to ica-raw
         # display data
         subject = self.get('subject')
         ica_name = self.get('raw')
         pipe = self._raw.ica_pipe(ica_name)
+        ctx = self._resolve_derivative(ica_input_name(ica_name))
+        fit_tasks = pipe.fit_tasks(ctx)
         bads = self._load_derivative(raw_node_name(ica_name), options={'noise': False}, view='bads')
         labeled_events = None
         if epoch is None:
             if task is None:
-                task = pipe.task
-            else:
-                task = sequence_arg('task', task)
-            ctx = self._resolve_derivative(ica_input_name(ica_name))
+                task = fit_tasks
             raw = ctx.node.load_concatenated_source_raw(ctx, task, preload=False)
             decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
             info = raw.info
@@ -2577,9 +2588,10 @@ class Pipeline(StateModel):
                         event_dss.append(ds_t)
                         offset += (ds_t.info['raw.last_samp'] - ds_t.info['raw.first_samp'] + 1) / ds_t.info['raw.samplingrate']
                 labeled_events = combine(event_dss, incomplete='fill in')
-        elif task is not None:
-            raise TypeError(f"{task=} with {epoch=}")
         else:
+            epoch_tasks = self._epochs[epoch].tasks
+            if not set(epoch_tasks).issubset(fit_tasks):
+                raise ValueError(f"{epoch=} contains data from task {enumeration(epoch_tasks)}, but the ICA {ica_name!r} is estimated from task {enumeration(fit_tasks)}; load the ICA with a matching epoch or task")
             with self._temporary_state:
                 ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe.source, samplingrate=samplingrate, decim=decim)
                 epochs = ds['epochs']
@@ -2665,6 +2677,10 @@ class Pipeline(StateModel):
 
             >>> for subject in e:
             ...     e.make_ica()
+
+        For a :class:`pipeline.RawICA` step with ``per_task=True``, the ICA is
+        computed for the current :ref:`state-task`; to precompute all of them
+        iterate over ``e.iter(('subject', 'task'))``.
 
         If an existing ICA file is stale, that means Eelbrain can still see
         the file but can no longer confirm that it was created from the
@@ -3869,31 +3885,32 @@ class Pipeline(StateModel):
 
         # pipe-specific
         if isinstance(pipe, RawICA):
+            fields = ('subject', 'task') if pipe.per_task else ('subject',)
             rows = []
-            for subject in self:
+            for key in self.iter(fields):
                 ctx = self._resolve_derivative(ica_input_name(raw))
                 status = ctx.load(view='status')
                 if status == 'ok':
                     ica = ctx.load()
-                    rows.append((subject, ica.n_components_, len(ica.exclude)))
+                    rows.append((key, ica.n_components_, len(ica.exclude)))
                 elif status == 'missing-ica':
-                    rows.append((subject, "No ICA-file", -1))
+                    rows.append((key, "No ICA-file", -1))
                 elif status == 'missing-raw':
-                    rows.append((subject, "No data", -1))
+                    rows.append((key, "No data", -1))
                 else:
                     raise RuntimeError(f"{status=}")
 
             n_selected = [row[-1] for row in rows]
             mark_unselected = any(n_selected) and not all(n_selected)
 
-            table = fmtxt.Table('lrr' + 'r' * mark_unselected)
-            table.cells('Subject', 'n components', 'reject')
+            table = fmtxt.Table('l' * len(fields) + 'rr' + 'r' * mark_unselected)
+            table.cells(*(field.capitalize() for field in fields), 'n components', 'reject')
             if mark_unselected:
                 table.cell('*')
                 table.caption("*: ICA with no rejected components")
             table.midrule()
-            for subject, n, n_selected in rows:
-                table.cells(subject, n)
+            for key, n, n_selected in rows:
+                table.cells(*key, n)
                 if not isinstance(n, str):
                     table.cell(n_selected)
                     if mark_unselected and n_selected == 0:

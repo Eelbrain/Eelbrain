@@ -1167,7 +1167,7 @@ def test_ica_all_tasks_after_maxwell(samples_experiment):
 
     e.set('R0000', raw='ica')
     # the ICA spans all tasks/runs, so the file is per subject/session/acquisition (no task/run entity)
-    assert str(ica_file_path(e.state, 'ica', concatenate_runs=True, datatype='meg')) == join('derivatives', 'mne', 'sub-R0000', 'meg', 'sub-R0000_desc-ica_ica.fif')
+    assert str(ica_file_path(e.state, 'ica', ('subject', 'session', 'acquisition'), datatype='meg')) == join('derivatives', 'mne', 'sub-R0000', 'meg', 'sub-R0000_desc-ica_ica.fif')
     with catch_warnings():
         filterwarnings('ignore', "FastICA did not converge", UserWarning)
         ica_path = e.make_ica()
@@ -1176,6 +1176,63 @@ def test_ica_all_tasks_after_maxwell(samples_experiment):
     assert isinstance(e.load_ica(), mne.preprocessing.ICA)
     # the ICA can be applied to an individual recording
     assert isinstance(e.load_raw(), mne.io.BaseRaw)
+
+
+@requires_mne_sample_data
+def test_ica_per_task(samples_experiment):
+    "RawICA(per_task=True) estimates and applies one ICA per task"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
+
+    root = samples_experiment(n_subjects=1, n_tasks=2, n_segments=1)
+
+    class Experiment(SampleExperiment):
+        raw = {
+            'ica': RawICA('raw', method='fastica', max_iter=1, n_components=0.95, per_task=True),
+            **SampleExperiment.raw,
+        }
+    e = Experiment(root)
+    pipe = e._raw['ica']
+    # per_task resolves task=None to all tasks without a RawMaxwell step; no run concatenation
+    assert pipe.task == ('sample1', 'sample2')
+    assert pipe._concatenate_runs is False
+    assert e._resolve_derivative(ica_input_name('ica')).node.key_fields == ('subject', 'session', 'task', 'acquisition', 'run')
+
+    e.set('R0000', raw='ica', task='sample1')
+    ica_dir = Path(root) / 'derivatives' / 'mne' / 'sub-R0000' / 'meg'
+    ctx = e._resolve_derivative(ica_input_name('ica'))
+    assert ctx.node.path(ctx) == ica_dir / 'sub-R0000_task-sample1_desc-ica_ica.fif'
+    # the fit uses the current task only
+    assert pipe.fit_tasks(ctx) == ('sample1',)
+    assert ctx.node._source_states(ctx) == [{'task': 'sample1', 'run': ''}]
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        path1 = e.make_ica()
+        assert e.make_ica() == path1
+        path2 = e.make_ica(task='sample2')
+    assert path1 == ica_dir / 'sub-R0000_task-sample1_desc-ica_ica.fif'
+    assert path2 == ica_dir / 'sub-R0000_task-sample2_desc-ica_ica.fif'
+    ica1 = e.load_ica(task='sample1')
+    ica2 = e.load_ica(task='sample2')
+    assert not np.allclose(ica1.pca_components_[0], ica2.pca_components_[0])
+    # each task is cleaned with its own ICA, which the epoch's task selects
+    for task, path in (('sample1', path1), ('sample2', path2)):
+        e.set(epoch=f'target{task[-1]}')
+        assert e.get('task') == task
+        ica_ctx = e._resolve_derivative(ica_input_name('ica'))
+        assert ica_ctx.node.path(ica_ctx) == path
+        raw_deps = e._resolve_derivative(raw_node_name('ica')).dependency_fingerprints()
+        assert Path(str(raw_deps[ica_input_name('ica')]['fingerprint']['ica_path'])) == path.relative_to(root)
+        assert isinstance(e.load_raw(), mne.io.BaseRaw)
+    assert e.load_epochs(epoch='super').info['epoch'] == 'super'
+    e.show_raw_info()
+    # component selection: the task selects the ICA, and the epoch has to match it
+    with pytest.raises(ValueError, match='per_task'):
+        e.make_ica_selection(task=('sample1', 'sample2'))
+    with pytest.raises(TypeError, match='task='):
+        e.make_ica_selection(epoch='target1', task='sample1')
+    with pytest.raises(ValueError, match="epoch='super'"):
+        e.make_ica_selection(epoch='super')
 
 
 @requires_mne_sample_data

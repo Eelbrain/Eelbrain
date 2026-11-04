@@ -614,7 +614,6 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     # cache only mirrors a provenance manifest for it and never overwrites it silently.
     cache_policy = CachePolicy.EXTERNAL
     cache_log_level = logging.INFO
-    key_fields = ('subject', 'session', 'acquisition', 'run')
     version = 1
 
     def __init__(
@@ -630,10 +629,9 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         self.pipe = pipe
         self._recordings = recordings
         self._runs = runs or ['']
-        # When runs are concatenated, the ICA spans every run, so it is cached
-        # per subject/session/acquisition rather than per run.
-        if pipe._concatenate_runs:
-            self.key_fields = ('subject', 'session', 'acquisition')
+        # One ICA per task with per_task; when runs are concatenated, the ICA spans
+        # every run, so it is cached per subject/session/acquisition rather than per run.
+        self.key_fields = pipe.ica_key_fields()
 
     def path(self, ctx: Request) -> Path:
         return self.pipe.path(ctx)
@@ -641,13 +639,17 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     def _load_value(self, ctx: Request) -> mne.preprocessing.ICA:
         return self.pipe._load_ica(ctx)
 
-    def _source_states(self, ctx: Request, tasks: Sequence[str]) -> list[dict[str, str]]:
+    def _source_states(self, ctx: Request, tasks: Sequence[str] = None) -> list[dict[str, str]]:
         """Existing source ``{'task', 'run'}`` states for the current subject/session/acquisition.
 
         Runs are included only when the ICA step concatenates runs (after
         :class:`RawMaxwell`); otherwise the current run is used. Combinations
         without a recording for the current subject/session/acquisition are skipped.
+        ``tasks`` defaults to the tasks the ICA is estimated from
+        (:meth:`RawICA.fit_tasks`: the current task with ``per_task``).
         """
+        if tasks is None:
+            tasks = self.pipe.fit_tasks(ctx)
         subject = ctx.state['subject']
         session = ctx.state.get('session') or ''
         acquisition = ctx.state.get('acquisition') or ''
@@ -667,14 +669,14 @@ class ICAInput(Input[mne.preprocessing.ICA]):
     def _load_bad_channels(self, ctx: Request) -> list[str]:
         bads = set()
         source_raw = raw_node_name(self.pipe.source)
-        for state in self._source_states(ctx, self.pipe.task):
+        for state in self._source_states(ctx):
             bads.update(ctx.load(source_raw, state=state, options={'noise': False}, view='bads'))
         return sorted(bads)
 
     def load_concatenated_source_raw(
             self,
             ctx: Request,
-            tasks: tuple[str, ...],
+            tasks: Sequence[str] = None,
             preload: bool = True,
     ) -> mne.io.BaseRaw:
         """Load the source recordings of ``tasks`` concatenated into one raw
@@ -684,7 +686,8 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         ctx
             Resolved request for this ICA.
         tasks
-            Tasks whose recordings to concatenate.
+            Tasks whose recordings to concatenate (default: the tasks the ICA
+            is estimated from, see :meth:`RawICA.fit_tasks`).
         preload
             Load the data into memory. With ``False``, cached recordings stay
             file-backed, so that a consumer that decimates (e.g. the component
@@ -811,7 +814,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         deps = []
-        for i, state in enumerate(self._source_states(ctx, self.pipe.task)):
+        for i, state in enumerate(self._source_states(ctx)):
             deps.append(Dependency(
                 raw_node_name(self.pipe.source),
                 label=f'source-{i}:raw',
@@ -868,7 +871,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
         if view == 'status':
             if self.path(ctx).exists():
                 return 'ok'
-            if self._source_states(ctx, self.pipe.task):
+            if self._source_states(ctx):
                 return 'missing-ica'
             return 'missing-raw'
         return super().load_view(ctx, view)
@@ -907,7 +910,7 @@ class ICAInput(Input[mne.preprocessing.ICA]):
             Resolved request for this ICA.
         """
         self._check_protected(ctx)
-        raw = self.load_concatenated_source_raw(ctx, self.pipe.task)
+        raw = self.load_concatenated_source_raw(ctx)
         kwargs, fit_kwargs = self.pipe._ica_kwargs()
         return ICAJob(raw, kwargs, fit_kwargs)
 

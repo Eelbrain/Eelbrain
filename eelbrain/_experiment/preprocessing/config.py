@@ -455,6 +455,10 @@ class RawICA(CachedRawPipe):
         a different value for ``reject`` is specified here.
     cache
         Cache the resulting raw files (default ``False``).
+    per_task
+        Estimate a separate ICA decomposition for each task (default ``False``:
+        one decomposition per subject, estimated from the data specified in
+        ``task``). Requires ``task=None``; see Notes.
     ...
         Additional parameters for :class:`mne.preprocessing.ICA`.
 
@@ -486,6 +490,13 @@ class RawICA(CachedRawPipe):
 
     This step merges bad channels from all tasks.
 
+    With ``per_task=True``, each task gets its own ICA decomposition, estimated
+    from that task's data only and applied to that task only (e.g., when tasks
+    were recorded at different head positions without Maxwell filtering). The
+    ICA file is then keyed by task, and :meth:`Pipeline.make_ica` and
+    :meth:`Pipeline.make_ica_selection` operate on the current
+    :ref:`state-task`. Run concatenation follows the same rule as above.
+
     Examples
     --------
     Some ICA examples::
@@ -506,6 +517,7 @@ class RawICA(CachedRawPipe):
 
     """
     DICT_ATTRS = CachedRawPipe.DICT_ATTRS + ('task', 'kwargs', 'fit_kwargs')
+    DICT_DEFAULTS = {'per_task': False}
 
     run: str | Sequence[str] = None
     # Whether to concatenate all runs per subject/session/acquisition for the ICA fit.
@@ -520,17 +532,37 @@ class RawICA(CachedRawPipe):
             random_state: int = 0,
             fit_kwargs: dict[str, Any] = None,
             cache: bool = False,
+            per_task: bool = False,
             **kwargs,
     ):
         CachedRawPipe.__init__(self, source, cache)
         self.task = sequence_arg('task', task, allow_none=True)
+        if per_task and self.task is not None:
+            raise ConfigurationError(f"RawICA: {per_task=} requires task=None (got {task=}); each task is decomposed separately")
+        self.per_task = per_task
         self.method = method
         self.random_state = random_state
         self.kwargs = {'method': method, 'random_state': random_state, **kwargs}
         self.fit_kwargs = dict(fit_kwargs) if fit_kwargs else {}
 
+    def ica_key_fields(self) -> tuple[str, ...]:
+        """State fields that identify one ICA decomposition (also the entities in the ICA file name)"""
+        fields = ['subject', 'session']
+        if self.per_task:
+            fields.append('task')
+        fields.append('acquisition')
+        if not self._concatenate_runs:
+            fields.append('run')
+        return tuple(fields)
+
+    def fit_tasks(self, ctx: Request) -> tuple[str, ...]:
+        """Tasks whose data the ICA for ``ctx`` is estimated from"""
+        if self.per_task:
+            return (ctx.state['task'],)
+        return self.task
+
     def path(self, ctx: Request) -> Path:
-        return ctx.root / ica_file_path(ctx.state, self.name, self._concatenate_runs, datatype=ctx.datatype)
+        return ctx.root / ica_file_path(ctx.state, self.name, self.ica_key_fields(), datatype=ctx.datatype)
 
     def _load_ica(
             self,
@@ -1369,7 +1401,7 @@ def assemble_raw_pipes(
                     after_maxwell = any(isinstance(resolved[name], RawMaxwell) for name in lineages[pipe.source])
                     pipe._concatenate_runs = after_maxwell
                     if pipe.task is None:
-                        if len(tasks) == 1 or after_maxwell:
+                        if len(tasks) == 1 or after_maxwell or pipe.per_task:
                             pipe.task = tasks
                         else:
                             raise ConfigurationError(f"RawICA {key!r} has task=None but the experiment has {len(tasks)} tasks. Specify task explicitly, or place the ICA step after a RawMaxwell step to use all tasks. Available tasks: {', '.join(tasks)}.")

@@ -21,6 +21,7 @@ def pipeline(
         tasks: int = 1,
         runs: int = 1,
         concatenate_runs: bool = True,
+        per_task: bool = False,
 ) -> SimpleNamespace:
     """Minimal stand-in exposing the pipeline attributes the tasks read."""
     return SimpleNamespace(
@@ -28,7 +29,7 @@ def pipeline(
         _sessions=[f's{i}' for i in range(sessions)],
         _tasks=[f't{i}' for i in range(tasks)],
         _runs=[f'{i}' for i in range(runs)],
-        _raw={'raw': SimpleNamespace(_concatenate_runs=concatenate_runs)},
+        _raw={'raw': SimpleNamespace(_concatenate_runs=concatenate_runs, per_task=per_task)},
         _epoch_rejection={'manual': ManualRejection(), 'auto': None},
     )
 
@@ -88,6 +89,8 @@ def test_task_key_fields():
     assert ica.key_fields(pipeline(runs=3), 'raw') == ('subject',)
     assert ica.key_fields(pipeline(runs=3, concatenate_runs=False), 'raw') == ('subject', 'run')
     assert ica.key_fields(pipeline(sessions=2, tasks=2), 'raw') == ('subject', 'session')  # ICA ignores task
+    assert ica.key_fields(pipeline(sessions=2, tasks=2, per_task=True), 'raw') == ('subject', 'session', 'task')
+    assert ica.key_fields(pipeline(tasks=2, runs=2, concatenate_runs=False, per_task=True), 'raw') == ('subject', 'task', 'run')
 
     assert coreg.key_fields(pipeline(), None) == ('subject', 'session')
 
@@ -300,7 +303,7 @@ def test_setup_columns_installs_and_caches_the_layout():
     assert frame._list.rows == []  # the previous table's rows are gone
 
     # switching to a Raw pipe that concatenates runs drops the Run column again
-    p._raw['ica'] = SimpleNamespace(_concatenate_runs=True)
+    p._raw['ica'] = SimpleNamespace(_concatenate_runs=True, per_task=False)
     frame._raw_name = lambda: 'ica'
     frame._setup_columns()
     assert frame._layout.key_fields == ('subject', 'session')
@@ -560,7 +563,7 @@ def test_ica_bad_channels_wait_for_the_pipeline(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
     monkeypatch.setattr(pipeline_gui.wx, 'CallLater', lambda ms, *args: deferred.append(args))
     posted, deferred, filed = [], [], []
-    node = SimpleNamespace(_source_states=lambda ctx, task: [{'task': 't0'}], pipe=SimpleNamespace(task='t0'))
+    node = SimpleNamespace(_source_states=lambda ctx: [{'task': 't0'}])
     ica_path = tmp_path / 'ica.fif'
     ica_path.touch()
     spec = SimpleNamespace(ctx=SimpleNamespace(node=node), path=ica_path)
@@ -591,7 +594,7 @@ def test_ica_bad_channels_report_a_failed_write(monkeypatch, tmp_path):
     "A recording whose bad channels can not be written is reported, and the rows that were written are still queued"
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
     posted, filed = [], []
-    node = SimpleNamespace(_source_states=lambda ctx, task: [{'task': 't0'}], pipe=SimpleNamespace(task='t0'))
+    node = SimpleNamespace(_source_states=lambda ctx: [{'task': 't0'}])
     spec = SimpleNamespace(ctx=SimpleNamespace(node=node), path=tmp_path / 'ica.fif')
 
     def make_bad_channels(names, **state):

@@ -398,6 +398,9 @@ def test_raw_pipe_semantic_dict():
     ica = RawICA('raw', 'task-a')
     assert ica.task == ('task-a',)
     assert ica._as_dict()['task'] == ('task-a',)
+    # the per_task default is omitted, so that existing ICA manifests stay valid
+    assert 'per_task' not in ica._as_dict()
+    assert RawICA('raw', per_task=True)._as_dict()['per_task'] is True
 
     reref = RawReReference('raw', ['A1', 'A2'], add='EXG1', drop='EXG8')
     assert reref.reference == ['A1', 'A2']
@@ -516,3 +519,22 @@ def test_raw_configurations():
     }, ('sample1', 'sample2'))
     assert raw['ica'].task == ('sample1',)
     assert raw['ica']._concatenate_runs is True
+
+    # per_task: one ICA per task, so multiple tasks need no RawMaxwell step; runs follow the usual rule
+    raw = assemble_raw_pipes({
+        'raw': RawSource(),
+        'ica': RawICA('raw', per_task=True),
+    }, ('sample1', 'sample2'))
+    assert raw['ica'].task == ('sample1', 'sample2')
+    assert raw['ica']._concatenate_runs is False
+    assert raw['ica'].ica_key_fields() == ('subject', 'session', 'task', 'acquisition', 'run')
+    raw = assemble_raw_pipes({
+        'raw': RawSource(),
+        'maxwell': RawMaxwell('raw'),
+        'ica': RawICA('maxwell', per_task=True),
+    }, ('sample1', 'sample2'))
+    assert raw['ica']._concatenate_runs is True
+    assert raw['ica'].ica_key_fields() == ('subject', 'session', 'task', 'acquisition')
+    # per_task decomposes every task separately, so it can not be combined with a task selection
+    with pytest.raises(ConfigurationError, match='per_task'):
+        RawICA('raw', 'sample1', per_task=True)
