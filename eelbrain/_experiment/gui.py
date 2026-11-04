@@ -13,10 +13,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     """
     import argparse
 
+    from .. import __version__
+
     parser = argparse.ArgumentParser(
         prog='eelbrain',
         description='Open the Eelbrain pipeline GUI',
     )
+    parser.add_argument('--version', action='version', version=__version__)
     parser.add_argument(
         'path', nargs='?', default=None,
         help='Pipeline file or directory (default: current working directory)',
