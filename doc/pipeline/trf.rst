@@ -13,6 +13,7 @@ The main entry points are:
 - :meth:`Pipeline.load_trf`: compute or load a single subject's TRF
 - :meth:`Pipeline.load_trfs`: assemble TRFs and fit metrics for a group of subjects
 - :meth:`Pipeline.load_model_test`: statistically compare the predictive power of two models
+- :meth:`Pipeline.show_model_test`: report section with tables and plots for model tests
 - :meth:`Pipeline.load_predictor`: load a predictor by itself, e.g. for inspection
 - :meth:`Pipeline.show_model_terms`: display the terms in a model or comparison
 
