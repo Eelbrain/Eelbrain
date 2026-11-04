@@ -1007,8 +1007,8 @@ class PipelineFrame(EelbrainFrame):
         task = self._current_task()
         if task.name == 'bad_chs':
             return [
-                RowAction("Set bad channels…", partial(self._set_bad_channels_dialog, idx)),
                 RowAction("Plot continuous data…", partial(self._open_bad_channels_gui, idx)),
+                RowAction("Set bad channels…", partial(self._set_bad_channels_dialog, idx)),
                 RowAction("Open in mne browse_raw…", partial(self._open_mne_browse_raw, idx)),
             ]
         elif task.name == 'ica':
