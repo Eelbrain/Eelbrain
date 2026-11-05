@@ -24,6 +24,7 @@ classifiers = [
 dependencies = [
   'appnope',
   'colormath >= 2.1',
+  'h5io',  # for mne.SourceMorph.save()
   'keyring >= 5',
   'matplotlib >= 3.6',
   'mne >= 1.13',
