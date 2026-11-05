@@ -13,7 +13,6 @@ from .._stats.stats import ttest_t
 from .._text import ms
 from ..fmtxt import Section, linebreak
 from ..plot._brain import ImageTable
-from ._results import effect_map
 
 
 def source_results(res, surfer_kwargs={}, title="Results", diff_cmap=None,
@@ -367,7 +366,7 @@ def source_brain_table(
         sp.set_parallel_view(*brain_view)
     sp.set_brain_args(surf=surf, cortex=cortex)
     for label, res in ress.items():
-        sp.add_ndvar(effect_map(res, sig), label=label, cmap=cmap, vmax=vmax, alpha=alpha)
+        sp.add_ndvar(plot._base.brain_data(res, sig=sig), label=label, cmap=cmap, vmax=vmax, alpha=alpha)
     if axw is None:
         axw = 2.5
     return sp.plot_table(view=view, orientation='vertical', dpi=144, axw=axw, show=False)
