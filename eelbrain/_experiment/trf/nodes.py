@@ -815,8 +815,7 @@ class TRFModelTestDerivative(Derivative[Any]):
             deps.append(Dependency('annot', label='xhemi-annot', state={'mrisubject': 'fsaverage_sym', 'parc': self._xhemi_parc(ctx)}))
             deps.append(Dependency('src', label='xhemi-src', state={'mrisubject': 'fsaverage_sym'}))
             if ctx.options['xhemi_mask']:
-                base_keys = [key for key in self.key_options if not key.startswith('xhemi')]
-                deps.append(Dependency('trf-model-test', label='base', options=ctx.options_for('trf-model-test', *base_keys, xhemi=False)))
+                deps.append(Dependency('trf-model-test', label='base', options=ctx.options_for('trf-model-test', *self.key_options, xhemi=False, xhemi_mask=True)))
         return tuple(deps)
 
     def dependency_fingerprint_override(self, ctx: Request, dep: Dependency, dep_ctx: Request) -> dict[str, Any] | None:
