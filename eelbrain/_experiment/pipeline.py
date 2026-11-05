@@ -3976,22 +3976,19 @@ class Pipeline(StateModel):
             return doc
         elif isinstance(res, MultiEffectNDTest):
             raise NotImplementedError("show_model_test: plots for multi-effect tests")
-        dims = {dim.name for dim in res._dims}
-        if 'source' in dims:
+        if res.p.has_dim('source'):
             panels = []
-            for ress_i in (ress, ress_hemi):
-                if not ress_i:
+            for ress_i in filter(None, (ress, ress_hemi)):
+                if sig and all(res_i.p.min() > 0.05 for res_i in ress_i.values()):
                     continue
-                elif sig and all(res_i.p.min() > 0.05 for res_i in ress_i.values()):
-                    continue
-                panel = report.source_brain_table(ress_i, brain_view, axw, surf, cortex, sig, vmax, cmap, alpha, view)
+                panel = report.source_brain_table(ress_i, brain_view=brain_view, axw=axw, surf=surf, cortex=cortex, sig=sig, vmax=vmax, cmap=cmap, alpha=alpha, view=view)
                 panels.append(panel.image(close=True))
             if panels:
                 doc.append(fmtxt.Figure(panels))
-        elif 'sensor' in dims:
-            doc.append(report.sensor_topomaps(ress, axw, vmax, cmap, sig))
+        elif res.p.has_dim('sensor'):
+            doc.append(report.sensor_topomaps(ress, axw=axw, vmax=vmax, cmap=cmap, sig=sig))
         else:
-            raise NotImplementedError(f"Model test with {dims=}")
+            raise NotImplementedError(f"Model test with dims {res.p.dimnames}")
         return doc
 
     def show_raw_info(self, **state) -> fmtxt.Table | None:
