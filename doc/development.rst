@@ -50,13 +50,6 @@ The development version of Eelbrain can then be installed with ``pip``:
     $ mamba activate eeldev
     $ pip install -e .
 
-On macOS, the ``$ eelbrain-ipython`` shell script to run ``iPython`` with the framework
-build is not installed properly by ``pip``; in order to fix this, run:
-
-.. code-block:: console
-
-    $ ./fix-bin
-
 In Python, you can make sure that you are working with the development version:
 
     $ python
@@ -166,10 +159,6 @@ Additional tests for the :class:`~pipeline.Pipeline` takes longer to run and can
     $ pytest -m slow --runslow eelbrain/_experiment/
 
 All pull requests trigger a Continuous Integration (CI) workflow that automatically runs the full test suite.
-
-On macOS, tests involving GUIs need to run with the framework build of Python;
-if you get a corresponding error, run ``$ ./fix-bin pytest`` from the
-``Eelbrain`` repository root.
 
 
 .. _code-style:

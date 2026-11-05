@@ -4,10 +4,10 @@ import logging
 from eelbrain import datasets, testnd
 from eelbrain.fmtxt import html
 from eelbrain.report._auto import result_report
-from eelbrain.testing import requires_framework_build
+from eelbrain.testing import requires_gui
 
 
-@requires_framework_build
+@requires_gui
 def test_result_report():
     "Test result_report function for different Results"
     ds = datasets.get_uts(True)

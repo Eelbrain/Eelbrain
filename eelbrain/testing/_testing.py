@@ -151,7 +151,7 @@ gui_test_context = GUITestContext()
 
 
 def gui_test(function):
-    return gui_test_context(requires_framework_build(function))
+    return gui_test_context(requires_gui(function))
 
 
 def assert_fmtxt_str_equals(
@@ -185,7 +185,7 @@ hide_plots_context = ConfigContext('show', False)
 
 
 def hide_plots(function):
-    return hide_plots_context(requires_framework_build(function))
+    return hide_plots_context(requires_gui(function))
 
 
 @contextmanager
@@ -199,8 +199,8 @@ def working_directory(wd):
         os.chdir(cwd)
 
 
-def requires_framework_build(function):
-    return pytest.mark.framework_build(function)
+def requires_gui(function):
+    return pytest.mark.gui(function)
 
 
 def requires_mne_sample_data(function):

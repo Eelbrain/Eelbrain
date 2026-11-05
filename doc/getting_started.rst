@@ -57,13 +57,6 @@ Or by using ``run=True`` in a plot command::
 
 To return control to the Terminal, quit the ``python`` application that opens the plot windows.
 
-.. note::
-    On macOS, the GUI backend that Eelbrain uses when run from the command-line interpreter requires a special build of Python called a "Framework build". Eelbrain installs a shortcut to start `IPython <ipython.readthedocs.io>`_ with a Framework build::
-
-        $ eelbrain-ipython
-
-    This automatically launches IPython with the "eelbrain" profile. A default startup script that executes ``from eelbrain import *`` is created, and can be changed in the corresponding `IPython profile <http://ipython.readthedocs.io/en/stable/interactive/tutorial.html?highlight=startup#startup-files>`_.
-
 
 Interacting with other Python libraries
 ---------------------------------------

@@ -102,7 +102,7 @@ test-requires = [
 ]
 test-command = [
   "python -c \"import eelbrain; v = eelbrain.__version__; assert v != '0.0.0' and v[0].isdigit(), f'Bad version: {v!r}'\"",
-  "pytest -m \"not (slow or framework_build or file_test)\" -rsx -v --pyargs eelbrain --cov eelbrain --cov-report=xml:{project}/coverage.xml",
+  "pytest -m \"not (slow or gui or file_test)\" -rsx -v --pyargs eelbrain --cov eelbrain --cov-report=xml:{project}/coverage.xml",
 ]
 
 [tool.cibuildwheel.linux]

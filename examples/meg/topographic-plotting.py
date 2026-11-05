@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-# This script can be executed from the Terminal using $ pythonw
+# This script can be executed from the Terminal using $ python
 # dataset: mne_sample
 from eelbrain import *
 

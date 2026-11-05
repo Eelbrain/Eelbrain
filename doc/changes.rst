@@ -34,8 +34,8 @@ New in 0.43
     times in seconds are in ``onset``.
   - New :func:`load_pipeline` helper and ``$ eelbrain`` command for loading
     a project from a ``pipeline.py`` file and managing data preparation in one
-    place. The shortcut to start IPython with the ``eelbrain`` profile, which
-    was previously ``$ eelbrain``, is now ``$ eelbrain-ipython``.
+    place. The IPython launcher previously installed as ``$ eelbrain`` has been
+    removed, since GUIs no longer require a framework build of Python on macOS.
   - Pipeline-managed derivative files now follow a BIDS-style layout under
     ``derivatives/mne``. The ``eelbrain --migrate`` command can move
     legacy ICA, coregistration, bad-channel, and epoch-rejection files to the
