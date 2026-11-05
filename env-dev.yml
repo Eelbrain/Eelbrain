@@ -24,6 +24,7 @@ dependencies:
 # mne-python
 - mne >= 1.13
 - h5py
+- h5io  # for mne.SourceMorph.save()
 - pandas
 - statsmodels
 - joblib

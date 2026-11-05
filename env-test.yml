@@ -23,6 +23,7 @@ dependencies:
 # mne-python (mne-base = core only, without heavy optional deps like vtk/pyvista/numba)
 - mne-base >= 1
 - h5py
+- h5io  # for mne.SourceMorph.save()
 - pandas
 - statsmodels
 - joblib
