@@ -67,7 +67,7 @@ Assuming a subject without explicit ``{session}`` is named "S001", the pipeline 
 - The template brain MRI-directory at ``~/Data/Experiment/derivatives/freesurfer/fsaverage``
 
 The subjects and corresponding MRIs that were discovered can be shown
-in the ``eelbrain-gui``, or using :meth:`Pipeline.show_subjects`::
+in the :ref:`pipeline-gui` (``$ eelbrain``), or using :meth:`Pipeline.show_subjects`::
 
     >>> e.show_subjects()
     #    subject   mri

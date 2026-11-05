@@ -70,7 +70,7 @@ Data preparation involves steps that require visual inspection and human decisio
 The preferred tool for all of these is the pipeline GUI, launched from the command line::
 
     $ cd  ~/Code/MyProject
-    $ eelbrain-gui
+    $ eelbrain
 
 The GUI shows the status for every subject in a single table and opens the relevant sub-GUI (ICA component browser, epoch rejection viewer, MNE coregistration tool) on double-click.
 It also lets you compute ICA decompositions for all missing subjects in one click.
@@ -129,12 +129,12 @@ The pipeline GUI
 The pipeline GUI is the recommended tool for all data-preparation steps.
 Launch it from the command line by pointing it at the project directory (or any path accepted by :func:`eelbrain.load_pipeline`)::
 
-    $ eelbrain-gui ~/Code/MyProject
+    $ eelbrain ~/Code/MyProject
 
 With no argument it uses the current working directory::
 
     $ cd ~/Code/MyProject
-    $ eelbrain-gui
+    $ eelbrain
 
 The GUI opens a window with a **Task** dropdown that gives access to:
 

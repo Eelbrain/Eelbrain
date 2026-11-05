@@ -17,7 +17,7 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: mark test as slow to run")
-    config.addinivalue_line("markers", "framework_build: requires framework build")
+    config.addinivalue_line("markers", "gui: requires a GUI (skipped with --no-gui)")
     config.addinivalue_line("markers", "mayavi: requires mayavi")
     config.addinivalue_line("markers", "file_test: requires repo test file(s)")
 
@@ -29,9 +29,9 @@ def pytest_collection_modifyitems(config, items):
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
     if config.getoption("--no-gui"):
-        skip = pytest.mark.skip(reason="requires framework build")
+        skip = pytest.mark.skip(reason="GUI test (skipped with --no-gui)")
         for item in items:
-            if "framework_build" in item.keywords:
+            if "gui" in item.keywords:
                 item.add_marker(skip)
     if config.getoption("--no-mayavi"):
         global SKIP_MAYAVI

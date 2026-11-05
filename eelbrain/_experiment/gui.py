@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Entry point for the ``eelbrain-gui`` command.
+    """Entry point for the ``eelbrain`` command.
 
     Parameters
     ----------
@@ -13,10 +13,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     """
     import argparse
 
+    from .. import __version__
+
     parser = argparse.ArgumentParser(
-        prog='eelbrain-gui',
+        prog='eelbrain',
         description='Open the Eelbrain pipeline GUI',
     )
+    parser.add_argument('--version', action='version', version=__version__)
     parser.add_argument(
         'path', nargs='?', default=None,
         help='Pipeline file or directory (default: current working directory)',

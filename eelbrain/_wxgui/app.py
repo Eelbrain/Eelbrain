@@ -779,21 +779,7 @@ class App(wx.App):
 def get_app(jumpstart: bool = False) -> App:
     global APP
     if APP is None:
-        try:
-            APP = App()
-        except SystemExit as exc:
-            if exc.code.startswith("This program needs access to the screen"):
-                raise SystemExit(
-                    f"{exc.code} \n\n"
-                    f"If you are using an iPython terminal: make sure you are "
-                    f"running a framework build by launching IPython with:\n\n"
-                    f"    $ eelbrain\n\n"
-                    f"If you are using a Jupyter notebook, prefix the notebook with\n\n"
-                    f"    %matplotlib inline\n\n"
-                    f"and restart the kernel.")
-            else:
-                raise
-
+        APP = App()
         if jumpstart and IS_OSX:
             # Give wx a chance to initialize the GUI backend
             APP.OnAbout(None)

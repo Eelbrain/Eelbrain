@@ -104,7 +104,7 @@ jobs:
       - name: Install pytest
         run: pip install pytest pingouin
       - name: Run tests
-        run: pytest -m "not (slow or framework_build or file_test)" -rsx -v --pyargs eelbrain
+        run: pytest -m "not (slow or gui or file_test)" -rsx -v --pyargs eelbrain
 
   pre-publish:
     runs-on: ubuntu-latest

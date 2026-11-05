@@ -13,17 +13,14 @@ doc:
 test:
 	pytest eelbrain
 
-testw:
-	pythonw $(shell which pytest) eelbrain
-
 test-no-gui:
 	pytest eelbrain --no-gui
 
 test-only-gui:
-	pythonw $(shell which pytest) eelbrain/_wxgui eelbrain/plot eelbrain/tests/test_examples.py eelbrain/tests/test_fmtxt.py eelbrain/tests/test_report.py
+	pytest eelbrain/_wxgui eelbrain/plot eelbrain/tests/test_examples.py eelbrain/tests/test_fmtxt.py eelbrain/tests/test_report.py
 
 test-gui-nomayavi:
-	pythonw $(shell which pytest) --no-mayavi eelbrain/_wxgui eelbrain/plot eelbrain/tests/test_examples.py eelbrain/tests/test_fmtxt.py eelbrain/tests/test_report.py
+	pytest --no-mayavi eelbrain/_wxgui eelbrain/plot eelbrain/tests/test_examples.py eelbrain/tests/test_fmtxt.py eelbrain/tests/test_report.py
 
 pypi:
 	rm -rf build dist
