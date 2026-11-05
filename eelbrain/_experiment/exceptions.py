@@ -14,6 +14,10 @@ class FileDeficientError(Exception):
     """An input file is deficient"""
 
 
+class NoSignificantSourceError(ValueError):
+    """A test to be masked by significance has no significant source"""
+
+
 class ICAChannelsChangedError(Exception):
     """Bad channels changed since the ICA was estimated.
 

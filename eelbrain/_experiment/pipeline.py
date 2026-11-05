@@ -43,7 +43,7 @@ from .epochs import (
 )
 from .epoch_rejection import ChannelModelRejection, ChannelModelRejectionDerivative, EpochRejection, ManualRejection, RejectionInput
 from .events import EpochEventsDerivative, EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
-from .exceptions import FileMissingError, ICAChannelsChangedError
+from .exceptions import FileMissingError, ICAChannelsChangedError, NoSignificantSourceError
 from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
 from .state_model import StateModel
 from .statistics.nodes import ROITestResult
@@ -3952,14 +3952,13 @@ class Pipeline(StateModel):
         if isinstance(x, str):
             x = {x: x}
         ress = {label: self.load_model_test(comparison, **test_args) for label, comparison in x.items()}
+        ress_hemi = {}
         if xhemi:
-            ress_hemi = {}
             for label, comparison in x.items():
-                if xhemi_mask and ress[label].p is not None and ress[label].p.min() > 0.05:
-                    continue  # no significant source to test for lateralization
-                ress_hemi[label] = self.load_model_test(comparison, xhemi=True, xhemi_mask=xhemi_mask, **test_args)
-        else:
-            ress_hemi = None
+                try:
+                    ress_hemi[label] = self.load_model_test(comparison, xhemi=True, xhemi_mask=xhemi_mask, **test_args)
+                except NoSignificantSourceError:
+                    pass  # no significant source to test for lateralization
 
         if heading is None:
             doc = fmtxt.FMText()

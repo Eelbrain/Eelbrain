@@ -20,7 +20,7 @@ from ..configuration import Configuration
 from ..data import DataSpec
 from ..derivative_cache import Dependency, Derivative, OptionSpec, Request, UncachedDerivative, VersionedInput, file_fingerprint
 from ..epochs.config import EpochBase
-from ..exceptions import FileMissingError
+from ..exceptions import FileMissingError, NoSignificantSourceError
 from ..pathing import BIDS_ENTITY_KEYS, MRI_SDIR, mri_dir
 from ..preprocessing import RawFilter, RawPipe, RawSource
 from ..source.nodes import _drop_unknown_labels, _source_parc, _subject_state
@@ -937,7 +937,7 @@ class TRFModelTestDerivative(Derivative[Any]):
             mask_lh, mask_rh = xhemi(base_res.p <= 0.05, parc=parc)
             mask = (mask_lh > 0.5) | (mask_rh > 0.5)
             if not mask.x.any():
-                raise ValueError("xhemi_mask=True: no source is significant in the non-lateralized test (use xhemi_mask=False to test the whole hemisphere)")
+                raise NoSignificantSourceError("xhemi_mask=True: no source is significant in the non-lateralized test (use xhemi_mask=False to test the whole hemisphere)")
             lh = lh * mask
             rh = rh * mask
         ds = ds[[key for key in ds if isuv(ds[key])]]
