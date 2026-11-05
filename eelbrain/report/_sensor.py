@@ -6,7 +6,6 @@ from .._data_obj import cellname
 from .._stats.testnd import NDTest, TTestIndependent, TTestRelated
 from .._text import ms
 from ..fmtxt import Section
-from ._results import effect_map
 from ._source import cluster_timecourse
 
 
@@ -167,7 +166,7 @@ def sensor_topomaps(
     sig
         Mask the maps by significance (default ``True``).
     """
-    topographies = [effect_map(res, sig) for res in ress.values()]
+    topographies = [plot._base.brain_data(res, sig=sig) for res in ress.values()]
     vlims = plot._base.find_fig_vlims([topographies], vmax)
     vmin, vmax = next(iter(vlims.values()))
     panels = []

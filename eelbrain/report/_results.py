@@ -3,9 +3,8 @@
 from typing import Any
 
 from .. import fmtxt
-from .._data_obj import NDVar
 from .._stats.test import star
-from .._stats.testnd import MultiEffectNDTest, NDDifferenceTest, NDTest
+from .._stats.testnd import MultiEffectNDTest, NDTest
 
 
 def result_table(
@@ -57,23 +56,3 @@ def result_table(
             stat, p = getattr(res, res._statistic.lower()), res.p
         table.cells(key, getattr(res, 'df', ''), fmtxt.stat(stat), fmtxt.p(p), star(p))
     return table
-
-
-def effect_map(res: NDTest, sig: bool = True) -> NDVar:
-    """Map of the effect tested by a single-effect mass-univariate test
-
-    Parameters
-    ----------
-    res
-        Test result: the difference for a difference test, otherwise the test
-        statistic.
-    sig
-        Mask the map by significance (default ``True``).
-    """
-    if isinstance(res, MultiEffectNDTest):
-        raise NotImplementedError(f"{res.__class__.__name__}: effect map of a multi-effect test")
-    elif isinstance(res, NDDifferenceTest):
-        return res.masked_difference() if sig else res.difference
-    elif sig:
-        return res.masked_parameter_map()
-    return res._statistic_map
