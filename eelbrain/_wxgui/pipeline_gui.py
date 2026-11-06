@@ -269,6 +269,9 @@ class Task:
         Whether the Raw dropdown applies.
     shows_epoch
         Whether the Epoch and Rejection dropdowns apply.
+    shows_mri
+        Whether the MRI dropdown (the subject→MRI mapping, i.e. the ``mri``
+        state) applies.
     compute_label
         Label for the compute button; ``None`` for tasks that only inspect.
     compute_tooltip
@@ -287,6 +290,7 @@ class Task:
     missing_note: str | None = None
     shows_raw: bool = False
     shows_epoch: bool = False
+    shows_mri: bool = False
     compute_label: str | None = None
     compute_tooltip: str | None = None
 
@@ -533,6 +537,7 @@ class MRITask(Task):
     done_status = 'ok'
     summary = "MRI available"
     missing_note = ''
+    shows_mri = True
 
     def extra_columns(self, key_fields: tuple[str, ...]) -> tuple[tuple[str, int], ...]:
         # display-only, so it is not a key field: a row is still named by subject
@@ -568,6 +573,7 @@ class CoregTask(Task):
     unit = 'sessions'
     summary = "coregistration done"
     missing_note = ''
+    shows_mri = True
 
     def key_fields(
             self,
@@ -691,6 +697,13 @@ class PipelineFrame(EelbrainFrame):
         self._raw_label = wx.StaticText(self._panel, label="Raw:")
         self._raw_choice = wx.Choice(self._panel)
         self._raw_choice.Bind(wx.EVT_CHOICE, self._on_raw_changed)
+        # Subject→MRI mapping for the MRI and Coregistration tasks (the ``mri`` state);
+        # shown only when the pipeline defines more than one mapping
+        self._mri_label = wx.StaticText(self._panel, label="MRI:")
+        self._mri_choice = wx.Choice(self._panel)
+        self._mri_choice.SetToolTip("Mapping from subjects to MRI subjects (Pipeline.mri_subjects)")
+        self._mri_choice.Bind(wx.EVT_CHOICE, self._on_state_changed)
+        self._mri_names: list[str] = []  # mapping name for each dropdown entry
 
         for widget, border in [
             (self._epoch_rejection_label, 14),
@@ -699,6 +712,8 @@ class PipelineFrame(EelbrainFrame):
             (self._epoch_choice, 4),
             (self._raw_label, 10),
             (self._raw_choice, 4),
+            (self._mri_label, 10),
+            (self._mri_choice, 4),
         ]:
             toolbar.Add(widget, flag=wx.ALIGN_CENTER_VERTICAL | wx.LEFT, border=border)
 
@@ -749,6 +764,7 @@ class PipelineFrame(EelbrainFrame):
         for w in (self._epoch_rejection_label, self._epoch_rejection_choice,
                   self._epoch_label, self._epoch_choice,
                   self._raw_label, self._raw_choice,
+                  self._mri_label, self._mri_choice,
                   self._bad_chs_btn, self._compute_btn, self._progress_gauge, self._progress_label):
             w.Hide()
 
@@ -774,13 +790,20 @@ class PipelineFrame(EelbrainFrame):
         """
         return self._raw_choice.GetStringSelection() if self._current_task().shows_raw else None
 
+    def _mri_name(self) -> str | None:
+        """Subject→MRI mapping the current table is for; ``None`` for a task without an MRI dropdown."""
+        if not self._current_task().shows_mri:
+            return None
+        index = self._mri_choice.GetSelection()
+        return self._mri_names[index] if index != wx.NOT_FOUND else None
+
     def _table_scope(self) -> tuple:
-        """Identity of the table on display: ``(task, epoch_rejection, epoch, raw, layout)``.
+        """Identity of the table on display: ``(task, epoch_rejection, epoch, raw, layout, mri)``.
 
         Every choice that selects which rows are shown, and the arguments
         :meth:`_iter_combos` and :meth:`_iter_rows` need to produce them. A row ``combo`` only names a
         row within one scope, so a job minted for one table is never applied to a
-        row of another: the Raw, Epoch and Epoch-rejection choices stay enabled
+        row of another: the Raw, Epoch, Epoch-rejection and MRI choices stay enabled
         while a computation runs, and switching one of them (or the number of ICA
         key-field columns that follows from Raw) leaves the same combo pointing at
         an unrelated recording. The layout comes from :meth:`_setup_columns` rather
@@ -790,7 +813,7 @@ class PipelineFrame(EelbrainFrame):
         task = self._current_task()
         epoch_rejection = self._current_epoch_rejection() if task.shows_epoch else None
         epoch_name = self._epoch_choice.GetStringSelection() if task.shows_epoch else None
-        return task, epoch_rejection, epoch_name, self._raw_name(), self._layout
+        return task, epoch_rejection, epoch_name, self._raw_name(), self._layout, self._mri_name()
 
     def _populate_epoch_choices(self):
         previous = self._epoch_choice.GetStringSelection()
@@ -808,6 +831,21 @@ class PipelineFrame(EelbrainFrame):
             self._raw_choice.Append(name)
         default = self._raw_choice.FindString('raw')
         self._restore_selection(self._raw_choice, previous, default if default != wx.NOT_FOUND else 0)
+
+    @staticmethod
+    def _mri_label_for(name: str) -> str:
+        return name or '(default)'
+
+    def _populate_mri_choices(self) -> None:
+        """Fill the MRI dropdown with the pipeline's subject→MRI mappings."""
+        previous = self._mri_name()
+        self._mri_names = list(self._pipeline.get_field_values('mri'))
+        self._mri_choice.Clear()
+        for name in self._mri_names:
+            self._mri_choice.Append(self._mri_label_for(name))
+        # initially the pipeline's own state, which the pipeline file may set through ``defaults``
+        current = self._mri_label_for(previous if previous is not None else self._pipeline.get('mri'))
+        self._restore_selection(self._mri_choice, current, 0)
 
     def _populate_epoch_rejection_choices(self):
         previous = self._epoch_rejection_choice.GetStringSelection()
@@ -866,6 +904,12 @@ class PipelineFrame(EelbrainFrame):
             self._populate_epoch_choices()
         if task.shows_raw:
             self._populate_raw_choices(task)
+        if task.shows_mri:
+            self._populate_mri_choices()
+        # a single mapping leaves nothing to choose
+        show_mri = task.shows_mri and self._mri_choice.GetCount() > 1
+        self._mri_label.Show(show_mri)
+        self._mri_choice.Show(show_mri)
         self._update_compute_button()
         self._setup_columns()
         self._start_refresh()
@@ -1312,7 +1356,7 @@ class PipelineFrame(EelbrainFrame):
         session = self._list.GetItemText(idx, 1)
         pipeline = self._pipeline
         with pipeline._temporary_state:
-            kw = dict(subject=subject, raw='raw')
+            kw = dict(subject=subject, raw='raw', mri=self._mri_name())
             if session:
                 kw['session'] = session
             pipeline.set(**kw)
@@ -1464,7 +1508,7 @@ class PipelineFrame(EelbrainFrame):
 
     def _start_refresh(self) -> None:
         scope = self._table_scope()
-        task, epoch_rejection, epoch_name, _, _ = scope
+        task, epoch_rejection, epoch_name, _, _, _ = scope
         token = object()
         self._refresh_token = token
         self._list.DeleteAllItems()
@@ -1502,7 +1546,7 @@ class PipelineFrame(EelbrainFrame):
         file read per recording. Both passes hold the pipeline lock, so neither ever
         walks the pipeline while the compute worker is using it.
         """
-        task, _, _, _, layout = scope
+        task, _, _, _, layout, _ = scope
         log = self._pipeline._log
         n_filled = 0
         first_error = None  # shown once the pass is over, so that it does not stall the rest
@@ -1934,7 +1978,7 @@ class PipelineFrame(EelbrainFrame):
         ``combo`` holds the leading key-field columns (subject and any
         session/run columns) that the row is prefixed with.
         """
-        task, _, _, raw_name, layout = scope
+        task, _, _, raw_name, layout, _ = scope
         if choice == StaleICADialog.ABORT:
             wx.CallAfter(wx.GetApp().ExitMainLoop)
             raise _AbortRequested()
@@ -2006,7 +2050,7 @@ class PipelineFrame(EelbrainFrame):
         BIDS dataset actually holds -- neither of which requires opening an artifact.
         The second pass (:meth:`_iter_rows`) is over the list this produced.
         """
-        task, _, _, raw_name, layout = scope
+        task, _, _, raw_name, layout, _ = scope
         pipeline = self._pipeline
         combos = pipeline.iter(list(layout.key_fields), **self._iter_state(scope))
         # the tasks that show one row per recording skip recordings that were never acquired
@@ -2025,11 +2069,13 @@ class PipelineFrame(EelbrainFrame):
 
     def _iter_state(self, scope: tuple) -> dict[str, str]:
         """State every row of the table is resolved under, besides its key fields."""
-        task, epoch_rejection, epoch_name, raw_name, _ = scope
+        task, epoch_rejection, epoch_name, raw_name, _, mri_name = scope
         if task.name == 'epoch_rej':
             return {'raw': raw_name, 'epoch': epoch_name, 'epoch_rejection': epoch_rejection}
         elif task.name == 'coreg':
-            return {'raw': 'raw'}
+            return {'raw': 'raw', 'mri': mri_name}
+        elif task.name == 'mri':
+            return {'mri': mri_name}
         return {}
 
     def _iter_rows(
@@ -2058,7 +2104,7 @@ class PipelineFrame(EelbrainFrame):
         combos
             Rows to resolve, as :meth:`_iter_combos` yielded them.
         """
-        task, epoch_rejection, _, raw_name, layout = scope
+        task, epoch_rejection, _, raw_name, layout, _ = scope
         pipeline = self._pipeline
         constants = self._iter_state(scope)
         bulk_choice = None  # set once the user ticks "Apply to all" in the stale-ICA dialog

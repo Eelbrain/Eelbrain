@@ -313,7 +313,27 @@ def n_decimals(number):
 
 
 class keydefaultdict(defaultdict):  # noqa
-    "http://stackoverflow.com/a/2912455/166700"
+    """Dictionary whose missing entries are generated as a function of the key
+
+    Parameters
+    ----------
+    default_factory : callable
+        Function that produces the value for a missing ``key``, called as
+        ``default_factory(key)``; the value is stored in the dictionary.
+
+    Examples
+    --------
+    An MRI-subject mapping for :attr:`~eelbrain.pipeline.Pipeline.mri_subjects`
+    that scales the template brain for every subject::
+
+        >>> mri_subjects = keydefaultdict(lambda subject: f'{subject}-scaled')
+        >>> mri_subjects['S001']
+        'S001-scaled'
+
+    Notes
+    -----
+    Based on http://stackoverflow.com/a/2912455/166700
+    """
 
     def __missing__(self, key):
         if self.default_factory is None:

@@ -280,8 +280,8 @@ def _table_frame(name: str, rows: list[tuple] = (), **kwargs) -> PipelineFrame:
 
 # see PipelineFrame._table_scope
 _ICA_LAYOUT = _layout('ica')
-_ICA_SCOPE = (TASKS_BY_NAME['ica'], None, None, '1-40', _ICA_LAYOUT)
-_OTHER_SCOPE = (TASKS_BY_NAME['ica'], None, None, 'ica-2', _ICA_LAYOUT)
+_ICA_SCOPE = (TASKS_BY_NAME['ica'], None, None, '1-40', _ICA_LAYOUT, None)
+_OTHER_SCOPE = (TASKS_BY_NAME['ica'], None, None, 'ica-2', _ICA_LAYOUT, None)
 
 
 def test_setup_columns_installs_and_caches_the_layout():
@@ -493,9 +493,9 @@ def test_displayed_row_requires_a_matching_scope():
     assert frame._displayed_row(_ICA_SCOPE, ('R0000',)) == 2
     # same combo, but the Raw choice has moved on since the job was queued
     assert frame._displayed_row(_OTHER_SCOPE, ('R0000',)) == -1
-    assert frame._displayed_row((TASKS_BY_NAME['epoch_rej'], 'man', 'target', '1-40', _layout('epoch_rej')), ('R0000',)) == -1
+    assert frame._displayed_row((TASKS_BY_NAME['epoch_rej'], 'man', 'target', '1-40', _layout('epoch_rej'), None), ('R0000',)) == -1
     # the same table, but the Raw choice has changed the number of key-field columns
-    assert frame._displayed_row((TASKS_BY_NAME['ica'], None, None, '1-40', _layout('ica', sessions=2)), ('R0000',)) == -1
+    assert frame._displayed_row((TASKS_BY_NAME['ica'], None, None, '1-40', _layout('ica', sessions=2), None), ('R0000',)) == -1
 
 
 def test_queue_jobs_dedupes_within_one_scope_only():
@@ -793,7 +793,7 @@ def test_iter_rows_mri_status(tmp_path):
     p = pipeline()
     p.__dict__.update(root=tmp_path, _state={}, get=lambda field: 'fsaverage' if field == 'common_brain' else p._state['subject'], set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
     frame = _frame(_pipeline=p, _refresh_token='TOKEN')
-    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'))
+    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), '')
     rows = list(frame._iter_rows('TOKEN', scope, [('R01',), ('R02',), ('R03',), ('R04',), (COMMON_BRAIN_ROW,)]))
     assert [row for _, row, _, _ in rows] == [('R01', 'R01', 'ok'), ('R02', 'R02', 'template'), ('R03', 'R03', 'cfg'), ('R04', 'R04', 'no MRI'), (COMMON_BRAIN_ROW, 'fsaverage', 'ok')]
 
@@ -808,9 +808,22 @@ def test_iter_rows_reports_a_failing_row_and_keeps_going(tmp_path):
     p = pipeline()
     p.__dict__.update(root=tmp_path, _state={}, get=get, set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
     frame = _frame(_pipeline=p, _refresh_token='TOKEN')
-    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'))
+    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), '')
     rows = list(frame._iter_rows('TOKEN', scope, [('R01',), ('R02',)]))
     assert rows[0] == (('R01',), ('R01', 'R01', 'no MRI'), None, None)
     combo, row, spec, error = rows[1]
     assert (combo, row, spec) == (('R02',), ('R02', PLACEHOLDER, pipeline_gui.ERROR), None)
     assert str(error) == "no MRI subject"
+
+
+def test_mri_mapping_dropdown():
+    "The MRI dropdown (the ``mri`` state) applies to the MRI and Coregistration tasks, whose rows are resolved under the selected mapping"
+    assert [task.name for task in TASKS if task.shows_mri] == ['mri', 'coreg']
+    frame = SimpleNamespace()
+    mri_scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), 'scaled')
+    assert PipelineFrame._iter_state(frame, mri_scope) == {'mri': 'scaled'}
+    coreg_scope = (TASKS_BY_NAME['coreg'], None, None, None, _layout('coreg'), '')
+    assert PipelineFrame._iter_state(frame, coreg_scope) == {'raw': 'raw', 'mri': ''}
+    assert PipelineFrame._iter_state(frame, _ICA_SCOPE) == {}
+    assert PipelineFrame._mri_label_for('') == '(default)'
+    assert PipelineFrame._mri_label_for('scaled') == 'scaled'

@@ -95,7 +95,9 @@ def _trf_dataset_key_fields(ctx: Request, estimators: dict[str, Estimator], *cas
     est = estimators[ctx.options['estimator']]
     fields = [*case_fields, 'session', 'acquisition', 'epoch', 'epoch_rejection', 'raw', 'inv']
     if _is_source_space(ctx, est):
-        fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
+        fields += ['cov', 'src', 'parc', 'adjacency', 'common_brain']
+        if 'subject' in case_fields:  # a group pins each subject's mrisubject on the dependency edge (see _subject_state)
+            fields.append('mrisubject')
     else:
         fields.append('reference')  # source modeling pins reference='' (see TRFDerivative)
     fields += est.extra_input_fields

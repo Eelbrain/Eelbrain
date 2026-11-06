@@ -48,7 +48,7 @@ from .state_model import StateModel
 from .statistics.nodes import ROITestResult
 from .groups import assemble_groups
 from .pathing import (
-    LOG_DIR, MRI_SDIR, bids_path, join_stem_parts, mri_dir, raw_basename,
+    LOG_DIR, MRI_SDIR, bids_path, join_stem_parts, mri_dir, mri_subject_name, raw_basename,
     src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
@@ -205,10 +205,12 @@ class Pipeline(StateModel):
     # here (e.g. {'baseline': EpochCovariance('baseline')})
     noise_covariance: dict[str, Covariance] = {}
 
-    # MRI subject names: {subject: mrisubject} mappings
-    # selected with e.set(mri=dict_name)
-    # default is identity (mrisubject = subject)
-    mri_subjects = {'': keydefaultdict(lambda s: s)}
+    # MRI subject names: {name: {subject: mri_subject}} mappings, selected with
+    # e.set(mri=name); the 'sub-' prefix is added to mri_subject unless it is
+    # the common brain (see pathing.mri_subject_name). The identity mapping ''
+    # is always available unless mri_subjects overrides it.
+    _default_mri_subjects = {'': keydefaultdict(lambda s: s)}
+    mri_subjects: dict[str, dict[str, str]] = {}
 
     # Parcellations
     _default_parcs = {
@@ -391,7 +393,18 @@ class Pipeline(StateModel):
         self._references = ConfigurationDict('reference', references)
 
         # mri_subjects
-        self._mri_subjects = self.mri_subjects.copy()
+        if not isinstance(self.mri_subjects, dict):
+            raise TypeError(f"{self.__class__.__name__}.mri_subjects={self.mri_subjects!r}: need a dict of {{name: {{subject: mri_subject}}}} mappings")
+        check_names(self.mri_subjects, 'mri_subjects', allow_empty=True)
+        self._mri_subjects = {}
+        for name, mapping in {**self._default_mri_subjects, **self.mri_subjects}.items():
+            if not isinstance(mapping, dict):
+                raise TypeError(f"mri_subjects[{name!r}]={mapping!r}: need a dict mapping subject to MRI subject (or a keydefaultdict)")
+            # a plain dict has to cover every subject; a keydefaultdict generates entries on demand
+            if getattr(mapping, 'default_factory', None) is None:
+                if missing := [subject for subject in self._subjects if subject not in mapping]:
+                    raise ConfigurationError(f"mri_subjects[{name!r}] has no entry for {enumeration(missing)}")
+            self._mri_subjects[name] = mapping
 
         # Sensor noise covariance estimates
         check_names(self.noise_covariance, 'noise_covariance', allow_empty=False)
@@ -596,7 +609,7 @@ class Pipeline(StateModel):
         self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs))
         self._derivatives.register(TwoStageLevel1Derivative(self.tests))
         self._derivatives.register(TestResultDerivative(*result_args))
-        self._derivatives.register(TwoStageLevel2Derivative(*result_args))
+        self._derivatives.register(TwoStageLevel2Derivative(*result_args, self._mri_subjects))
 
     def _resolve_derivative(
             self,
@@ -755,13 +768,12 @@ class Pipeline(StateModel):
         if field == 'mrisubject':
             subjects = StateModel.get_field_values(self, 'subject')
             mri_subjects = self._mri_subjects[self.get('mri')]
-            mrisubjects = sorted(mri_subjects[s] for s in subjects)
+            common_brain = self.get('common_brain')
+            mrisubjects = sorted({mri_subject_name(mri_subjects[subject], common_brain) for subject in subjects})
+            if common_brain and common_brain not in mrisubjects:
+                mrisubjects.insert(0, common_brain)
             if exclude:
                 mrisubjects = [s for s in mrisubjects if s not in exclude]
-            common_brain = self.get('common_brain')
-            if common_brain and (not exclude or common_brain not in exclude):
-                mrisubjects.insert(0, common_brain)
-            mrisubjects = ['sub-' + s for s in mrisubjects if (s != common_brain and not s.startswith('sub-'))]
             return mrisubjects
         else:
             return StateModel.get_field_values(self, field, exclude)
@@ -3011,7 +3023,6 @@ class Pipeline(StateModel):
         # find subject
         if common_brain and is_fake_mri(self.root / mri_dir(state_)):
             mrisubject = self.get('common_brain')
-            self.set(mrisubject=mrisubject, match=False)
         else:
             mrisubject = self.get('mrisubject')
 
@@ -3471,10 +3482,7 @@ class Pipeline(StateModel):
         mri = fields['mri']
         if subject == '*' or mri == '*':
             return '*'
-        mrisubject = self._mri_subjects[mri][subject]
-        if mrisubject == self.get('common_brain') or mrisubject.startswith('sub-'):
-            return mrisubject
-        return 'sub-' + mrisubject
+        return mri_subject_name(self._mri_subjects[mri][subject], self.get('common_brain'))
 
     def _update_task(self, fields: dict) -> str | None:
         epoch = fields['epoch']
@@ -4035,7 +4043,9 @@ class Pipeline(StateModel):
             Display which raw input files exist.
         mri
             Add a column specifying whether the subject is using a scaled MRI
-            or whether it has its own MRI.
+            or whether it has its own MRI. A string selects the
+            :attr:`mri_subjects` mapping (the ``mri`` state) and adds the
+            column.
         mrisubject
             Add a column showing the MRI subject corresponding to each subject.
         caption

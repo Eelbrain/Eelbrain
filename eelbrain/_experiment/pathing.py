@@ -123,6 +123,17 @@ def subject_predictor_path(
     return SUBJECT_PREDICTOR_DIR / path / f"{basename}_desc-{code}.pickle"
 
 
+def mri_subject_name(mri_subject: str, common_brain: str) -> str:
+    """FreeSurfer subject directory name for an entry of :attr:`Pipeline.mri_subjects`
+
+    MEG/EEG subjects map to ``sub-{subject}`` directories, so the ``sub-`` prefix
+    is added unless the entry is the common brain or already carries it.
+    """
+    if mri_subject == common_brain or mri_subject.startswith('sub-'):
+        return mri_subject
+    return f'sub-{mri_subject}'
+
+
 def mri_dir(state: dict[str, Any]) -> Path:
     return MRI_SDIR / state['mrisubject']
 

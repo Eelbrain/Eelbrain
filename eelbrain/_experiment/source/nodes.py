@@ -30,7 +30,7 @@ from ... import load
 from ..._data_obj import Dataset, Datalist, NDVar, combine
 from ..derivative_cache import CachePolicy, Dependency, Derivative, ExternalArtifactDerivative, OptionSpec, Request, Input, UncachedDerivative, file_fingerprint
 from ..pathing import (
-    MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
+    MRI_SDIR, bem_dir, bem_file_path, mri_dir, mri_subject_name, src_file_path, trans_file_path,
 )
 from ..preprocessing import Reference, canonical_recording, raw_node_name
 from ..data import DataSpec
@@ -463,10 +463,7 @@ def _subject_state(
     Only the changed fields are returned; the parent state propagates to the
     dependency automatically.
     """
-    mri = state['mri']
-    mrisubject = mri_subjects[mri][subject]
-    if mrisubject != common_brain and not mrisubject.startswith('sub-'):
-        mrisubject = 'sub-' + mrisubject
+    mrisubject = mri_subject_name(mri_subjects[state['mri']][subject], common_brain)
     return {'subject': subject, 'mrisubject': mrisubject}
 
 
@@ -878,7 +875,8 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
-        fields = ('group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency')
+        # each subject's MRI follows from ('mri', 'subject') and is pinned per dependency (see _subject_state)
+        fields = ('group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'adjacency')
         if ctx.options['morph']:
             fields += ('common_brain',)
         return fields

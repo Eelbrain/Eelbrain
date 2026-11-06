@@ -69,13 +69,19 @@ _RESULT_COMMON_KEY_FIELDS = (
 RESULT_SENSOR_GROUP_KEY_FIELDS = (
     'group', *_RESULT_COMMON_KEY_FIELDS, 'reference',
 )
+# Group-level artifacts key on 'mri' but not on 'mrisubject': each subject's MRI
+# follows from ('mri', 'subject') and is pinned on the per-subject dependency
+# edge, whereas the 'mrisubject' state at group level is that of whichever
+# subject happens to be current.
 RESULT_SOURCE_GROUP_KEY_FIELDS = (
     'group', *_RESULT_COMMON_KEY_FIELDS, 'cov', 'inv', 'src', 'mri',
-    'mrisubject', 'parc', 'common_brain', 'adjacency',
+    'parc', 'common_brain', 'adjacency',
 )
+# Subject-level artifacts key on 'mrisubject' but not on 'mri': the MRI subject
+# determines the MRI, so the same artifact serves every mapping that selects it.
 RESULT_SOURCE_SUBJECT_KEY_FIELDS = (
-    'subject', *_RESULT_COMMON_KEY_FIELDS, 'cov', 'inv', 'src', 'mri',
-    'mrisubject', 'parc', 'common_brain', 'adjacency',
+    'subject', *_RESULT_COMMON_KEY_FIELDS, 'cov', 'inv', 'src', 'mrisubject',
+    'parc', 'common_brain', 'adjacency',
 )
 
 
@@ -365,7 +371,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         fields = ('group', 'epoch', 'raw', 'session', 'acquisition', 'epoch_rejection', 'equalize_evoked_count')
         data = ctx.options['data']
         if data.source:
-            fields += ('mri', 'cov', 'inv', 'src', 'parc', 'mrisubject', 'common_brain', 'adjacency')
+            fields += ('mri', 'cov', 'inv', 'src', 'parc', 'common_brain', 'adjacency')  # see RESULT_SOURCE_GROUP_KEY_FIELDS
         else:
             fields += ('reference',)
         return fields

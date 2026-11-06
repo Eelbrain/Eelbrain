@@ -3353,3 +3353,75 @@ def test_load_trfs_source(samples_experiment):
     assert ds[0, 'imp'].source.subject == 'fsaverage'
     assert ds[1, 'imp'].source.subject == 'fsaverage'
     assert ds[0, 'imp'].source == ds[1, 'imp'].source
+
+
+def test_mri_subjects(samples_experiment):
+    "Subject → MRI-subject mappings (Pipeline.mri_subjects and the mri state)"
+    from eelbrain._exceptions import ConfigurationError
+    from eelbrain._experiment.data import DataSpec
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+    from eelbrain import keydefaultdict
+
+    root = samples_experiment(n_subjects=3, n_segments=1, mris=True)
+
+    class Experiment(SampleExperiment):
+        mri_subjects = {  # the identity mapping '' is always available
+            'fsaverage': keydefaultdict(lambda s: 'fsaverage'),
+            'scaled': keydefaultdict(lambda s: f'{s}-scaled'),
+            'prefixed': {'R0000': 'sub-R0000', 'R0001': 'sub-R0001', 'R0002': 'sub-R0002'},
+        }
+
+    e = Experiment(root)
+    assert e.get_field_values('mri') == ['', 'fsaverage', 'prefixed', 'scaled']
+    assert e.get('mri') == ''
+    # the sub- prefix is added unless the entry is the common brain or already has it
+    assert e.get('mrisubject', subject='R0001') == 'sub-R0001'
+    assert e.get_field_values('mrisubject') == ['fsaverage', 'sub-R0000', 'sub-R0001', 'sub-R0002']
+    assert e.get('mrisubject', mri='fsaverage') == 'fsaverage'
+    assert e.get_field_values('mrisubject') == ['fsaverage']
+    assert e.get_field_values('mrisubject', exclude='fsaverage') == []
+    assert e.get('mrisubject', mri='scaled') == 'sub-R0001-scaled'
+    assert e.get_field_values('mrisubject') == ['fsaverage', 'sub-R0000-scaled', 'sub-R0001-scaled', 'sub-R0002-scaled']
+    assert e.get('mrisubject', mri='prefixed') == 'sub-R0001'
+    assert e.get_field_values('mrisubject') == ['fsaverage', 'sub-R0000', 'sub-R0001', 'sub-R0002']
+    # show_subjects() can select a mapping
+    ds = e.show_subjects(mri='scaled', mrisubject=True, asds=True)
+    assert list(ds['mrisubject']) == ['sub-R0000-scaled', 'sub-R0001-scaled', 'sub-R0002-scaled']
+    assert e.get('mri') == 'scaled'
+
+    # a group-level artifact is keyed on the mapping, not on the MRI subject of the subject that happens to be current
+    e.set(raw='1-40', epoch='target', inv='free-3-dSPM')
+    options = {'data': DataSpec('source'), 'samples': 0, 'test': 'left=right', 'tstart': None, 'tstop': None, 'pmin': None, 'disconnect_labels': True, 'baseline': True, 'src_baseline': None, 'smooth': None, 'samplingrate': None}
+    paths = {}
+    for mri in ('', 'fsaverage'):
+        for subject in e.iter(mri=mri):
+            ctx = e._resolve_derivative('test-result', options=options)
+            assert 'mrisubject' not in ctx.key()
+            paths[mri, subject] = ctx.artifact_path
+    assert len({path for (mri, _), path in paths.items() if mri == ''}) == 1
+    assert len({path for (mri, _), path in paths.items() if mri == 'fsaverage'}) == 1
+    assert paths['', 'R0000'] != paths['fsaverage', 'R0000']
+    # a subject-level artifact is keyed on the MRI subject, not on the mapping that selects it
+    options = {**options, 'test': 'twostage', 'samples': 8, 'disconnect_labels': False}
+    level_1_paths = {}
+    for mri in ('', 'prefixed'):
+        e.set(mri=mri, subject='R0000')
+        ctx = e._resolve_derivative('two-stage-level-2', options=options)
+        for dep, level_1 in ctx._dependency_handles():  # the group pins each subject's MRI on the edge
+            assert 'mri' not in level_1.key()
+            assert level_1.key()['mrisubject'] == f'sub-{dep.label}'
+            level_1_paths[mri, dep.label] = level_1.artifact_path
+    assert level_1_paths['', 'R0001'] == level_1_paths['prefixed', 'R0001']
+
+    # invalid definitions are caught at initialization (here, the identity mapping is overridden)
+    class Incomplete(SampleExperiment):
+        mri_subjects = {'': {'R0000': 'R0000'}}
+
+    with pytest.raises(ConfigurationError, match="R0001"):
+        Incomplete(root)
+
+    class NotAMapping(SampleExperiment):
+        mri_subjects = {'': 'fsaverage'}
+
+    with pytest.raises(TypeError, match="mri_subjects"):
+        NotAMapping(root)
