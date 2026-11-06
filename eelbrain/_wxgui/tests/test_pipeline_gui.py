@@ -493,7 +493,7 @@ def test_open_mne_browse_raw(monkeypatch, tmp_path):
     "The bad channels context menu opens the row's raw in the MNE raw browser, in a subprocess seeded with the current bad channels"
     frame, launched, saved = _browse_raw_frame(monkeypatch, tmp_path, pipe=None, cached=False)
     frame._raw_name = lambda: 'raw'
-    assert [action.label for action in frame._row_actions(0)] == ["Set bad channels…", "Plot continuous data…", "Open in mne browse_raw…"]
+    assert [action.label for action in frame._row_actions(0)] == ["Plot continuous data…", "Set bad channels…", "Open in mne browse_raw…"]
     frame._run_row_action(0, frame._row_actions(0)[2])
     (path, bads, on_close), = launched
     assert (path, bads) == (str(tmp_path / 'R01_raw.fif'), ['MEG 0111'])
