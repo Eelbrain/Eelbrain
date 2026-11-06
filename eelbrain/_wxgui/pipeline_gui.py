@@ -1,9 +1,12 @@
 """Pipeline supervisor GUI launched by ``eelbrain``."""
 from __future__ import annotations
 
+import json
 import logging
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -24,7 +27,7 @@ from .._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from .._experiment.epochs import PrimaryEpoch
 from .._experiment.exceptions import FileMissingError, ICAChannelsChangedError, ICAMissingError
 from .._experiment.pathing import MRI_SDIR
-from .._experiment.preprocessing import REINDEX_ICA, RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name
+from .._experiment.preprocessing import REINDEX_ICA, RawICA, RawSource, ica_input_name, raw_bad_channels_input_name, raw_input_name, raw_node_name
 from .._mne import ensure_mri, read_mri_scaling_cfg
 from .._utils.mne_utils import is_fake_mri
 from .bad_channel_summary import BadChannelSummaryFrame, CandidateList, FlatList, GapList, RecordingResult, bad_channel_evidence
@@ -42,7 +45,7 @@ def _launch_coreg_subprocess(
         inst: str,
         trans: str | None = None,
         on_close: Callable | None = None,
-) -> None:
+) -> subprocess.Popen:
     """Launch mne.gui.coregistration in a subprocess to avoid Qt/wx event loop conflict."""
     kwargs = f'subject={mrisubject!r}, {subjects_dir=}, {inst=}, block=True'
     if trans is not None:
@@ -53,6 +56,40 @@ def _launch_coreg_subprocess(
     ])
     if on_close is not None:
         threading.Thread(target=lambda: (proc.wait(), on_close()), daemon=True).start()
+    return proc
+
+
+# Runs in a subprocess: the MNE raw browser (what ``mne browse_raw`` does), seeded with the pipeline's bad channels, reporting the edited ones as JSON on its last line of output.
+# Bad channels that the displayed raw does not contain (dropped by a raw pipe) are kept as they are.
+_BROWSE_RAW_SCRIPT = '''
+import json, sys
+import mne
+path, bads = sys.argv[1], json.loads(sys.argv[2])
+raw = mne.io.read_raw(path, allow_maxshield='yes')
+raw.info['bads'] = [ch for ch in bads if ch in raw.ch_names]
+raw.plot(block=True)
+print(json.dumps(raw.info['bads'] + [ch for ch in bads if ch not in raw.ch_names]))
+'''
+
+
+def _launch_browse_raw_subprocess(
+        path: str,
+        bads: list[str],
+        on_close: Callable[[list[str] | None, str], None],
+) -> subprocess.Popen:
+    """Open ``path`` in the MNE raw browser in a subprocess (to avoid Qt/wx event loop conflict); ``on_close`` receives the bad channels it was closed with (``None`` if it failed) and its stderr output."""
+    proc = subprocess.Popen([sys.executable, '-c', _BROWSE_RAW_SCRIPT, path, json.dumps(bads)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    def wait() -> None:
+        stdout, stderr = proc.communicate()
+        lines = stdout.strip().splitlines()
+        if proc.returncode == 0 and lines:
+            on_close(json.loads(lines[-1]), stderr)
+        else:
+            on_close(None, stderr)
+
+    threading.Thread(target=wait, daemon=True).start()
+    return proc
 
 
 class _AbortRequested(Exception):
@@ -626,6 +663,9 @@ class PipelineFrame(EelbrainFrame):
         self._job_queue = []  # [(scope, combo, spec), ...] waiting to be computed
         self._job_in_progress = None  # (scope, combo) the worker popped and is computing
         self._job_queue_lock = threading.Lock()
+        # GUIs opened in subprocesses (coregistration, raw browser), closed with this window
+        self._subprocesses: list[tuple[str, subprocess.Popen]] = []
+        self._closed = False
         self._n_done = self._n_total = 0  # progress of the current run
         self._n_loading = 0  # rows of the displayed table whose status is still to be filled in
         # Job specs for the rows currently displayed, keyed by (scope, combo). Minted
@@ -967,8 +1007,9 @@ class PipelineFrame(EelbrainFrame):
         task = self._current_task()
         if task.name == 'bad_chs':
             return [
-                RowAction("Set bad channels…", partial(self._set_bad_channels_dialog, idx)),
                 RowAction("Plot continuous data…", partial(self._open_bad_channels_gui, idx)),
+                RowAction("Set bad channels…", partial(self._set_bad_channels_dialog, idx)),
+                RowAction("Open in mne browse_raw…", partial(self._open_mne_browse_raw, idx)),
             ]
         elif task.name == 'ica':
             return [RowAction("Open ICA selection…", partial(self._open_ica_gui, idx))]
@@ -1033,6 +1074,77 @@ class PipelineFrame(EelbrainFrame):
             frame = self._pipeline.make_bad_channels_selection(raw=raw_name, **state)
         if frame is not None:
             frame.model.doc.callbacks.subscribe('saved', lambda: wx.CallAfter(self._start_refresh))
+
+    def _open_mne_browse_raw(self, idx: int) -> None:
+        """Open the row's raw data (of the selected raw pipe) in the MNE raw browser, with the current bad channels; bad channels changed there are saved when it closes.
+
+        The browser reads a file: the source recording's own, a cached raw pipe's, or,
+        for a raw pipe that is not cached, a temporary file written here (and removed
+        when the browser closes).
+        """
+        pipeline = self._pipeline
+        raw_name = self._raw_name()
+        state = dict(zip(self._layout.key_fields, self._row_combo(idx)))
+        tmp_dir = None
+        with pipeline._temporary_state, wx.BusyCursor():
+            pipeline.set(raw=raw_name, **state)
+            bads = pipeline.load_bad_channels()
+            if isinstance(pipeline._raw[raw_name], RawSource):
+                raw_ctx = pipeline._resolve_derivative(raw_input_name(raw_name))
+                path = raw_ctx.node.path(raw_ctx)
+            else:
+                raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
+                if raw_ctx.is_valid():
+                    path = raw_ctx.artifact_path
+                else:
+                    raw = pipeline.load_raw()
+                    tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
+                    path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
+                    raw.save(path)
+
+        def on_close(new_bads: list[str] | None, stderr: str) -> None:
+            if tmp_dir is not None:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            if not self._closed:
+                wx.CallAfter(self._on_browse_raw_closed, raw_name, state, bads, new_bads, stderr)
+
+        proc = _launch_browse_raw_subprocess(str(path), bads, on_close)
+        self._subprocesses.append(('raw browser', proc))
+
+    def _on_browse_raw_closed(
+            self,
+            raw_name: str,
+            state: dict[str, str],
+            bads: list[str],
+            new_bads: list[str] | None,
+            stderr: str,
+    ) -> None:
+        """Save the bad channels the MNE raw browser was closed with, after confirmation."""
+        subject = ' '.join(state.values())
+        if new_bads is None:
+            self._show_error(stderr, "Raw Browser Failed", f"The MNE raw browser for {subject} did not exit cleanly; bad channels were not updated.")
+            return
+        elif sorted(new_bads) == sorted(bads):
+            return
+        added = [ch for ch in new_bads if ch not in bads]
+        removed = [ch for ch in bads if ch not in new_bads]
+        changes = []
+        if added:
+            changes.append(f"Added: {', '.join(added)}")
+        if removed:
+            changes.append(f"Removed: {', '.join(removed)}")
+        message = f"Save the bad channels set in the raw browser for {subject}?\n\n" + '\n'.join(changes)
+        dlg = wx.MessageDialog(self, message, "Save Bad Channels", wx.YES_NO | wx.ICON_QUESTION)
+        answer = dlg.ShowModal()
+        dlg.Destroy()
+        if answer != wx.ID_YES:
+            return
+        try:
+            self._pipeline.make_bad_channels(new_bads, redo=True, raw=raw_name, **state)
+        except _USER_ERROR_TYPES as error:
+            self._show_error(*_error_dialog_args(error))
+            return
+        self._start_refresh()
 
     def _open_ica_gui(self, idx: int) -> None:
         raw_name = self._raw_name()
@@ -1320,7 +1432,8 @@ class PipelineFrame(EelbrainFrame):
             inst = str(raw_ctx.node.path(raw_ctx))
             trans_ctx = pipeline._resolve_derivative('trans-input')
             trans = str(trans_ctx.node.path(trans_ctx)) if trans_ctx.node.exists(trans_ctx) else None
-        _launch_coreg_subprocess(mrisubject, str(pipeline.root / MRI_SDIR), inst, trans, on_close=lambda: wx.CallAfter(self._start_refresh))
+        proc = _launch_coreg_subprocess(mrisubject, str(pipeline.root / MRI_SDIR), inst, trans, on_close=lambda: wx.CallAfter(self._start_refresh))
+        self._subprocesses.append(('coregistration', proc))
 
     # ------------------------------------------------------------------
     # Table management
@@ -1579,6 +1692,18 @@ class PipelineFrame(EelbrainFrame):
                 event.Veto()
                 return
             self._compute_token = None  # let the thread wind down
+        running = [(kind, proc) for kind, proc in self._subprocesses if proc.poll() is None]
+        n_browsers = sum(kind == 'raw browser' for kind, _ in running)
+        if n_browsers:
+            dlg = wx.MessageDialog(self, f"{n_browsers} raw browser window(s) are open. Closing this window will close them, and bad channels set there will not be saved.\n\nClose anyway?", "Close raw browser windows?", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
+            confirmed = dlg.ShowModal() == wx.ID_YES
+            dlg.Destroy()
+            if not confirmed:
+                event.Veto()
+                return
+        self._closed = True
+        for _, proc in running:
+            proc.terminate()
         event.Skip()  # proceed with normal close
 
     # ------------------------------------------------------------------
