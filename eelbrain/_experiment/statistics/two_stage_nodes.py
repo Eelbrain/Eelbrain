@@ -13,7 +13,8 @@ from ..._io.pickle import update_subjects_dir
 from ..data import DataSpec
 from ..derivative_cache import Dependency, Derivative, Request, UncachedDerivative
 from ..pathing import MRI_SDIR
-from ..source import ROIData, roi_data_from_dataset, _subject_state
+from ..source import ROIData, roi_data_from_dataset
+from ..source.nodes import _subject_state
 from .config import ResolvedTestNDSpec, Test, TwoStageTest
 from .nodes import RESULT_OPTION_DEFAULTS, RESULT_SOURCE_GROUP_KEY_FIELDS, ROITestResult, ResultOutputDerivative
 
