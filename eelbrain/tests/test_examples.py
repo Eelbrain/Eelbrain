@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 
 import mne
@@ -61,7 +62,10 @@ def test_example(tmp_path, path: Path):
             if file.name.startswith(('.', '_')):
                 continue
             elif file.name in text:
-                os.link(file, temp_dir / file.name)
+                try:
+                    os.link(file, temp_dir / file.name)
+                except OSError:  # tmp_path on a different filesystem
+                    shutil.copy(file, temp_dir / file.name)
         # reduce computational load
         text = text.replace("n_samples = 1000", "n_samples = 2")
         # prepare example script
