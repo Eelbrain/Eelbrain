@@ -456,14 +456,15 @@ def _subject_state(
         state: dict[str, Any],
         subject: str,
         mri_subjects: dict[str, dict[str, str]],
-        common_brain: str = 'fsaverage',
 ) -> dict[str, Any]:
     """The state fields to override to switch to ``subject`` (a dependency delta).
 
     Only the changed fields are returned; the parent state propagates to the
-    dependency automatically.
+    dependency automatically. The subject's MRI follows from ``mri`` and
+    ``common_brain`` (like :meth:`Pipeline._update_mrisubject`), so the group
+    node has to key on both.
     """
-    mrisubject = mri_subject_name(mri_subjects[state['mri']][subject], common_brain)
+    mrisubject = mri_subject_name(mri_subjects[state['mri']][subject], state['common_brain'])
     return {'subject': subject, 'mrisubject': mrisubject}
 
 
@@ -875,11 +876,8 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
-        # each subject's MRI follows from ('mri', 'subject') and is pinned per dependency (see _subject_state)
-        fields = ('group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'adjacency')
-        if ctx.options['morph']:
-            fields += ('common_brain',)
-        return fields
+        # each subject's MRI follows from ('mri', 'common_brain', 'subject') and is pinned per dependency (see _subject_state)
+        return ('group', 'mri', 'common_brain', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'adjacency')
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'subjects': tuple(self.groups[ctx.state['group']])}

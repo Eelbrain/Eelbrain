@@ -3412,6 +3412,11 @@ def test_mri_subjects(samples_experiment):
             assert level_1.key()['mrisubject'] == f'sub-{dep.label}'
             level_1_paths[mri, dep.label] = level_1.artifact_path
     assert level_1_paths['', 'R0001'] == level_1_paths['prefixed', 'R0001']
+    # the group→subject edge derives the MRI from the mri and common_brain state, like the pipeline
+    from eelbrain._experiment.source.nodes import _subject_state
+    state = {'mri': 'fsaverage', 'common_brain': 'fsaverage'}
+    assert _subject_state(state, 'R0001', e._mri_subjects) == {'subject': 'R0001', 'mrisubject': 'fsaverage'}
+    assert _subject_state({**state, 'common_brain': 'other'}, 'R0001', e._mri_subjects) == {'subject': 'R0001', 'mrisubject': 'sub-fsaverage'}
 
     # invalid definitions are caught at initialization (here, the identity mapping is overridden)
     class Incomplete(SampleExperiment):
