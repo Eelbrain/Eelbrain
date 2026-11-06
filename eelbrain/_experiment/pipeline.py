@@ -400,8 +400,8 @@ class Pipeline(StateModel):
         for name, mapping in {**self._default_mri_subjects, **self.mri_subjects}.items():
             if not isinstance(mapping, dict):
                 raise TypeError(f"mri_subjects[{name!r}]={mapping!r}: need a dict mapping subject to MRI subject (or a keydefaultdict)")
-            # a plain dict has to cover every subject; a keydefaultdict generates entries on demand
-            if getattr(mapping, 'default_factory', None) is None:
+            # a plain dict has to cover every subject; a defaultdict (e.g. keydefaultdict) generates entries on demand
+            if not isinstance(mapping, defaultdict):
                 if missing := [subject for subject in self._subjects if subject not in mapping]:
                     raise ConfigurationError(f"mri_subjects[{name!r}] has no entry for {enumeration(missing)}")
             self._mri_subjects[name] = mapping
