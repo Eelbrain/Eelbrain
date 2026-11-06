@@ -756,7 +756,9 @@ class Pipeline(StateModel):
         field
             Field for which to find values.
         exclude
-            Exclude these values.
+            Exclude these values. For ``mrisubject``, these are the resulting
+            MRI subject names, i.e., directory names with the ``sub-`` prefix
+            (see :attr:`mri_subjects`).
         ...
             State parameters.
         """
