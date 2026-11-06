@@ -22,14 +22,14 @@ See the wiki for more information on using `structural MRIs <https://github.com/
 .. py:attribute:: Pipeline.mri_subjects
    :type: Dict[str, Dict[str, str]]
 
-Map MEG/EEG subjects to FreeSurfer MRI subjects. Keys in ``mri_subjects`` are names for different mappings and correspond to values of the :ref:`state-mri` state parameter; the inner dictionaries map :ref:`state-subject` values to MRI subject names. MRI subjects are directories under ``{root}/derivatives/freesurfer``; like the subject directories, they are named ``sub-{name}``, and the ``sub-`` prefix is added automatically (unless the name is the common brain, ``fsaverage``, or already starts with ``sub-``). By default, an identity mapping is used, i.e., each subject uses their own MRI directory ``sub-{subject}``. Custom mappings can be defined, for example to let several subjects share a template brain or to point to individually scaled MRI subjects. A plain dictionary needs an entry for every subject of the experiment; a mapping that follows from the subject name is more easily defined as a function with :class:`~eelbrain.keydefaultdict`, e.g.::
+Map MEG/EEG subjects to FreeSurfer MRI subjects. Keys in ``mri_subjects`` are names for different mappings and correspond to values of the :ref:`state-mri` state parameter; the inner dictionaries map :ref:`state-subject` values to MRI subject names. MRI subjects are directories under ``{root}/derivatives/freesurfer``; like the subject directories, they are named ``sub-{name}``, and the ``sub-`` prefix is added automatically (unless the name is the common brain, ``fsaverage``, or already starts with ``sub-``). By default, an identity mapping is used, i.e., each subject uses their own MRI directory ``sub-{subject}``. Custom mappings can be defined, for example to let several subjects share a template brain or to point to individually scaled MRI subjects. A plain dictionary needs an entry for every subject that is analyzed with it; a mapping that follows from the subject name is more easily defined as a function with :class:`~eelbrain.keydefaultdict`, e.g.::
 
     from eelbrain import keydefaultdict
 
     mri_subjects = {
         'fsaverage': keydefaultdict(lambda subject: 'fsaverage'),  # all subjects use the template brain
         'scaled': keydefaultdict(lambda subject: f'{subject}-scaled'),  # sub-{subject}-scaled
-        'own': {  # explicit, has to cover every subject
+        'own': {  # explicit, needs an entry for every subject analyzed with it
             'S001': 'S001',
             'S002': 'S001',  # S002 uses the MRI of S001
         },

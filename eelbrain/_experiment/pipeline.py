@@ -400,10 +400,11 @@ class Pipeline(StateModel):
         for name, mapping in {**self._default_mri_subjects, **self.mri_subjects}.items():
             if not isinstance(mapping, dict):
                 raise TypeError(f"mri_subjects[{name!r}]={mapping!r}: need a dict mapping subject to MRI subject (or a keydefaultdict)")
-            # a plain dict has to cover every subject; a defaultdict (e.g. keydefaultdict) generates entries on demand
             if not isinstance(mapping, defaultdict):
-                if missing := [subject for subject in self._subjects if subject not in mapping]:
-                    raise ConfigurationError(f"mri_subjects[{name!r}] has no entry for {enumeration(missing)}")
+                # a plain dict only needs entries for the subjects that are analyzed with it; a missing entry is reported when it is needed
+                def missing_entry(subject: str, name: str = name) -> str:
+                    raise ConfigurationError(f"mri_subjects[{name!r}] has no entry for subject {subject!r}")
+                mapping = keydefaultdict(missing_entry, mapping)
             self._mri_subjects[name] = mapping
 
         # Sensor noise covariance estimates

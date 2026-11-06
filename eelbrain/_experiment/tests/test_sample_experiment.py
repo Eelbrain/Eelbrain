@@ -3418,12 +3418,14 @@ def test_mri_subjects(samples_experiment):
     assert _subject_state(state, 'R0001', e._mri_subjects) == {'subject': 'R0001', 'mrisubject': 'fsaverage'}
     assert _subject_state({**state, 'common_brain': 'other'}, 'R0001', e._mri_subjects) == {'subject': 'R0001', 'mrisubject': 'sub-fsaverage'}
 
-    # invalid definitions are caught at initialization (here, the identity mapping is overridden)
+    # a plain dict only needs entries for the subjects that are analyzed with it (here, the identity mapping is overridden)
     class Incomplete(SampleExperiment):
         mri_subjects = {'': {'R0000': 'R0000'}}
 
+    e = Incomplete(root)
+    assert e.get('mrisubject', subject='R0000') == 'sub-R0000'
     with pytest.raises(ConfigurationError, match="R0001"):
-        Incomplete(root)
+        e.set(subject='R0001')
 
     class NotAMapping(SampleExperiment):
         mri_subjects = {'': 'fsaverage'}
