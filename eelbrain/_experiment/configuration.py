@@ -2,7 +2,7 @@
 import inspect
 import logging
 from typing import Any
-from collections.abc import Sequence
+from collections.abc import Collection
 
 from .._exceptions import ConfigurationError, ConfigurationKeyError
 from .._text import enumeration, plural
@@ -292,7 +292,7 @@ def typed_arg(
 
 def sequence_arg(
         name: str,  # for error message
-        arg: Sequence | None,
+        arg: Collection | None,
         item_type: type = str,
         allow_none: bool = True,
         sequence_type: type = tuple,
@@ -302,8 +302,8 @@ def sequence_arg(
             return None
     elif isinstance(arg, item_type):
         return sequence_type((arg,))
-    elif isinstance(arg, Sequence):
+    elif isinstance(arg, Collection):
         out = sequence_type(arg)
         if all(isinstance(item, item_type) for item in out):
             return out
-    raise TypeError(f"{name}={arg!r}: expected sequence of {item_type.__name__}")
+    raise TypeError(f"{name}={arg!r}: expected collection of {item_type.__name__}")
