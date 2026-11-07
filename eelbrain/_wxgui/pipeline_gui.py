@@ -1124,6 +1124,8 @@ class PipelineFrame(EelbrainFrame):
             stderr: str,
     ) -> None:
         """Save the bad channels the MNE raw browser was closed with, after confirmation."""
+        if self._closed:
+            return  # the browser closed while this window was closing
         subject = ' '.join(state.values())
         if new_bads is None:
             self._show_error(stderr, "Raw Browser Failed", f"The MNE raw browser for {subject} did not exit cleanly; bad channels were not updated.")
@@ -1580,6 +1582,8 @@ class PipelineFrame(EelbrainFrame):
     # Background status refresh
 
     def _start_refresh(self) -> None:
+        if self._closed:
+            return  # posted by a subprocess that ended while this window was closing
         scope = self._table_scope()
         task, epoch_rejection, epoch_name, _, _ = scope
         token = object()

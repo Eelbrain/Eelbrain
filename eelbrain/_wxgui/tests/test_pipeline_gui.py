@@ -607,7 +607,7 @@ def test_on_browse_raw_closed(monkeypatch):
         return SimpleNamespace(ShowModal=lambda: (messages.append(message), answer)[1], Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
     pipeline = SimpleNamespace(make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state)))
-    frame = _frame(_pipeline=pipeline, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
+    frame = _frame(_pipeline=pipeline, _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0112', 'MEG 0113'], '')
     assert saved == [(['MEG 0112', 'MEG 0113'], True, 'raw', {'subject': 'R01'})]
     assert refreshed == [True]
@@ -633,6 +633,15 @@ def test_on_browse_raw_closed(monkeypatch):
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
     assert 'MEG 0112 not in raw' in errors[-1][0]
     assert len(saved) == 1 and refreshed == [True]
+    # posted while the GUI was closing
+    frame._closed = True
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
+    assert len(messages) == 3 and len(errors) == 2
+
+
+def test_start_refresh_after_close():
+    "A refresh posted by a subprocess that ended while the GUI was closing does not touch the destroyed window"
+    _frame(_closed=True)._start_refresh()
 
 
 def test_set_row_result_writes_status_details_and_colour():
