@@ -2558,10 +2558,9 @@ class Pipeline(StateModel):
         pipe = self._raw.ica_pipe(raw_name)
         if pipe.per_task:  # one ICA per task: the epoch or task selects the ICA
             if epoch is not None:
-                epoch_tasks = self._epochs[epoch].tasks
-                if len(epoch_tasks) != 1:
-                    raise ValueError(f"{epoch=} contains data from tasks {enumeration(epoch_tasks)}, but the ICA {pipe.name!r} is estimated separately for each task (per_task=True); use an epoch with a single task")
-                state['task'] = epoch_tasks[0]
+                if epoch in self._epochs and len(self._epochs[epoch].tasks) != 1:
+                    raise ValueError(f"{epoch=} contains data from tasks {enumeration(self._epochs[epoch].tasks)}, but the ICA {pipe.name!r} is estimated separately for each task (per_task=True); use an epoch with a single task")
+                state['epoch'] = epoch  # sets task (and run) through the state; an unknown epoch is reported by set()
             elif task is not None:
                 if len(task) != 1:
                     raise ValueError(f"{task=}: the ICA is estimated separately for each task (per_task=True), specify a single task")
