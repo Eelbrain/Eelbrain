@@ -3232,9 +3232,8 @@ def test_trf_subject_variable(samples_experiment):
     assert events_identity(e_extra) == events_identity(e)
 
 
-@requires_mne_sample_data
-def test_load_model_test(samples_experiment):
-    """load_model_test: model data assembly, result caching, and named tests"""
+def _model_test_trf(root: str):
+    "SampleTRF with a model comparison ('full > base') and a named one-sample test"
     from eelbrain._experiment.tests.sample_experiment import SampleTRF
 
     class ModelTestTRF(SampleTRF):
@@ -3244,10 +3243,36 @@ def test_load_model_test(samples_experiment):
             'full': 'imp + modality_imp',
         }
         tests = {**SampleTRF.tests, 'trf-one-sample': TTestOneSample()}
+        parcs = {**SampleTRF.parcs, 'temporal': SubParc('aparc', ('bankssts', 'inferiortemporal', 'middletemporal', 'superiortemporal', 'supramarginal', 'transversetemporal'))}
 
     set_log_level('warning', 'mne')
+    return ModelTestTRF(root)
+
+
+def _add_fsaverage_sym(mri_sdir: Path):
+    "Add the files for xhemi morphing: fsaverage_sym surfaces from the MNE sample data, sphere.reg for the sample fsaverage, and an aparc annotation for fsaverage_sym (the sample data's can not be read)"
+    # fetch_fsaverage would download the MNE fsaverage dataset; skip instead when it is not already present
+    subjects_dir = mne.get_config('SUBJECTS_DIR') or Path(mne.get_config('MNE_DATA', Path.home() / 'mne_data')) / 'MNE-fsaverage-data'
+    fsaverage = Path(subjects_dir) / 'fsaverage'
+    if not (fsaverage / 'surf' / 'lh.sphere.reg').exists():
+        pytest.skip("MNE fsaverage dataset unavailable")
+    sample_sdir = Path(mne.datasets.sample.data_path(download=False)) / 'subjects'
+    (mri_sdir / 'fsaverage_sym' / 'surf').mkdir(parents=True)
+    (mri_sdir / 'fsaverage_sym' / 'label').mkdir()
+    for hemi in ('lh', 'rh'):
+        for name in ('white', 'inflated', 'curv', 'sphere', 'sphere.reg', 'sphere.left_right'):
+            shutil.copy(sample_sdir / 'fsaverage_sym' / 'surf' / f'{hemi}.{name}', mri_sdir / 'fsaverage_sym' / 'surf' / f'{hemi}.{name}')
+        shutil.copy(fsaverage / 'surf' / f'{hemi}.sphere.reg', mri_sdir / 'fsaverage' / 'surf' / f'{hemi}.sphere.reg')
+    labels = mne.read_labels_from_annot('fsaverage', 'aparc', subjects_dir=mri_sdir, verbose=False)
+    labels = mne.morph_labels(labels, 'fsaverage_sym', 'fsaverage', mri_sdir, verbose=False)
+    mne.write_labels_to_annot(labels, 'fsaverage_sym', 'aparc', subjects_dir=mri_sdir, verbose=False)
+
+
+@requires_mne_sample_data
+def test_load_model_test(samples_experiment):
+    """load_model_test: model data assembly, result caching, and named tests"""
     root = samples_experiment(n_subjects=3, n_segments=4)
-    e = ModelTestTRF(root)
+    e = _model_test_trf(root)
     e.set(epoch='target', epoch_rejection='', raw='1-40', inv='')
 
     # Default non-null comparison: paired model values, reduced only for the test
@@ -3305,6 +3330,117 @@ def test_load_model_test(samples_experiment):
         e.load_model_test('base > 0', 0, 0.1, metric='ev.median')
     with pytest.raises(ValueError, match='available metrics'):
         e.load_model_test('base > 0', 0, 0.1, metric='r1.mean', pmin=None, samples=0)
+    # xhemi applies to source space only
+    with pytest.raises(ValueError, match='xhemi_mask=False only applies'):
+        e.load_model_test('full > base', 0, 0.1, xhemi_mask=False)
+    with pytest.raises(ValueError, match='requires source-space data'):
+        e.load_model_test('full > base', 0, 0.1, xhemi=True)
+
+
+@requires_mne_sample_data
+def test_show_model_test(samples_experiment):
+    """show_model_test: result table for univariate tests, plus topomaps for sensor-space tests"""
+    root = samples_experiment(n_subjects=3, n_segments=4)
+    e = _model_test_trf(root)
+    e.set(epoch='target', epoch_rejection='', raw='1-40', inv='')
+
+    # univariate: table only
+    doc = e.show_model_test('full > base', heading='Modality', tstart=0, tstop=0.1, metric='ev.mean', pmin=None, samples=0)
+    assert isinstance(doc, fmtxt.Section)
+    text = str(doc)
+    assert 'full > base' in text
+    assert 'Model test' in text
+    assert '<svg' not in fmtxt.html(doc)
+
+    # sensor space: labeled comparisons, one topomap per test
+    doc = e.show_model_test({'Modality': 'full > base', 'Baseline': 'base > 0'}, tstart=0, tstop=0.1, pmin=None, samples=10)
+    assert isinstance(doc, fmtxt.FMText)
+    text = str(doc)
+    assert 'Modality' in text
+    assert 'Baseline' in text
+    assert 'full > base' not in text
+    assert fmtxt.html(doc).count('<svg') == 3  # 2 topomaps + colorbar
+
+    # mass-univariate test without p-values
+    with pytest.raises(ValueError, match='needs p-values'):
+        e.show_model_test('full > base', tstart=0, tstop=0.1, pmin=None, samples=0)
+    with pytest.raises(TypeError, match='does not support return_data'):
+        e.show_model_test('full > base', tstart=0, tstop=0.1, return_data=True)
+
+
+@requires_mne_sample_data
+def test_load_model_test_xhemi(samples_experiment):
+    "load_model_test with xhemi: hemispheres projected onto fsaverage_sym and masked by the test of predictive power"
+    root = samples_experiment(n_subjects=3, n_segments=4, mris=True)
+    _add_fsaverage_sym(Path(root) / 'derivatives' / 'freesurfer')
+    e = _model_test_trf(root)
+    e.set(epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='temporal', inv='free-6-MNE')
+
+    with pytest.raises(ValueError, match='full source map'):
+        e.load_model_test('full > base', 0, 0.1, metric='ev.mean', pmin=None, samples=0, xhemi=True)
+    with pytest.raises(ValueError, match='full source map'):
+        e.load_model_test('full > base', 0, 0.1, data='source.mean', xhemi=True)
+
+    # Default: related-measures test between hemispheres, on the left hemisphere of fsaverage_sym
+    ds, res = e.load_model_test('full > base', 0, 0.1, pmin=None, samples=4, xhemi=True, return_data=True)
+    assert isinstance(res, testnd.TTestRelated)
+    assert ds.n_cases == 6
+    assert ds['hemi'].cells == ('lh', 'rh')
+    assert sorted(ds['subject'].cells) == ['R0000', 'R0001', 'R0002']
+    assert res.p.source.subject == 'fsaverage_sym'
+    assert res.p.source.rh_n == 0
+    assert res.p.source.lh_n > 0
+    # The data is masked by the significance of the non-lateralized test
+    base_res = e.load_model_test('full > base', 0, 0.1, pmin=None, samples=4)
+    assert base_res.p.source.subject == 'fsaverage'
+    mask_lh, mask_rh = xhemi(base_res.p <= 0.05, parc='temporal')
+    expected_mask = (mask_lh > 0.5) | (mask_rh > 0.5)
+    assert expected_mask.x.any()
+    assert_array_equal(ds['ev'].x.any(0), expected_mask.x)
+    cache_dir = Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'trf-model-test'
+    manifests = [json.loads(path.read_text()) for path in cache_dir.rglob('*.manifest.json')]
+    assert any({'x1', 'x0', 'base', 'xhemi-annot', 'xhemi-src'} == set(manifest['dependencies']) for manifest in manifests)
+
+    # Without the mask, the whole hemisphere is tested
+    ds_unmasked, res_unmasked = e.load_model_test('full > base', 0, 0.1, pmin=None, samples=4, xhemi=True, xhemi_mask=False, return_data=True)
+    assert res_unmasked.p.source == res.p.source
+    assert_array_equal(ds['ev'].x, ds_unmasked['ev'].x * expected_mask.x)  # the masked data is the unmasked data times the mask
+    assert len(list(cache_dir.rglob('*.pickle'))) == 3
+
+    # A named test applies to the lh - rh difference; its (two-tailed) non-lateralized test is not significant, so the mask is empty
+    with pytest.raises(ValueError, match='no source is significant'):
+        e.load_model_test('full > base', 0, 0.1, test='trf-one-sample', pmin=None, samples=4, xhemi=True)
+    ds_diff, res_diff = e.load_model_test('full > base', 0, 0.1, test='trf-one-sample', pmin=None, samples=4, xhemi=True, xhemi_mask=False, return_data=True)
+    assert isinstance(res_diff, testnd.TTestOneSample)
+    assert ds_diff.n_cases == 3
+    assert 'hemi' not in ds_diff
+    assert res_diff.p.source.subject == 'fsaverage_sym'
+
+    # Report section: tables for both tests, brain plots for both tests (brain rendering is stubbed out)
+    with patch('eelbrain.report.source_brain_table') as source_brain_table:
+        source_brain_table.return_value.image.return_value = 'BRAIN-PLOT'
+        doc = e.show_model_test('full > base', heading='Modality', tstart=0, tstop=0.1, pmin=None, samples=4, xhemi=True, xhemi_mask=False, sig=False)
+    text = str(doc)
+    assert 'Test of predictive power' in text
+    assert 'Test of lateralization' in text
+    assert text.count('BRAIN-PLOT') == 2
+    assert source_brain_table.call_count == 2
+    args, _ = source_brain_table.call_args_list[1]
+    assert list(args[0]) == ['full > base']
+    assert_dataobj_equal(args[0]['full > base'].p, res_unmasked.p)
+    # With sig=True, each row of brain plots needs a significant test
+    with patch('eelbrain.report.source_brain_table') as source_brain_table:
+        source_brain_table.return_value.image.return_value = 'BRAIN-PLOT'
+        doc = e.show_model_test('full > base', heading='Modality', tstart=0, tstop=0.1, pmin=None, samples=4, xhemi=True)
+    assert 'Test of lateralization' in str(doc)
+    assert source_brain_table.call_count == (base_res.p.min() <= 0.05) + (res.p.min() <= 0.05)
+    # A comparison without significant predictive power gets no lateralization test
+    with patch('eelbrain.report.source_brain_table') as source_brain_table:
+        doc = e.show_model_test('full > base', heading='Modality', tstart=0, tstop=0.1, test='trf-one-sample', pmin=None, samples=4, xhemi=True)
+    text = str(doc)
+    assert 'Test of predictive power' in text
+    assert 'Test of lateralization' not in text
+    assert source_brain_table.call_count == 0
 
 
 @requires_mne_sample_data

@@ -20,6 +20,7 @@ from .. import fmtxt
 from .. import gui
 from .. import load
 from .. import plot
+from .. import report
 from .. import save
 from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
 from .._exceptions import ConfigurationError, DimensionMismatchError
@@ -27,7 +28,7 @@ from .._info import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from ..mne_fixes import suppress_mne_warning
 from .._ndvar import concatenate, neighbor_correlation
-from .._stats.testnd import NDTest
+from .._stats.testnd import MultiEffectNDTest, NDTest
 from .._text import enumeration
 from .._types import PathArg
 from .._utils import ask, keydefaultdict, log_level, user_activity, ScreenHandler
@@ -42,7 +43,7 @@ from .epochs import (
 )
 from .epoch_rejection import ChannelModelRejection, ChannelModelRejectionDerivative, EpochRejection, ManualRejection, RejectionInput
 from .events import EpochEventsDerivative, EventsDerivative, EventsInput, LabeledEventsDerivative, SelectedEventsDerivative
-from .exceptions import FileMissingError, ICAChannelsChangedError
+from .exceptions import FileMissingError, ICAChannelsChangedError, NoSignificantSourceError
 from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
 from .state_model import StateModel
 from .statistics.nodes import ROITestResult
@@ -1578,6 +1579,8 @@ class Pipeline(StateModel):
             test: str = None,
             pmin: PMinArg = 'tfce',
             samples: int = 10000,
+            xhemi: bool = False,
+            xhemi_mask: bool = True,
             return_data: bool = False,
             show_dependencies: bool = False,
             **state,
@@ -1624,6 +1627,17 @@ class Pipeline(StateModel):
         samples
             Number of permutations used to determine cluster p-values (see
             ``pmin``).
+        xhemi
+            Test lateralization instead of predictive power: project the metric
+            (difference) maps of both hemispheres onto the left hemisphere of
+            ``fsaverage_sym`` (see :func:`xhemi`) and compare the hemispheres
+            with a related-measures test (a named ``test`` is applied to the
+            ``lh - rh`` difference instead). Surface source space only; the
+            ``fsaverage_sym`` brain has to be in the MRI directory.
+        xhemi_mask
+            For the ``xhemi`` test, only consider sources that are significant
+            in at least one hemisphere in the corresponding test of predictive
+            power (default ``True``).
         return_data
             Return the :class:`Dataset` used for the test together with the
             statistical result.
@@ -1639,6 +1653,10 @@ class Pipeline(StateModel):
         data, result
             With ``return_data=True``, the data used for the test and the
             statistical result.
+
+        See Also
+        --------
+        show_model_test : report section with tables and plots of model tests
         """
         self.set(**state)
         trf_options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x, comparison=True)
@@ -1659,6 +1677,8 @@ class Pipeline(StateModel):
             'test': test,
             'pmin': pmin,
             'samples': samples,
+            'xhemi': xhemi,
+            'xhemi_mask': xhemi_mask,
             'return_data': return_data,
         }
         return self._load_derivative('trf-model-test', options=options, show_dependencies=show_dependencies)
@@ -3854,6 +3874,122 @@ class Pipeline(StateModel):
             Model or comparison for which to show terms.
         """
         return self._eval_trf_x(x).term_table()
+
+    def show_model_test(
+            self,
+            x: str | dict[str, str],
+            brain_view: Sequence[float] = None,
+            axw: float = None,
+            surf: str = 'inflated',
+            cortex: Any = ((1.00,) * 3, (.4,) * 3),
+            sig: bool = True,
+            heading: fmtxt.FMTextArg = None,
+            caption: fmtxt.FMTextArg = None,
+            vmax: float = None,
+            cmap: str = None,
+            alpha: float = 1.,
+            view: str | Sequence[str] = 'lateral',
+            xhemi: bool = False,
+            xhemi_mask: bool = True,
+            **test_args,
+    ) -> fmtxt.Section | fmtxt.FMText:
+        """Report section for one or several model tests
+
+        The section contains a table with the test results and, for
+        mass-univariate tests, a plot of the (significant) effects: brain
+        plots for source-space data, topographic maps for sensor-space data.
+
+        Parameters
+        ----------
+        x
+            Model comparison (see :meth:`load_model_test`), or dictionary with
+            labeled comparisons ``{label: comparison}``.
+        brain_view
+            Parallel view parameters for the brain plots ``(forward [mm], up
+            [mm], scale)`` (see
+            :meth:`~plot._brain_object.Brain.set_parallel_view`).
+        axw
+            Width of each brain image or topomap in inches.
+        surf
+            FreeSurfer surface to plot.
+        cortex
+            Brain color scheme (see
+            :meth:`plot.brain.SequencePlotter.set_brain_args`).
+        sig
+            Mask the effect maps by significance (default ``True``); a row of
+            brain plots is omitted when none of its tests is significant.
+        heading
+            Heading for the report section (without a heading, the content is
+            returned without a section).
+        caption
+            Caption for the model-test table.
+        vmax
+            Colormap range.
+        cmap
+            Colormap.
+        alpha
+            Alpha of the colormap (brain plots).
+        view
+            Brain view(s) to plot.
+        xhemi
+            Add a test of lateralization (see :meth:`load_model_test`) for
+            each comparison, as a second table and a second brain plot.
+        xhemi_mask
+            For the ``xhemi`` test, only consider sources that are significant
+            in the test of predictive power (see :meth:`load_model_test`);
+            comparisons without any significant source get no lateralization
+            test.
+        ...
+            Parameters for :meth:`load_model_test` (including ``tstart``,
+            ``tstop``, ``data`` and state parameters).
+
+        See Also
+        --------
+        load_model_test : load the results of a single model test
+        """
+        if unsupported := {'return_data', 'show_dependencies'}.intersection(test_args):
+            raise TypeError(f"show_model_test does not support {', '.join(sorted(unsupported))}")
+        if isinstance(x, str):
+            x = {x: x}
+        ress = {label: self.load_model_test(comparison, **test_args) for label, comparison in x.items()}
+        ress_hemi = {}
+        if xhemi:
+            for label, comparison in x.items():
+                try:
+                    ress_hemi[label] = self.load_model_test(comparison, xhemi=True, xhemi_mask=xhemi_mask, **test_args)
+                except NoSignificantSourceError:
+                    pass  # no significant source to test for lateralization
+
+        if heading is None:
+            doc = fmtxt.FMText()
+        else:
+            doc = fmtxt.Section(heading)
+        if caption is None:
+            caption = 'Test of predictive power' if xhemi else 'Model test'
+        tables = [report.result_table(ress, caption=caption)]
+        if ress_hemi:
+            tables.append(report.result_table(ress_hemi, caption='Test of lateralization'))
+        doc.append(fmtxt.Figure(fmtxt.FloatingLayout(tables)))
+
+        res = next(iter(ress.values()))
+        if not isinstance(res, NDTest):  # univariate: nothing to plot
+            return doc
+        elif isinstance(res, MultiEffectNDTest):
+            raise NotImplementedError("show_model_test: plots for multi-effect tests")
+        if res.p.has_dim('source'):
+            panels = []
+            for ress_i in filter(None, (ress, ress_hemi)):
+                if sig and all(res_i.p.min() > 0.05 for res_i in ress_i.values()):
+                    continue
+                panel = report.source_brain_table(ress_i, brain_view=brain_view, axw=axw, surf=surf, cortex=cortex, sig=sig, vmax=vmax, cmap=cmap, alpha=alpha, view=view)
+                panels.append(panel.image(close=True))
+            if panels:
+                doc.append(fmtxt.Figure(panels))
+        elif res.p.has_dim('sensor'):
+            doc.append(report.sensor_topomaps(ress, axw=axw, vmax=vmax, cmap=cmap, sig=sig))
+        else:
+            raise NotImplementedError(f"Model test with dims {res.p.dimnames}")
+        return doc
 
     def show_raw_info(self, **state) -> fmtxt.Table | None:
         """Display the selected pipeline for raw processing
