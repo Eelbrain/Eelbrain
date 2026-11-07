@@ -18,6 +18,7 @@ import numpy as np
 from numpy.testing import assert_allclose, assert_almost_equal, assert_array_equal
 
 from eelbrain import *
+from eelbrain import gui
 from eelbrain.pipeline import *
 from eelbrain._exceptions import ConfigurationError
 from eelbrain._experiment.covariance import EpochCovariance
@@ -1179,7 +1180,7 @@ def test_ica_all_tasks_after_maxwell(samples_experiment):
 
 
 @requires_mne_sample_data
-def test_ica_per_task(samples_experiment):
+def test_ica_per_task(samples_experiment, monkeypatch):
     "RawICA(per_task=True) estimates and applies one ICA per task"
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment_sessions import SampleExperiment
@@ -1226,13 +1227,38 @@ def test_ica_per_task(samples_experiment):
         assert isinstance(e.load_raw(), mne.io.BaseRaw)
     assert e.load_epochs(epoch='super').info['epoch'] == 'super'
     e.show_raw_info()
-    # component selection: the task selects the ICA, and the epoch has to match it
+    # component selection: the task or the epoch selects the ICA (the GUI is replaced by a recorder)
+    selections = []
+    monkeypatch.setattr(gui, 'select_components', lambda path, data, *args, **kwargs: selections.append((path, data)))
+    e.set(epoch='target2')
+    e.make_ica_selection(task='sample1', subject='R0000')  # other state arguments survive the task selection
+    e.make_ica_selection(epoch='target2')
+    assert [path for path, _ in selections] == [path1, path2]
+    assert isinstance(selections[0][1], mne.io.BaseRaw)
+    assert selections[1][1].info['epoch'] == 'target2'
     with pytest.raises(ValueError, match='per_task'):
         e.make_ica_selection(task=('sample1', 'sample2'))
     with pytest.raises(TypeError, match='task='):
         e.make_ica_selection(epoch='target1', task='sample1')
     with pytest.raises(ValueError, match="epoch='super'"):
         e.make_ica_selection(epoch='super')
+    with pytest.raises(ValueError, match="epoch='targt1'"):
+        e.make_ica_selection(epoch='targt1')
+
+    # without per_task, an ICA estimated from one task can be inspected with epochs from another task
+    class SingleTaskICA(SampleExperiment):
+        raw = {
+            'ica1': RawICA('raw', 'sample1', method='fastica', max_iter=1, n_components=0.95),
+            **SampleExperiment.raw,
+        }
+    e = SingleTaskICA(root)
+    with catch_warnings():
+        filterwarnings('ignore', "FastICA did not converge", UserWarning)
+        ica1_path = e.make_ica(raw='ica1', subject='R0000')
+    selections.clear()
+    e.make_ica_selection(epoch='target2')
+    assert selections[0][0] == ica1_path
+    assert selections[0][1].info['epoch'] == 'target2'
 
 
 @requires_mne_sample_data
