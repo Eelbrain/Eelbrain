@@ -471,16 +471,16 @@ class ICATask(Task):
             pipeline: Pipeline,
             raw_name: str | None,
     ) -> tuple[str, ...]:
-        # ICA is cached per (subject, session[, task][, run]); show one row per
-        # combination of the key fields that vary in this experiment.
-        fields = ['subject']
-        if len(pipeline._sessions) > 1:
-            fields.append('session')
-        if raw_name and pipeline._raw[raw_name].per_task and len(pipeline._tasks) > 1:
-            fields.append('task')
-        if raw_name and not pipeline._raw[raw_name]._concatenate_runs and len(pipeline._runs) > 1:
-            fields.append('run')
-        return tuple(fields)
+        # show one row per combination of the ICA's key fields that vary in this experiment
+        varying = {'subject'}
+        for field, values in (('session', pipeline._sessions), ('task', pipeline._tasks), ('run', pipeline._runs)):
+            if len(values) > 1:
+                varying.add(field)
+        if raw_name is None:
+            key_fields = ('subject', 'session')
+        else:
+            key_fields = pipeline._raw[raw_name].ica_key_fields()
+        return tuple(field for field in key_fields if field in varying)
 
     def row_colour(
             self,

@@ -12,8 +12,19 @@ from eelbrain._experiment.derivative_cache import ProtectedArtifactError
 from eelbrain._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from eelbrain._experiment.exceptions import FileMissingError
 from eelbrain._experiment.pathing import MRI_SDIR
+from eelbrain._experiment.preprocessing import RawICA
 from eelbrain._wxgui import bad_channel_summary, pipeline_gui
 from eelbrain._wxgui.pipeline_gui import COMMON_BRAIN_ROW, GREY, PLACEHOLDER, TASKS, TASKS_BY_NAME, Layout, PipelineFrame, RowAction, _format_user_error
+
+
+def ica_pipe(
+        concatenate_runs: bool = True,
+        per_task: bool = False,
+) -> RawICA:
+    """A RawICA as assembled in a pipeline (run concatenation and task resolved)."""
+    pipe = RawICA('raw', per_task=per_task)
+    pipe._concatenate_runs = concatenate_runs
+    return pipe
 
 
 def pipeline(
@@ -29,7 +40,7 @@ def pipeline(
         _sessions=[f's{i}' for i in range(sessions)],
         _tasks=[f't{i}' for i in range(tasks)],
         _runs=[f'{i}' for i in range(runs)],
-        _raw={'raw': SimpleNamespace(_concatenate_runs=concatenate_runs, per_task=per_task)},
+        _raw={'raw': ica_pipe(concatenate_runs, per_task)},
         _epoch_rejection={'manual': ManualRejection(), 'auto': None},
     )
 
@@ -303,7 +314,7 @@ def test_setup_columns_installs_and_caches_the_layout():
     assert frame._list.rows == []  # the previous table's rows are gone
 
     # switching to a Raw pipe that concatenates runs drops the Run column again
-    p._raw['ica'] = SimpleNamespace(_concatenate_runs=True, per_task=False)
+    p._raw['ica'] = ica_pipe(concatenate_runs=True)
     frame._raw_name = lambda: 'ica'
     frame._setup_columns()
     assert frame._layout.key_fields == ('subject', 'session')
