@@ -206,9 +206,8 @@ class Pipeline(StateModel):
     noise_covariance: dict[str, Covariance] = {}
 
     # MRI subject names: {name: {subject: mri_subject}} mappings, selected with
-    # e.set(mri=name); the 'sub-' prefix is added to mri_subject unless it is
-    # a template (see __init__). The identity mapping '' is
-    # always available unless mri_subjects overrides it.
+    # e.set(mri=name); the 'sub-' prefix is added to mri_subject unless it is a template.
+    # The identity mapping '' is always available unless mri_subjects overrides it.
     _default_mri_subjects = {'': keydefaultdict(lambda s: s)}
     mri_subjects: dict[str, dict[str, str]] = {}
     # FreeSurfer subjects that are not derived from a MEG/EEG subject; their
