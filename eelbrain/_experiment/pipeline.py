@@ -207,7 +207,7 @@ class Pipeline(StateModel):
 
     # MRI subject names: {name: {subject: mri_subject}} mappings, selected with
     # e.set(mri=name); the 'sub-' prefix is added to mri_subject unless it is
-    # a template (see pathing.mri_subject_name). The identity mapping '' is
+    # a template (see __init__). The identity mapping '' is
     # always available unless mri_subjects overrides it.
     _default_mri_subjects = {'': keydefaultdict(lambda s: s)}
     mri_subjects: dict[str, dict[str, str]] = {}
