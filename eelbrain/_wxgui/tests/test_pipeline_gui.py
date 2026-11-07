@@ -599,7 +599,7 @@ def test_launch_browse_raw_subprocess(monkeypatch):
 
 
 def test_on_browse_raw_closed(monkeypatch):
-    "Changed bad channels are saved after confirmation; unchanged ones and a declined dialog save nothing; a failed browser shows its stderr"
+    "Changed bad channels are saved after confirmation; unchanged ones and a declined dialog save nothing; a failed browser, or save, shows the error"
     saved, refreshed, errors, messages = [], [], [], []
     answer = wx.ID_YES
 
@@ -623,6 +623,16 @@ def test_on_browse_raw_closed(monkeypatch):
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], None, 'Traceback: boom')
     assert errors == [('Traceback: boom', "Raw Browser Failed", "The MNE raw browser for R01 did not exit cleanly; bad channels were not updated.")]
     assert len(messages) == 2 and len(saved) == 1
+    # a save that fails for a reason that is not a user error
+
+    def fail(bads, redo, raw, **state):
+        raise ValueError("MEG 0112 not in raw")
+
+    pipeline.make_bad_channels = fail
+    answer = wx.ID_YES
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
+    assert 'MEG 0112 not in raw' in errors[-1][0]
+    assert len(saved) == 1 and refreshed == [True]
 
 
 def test_set_row_result_writes_status_details_and_colour():

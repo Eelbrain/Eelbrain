@@ -1145,7 +1145,7 @@ class PipelineFrame(EelbrainFrame):
             return
         try:
             self._pipeline.make_bad_channels(new_bads, redo=True, raw=raw_name, **state)
-        except _USER_ERROR_TYPES as error:
+        except Exception as error:  # not run through _run_row_action, so every error has to be shown here
             self._show_error(*_error_dialog_args(error))
             return
         self._start_refresh()
