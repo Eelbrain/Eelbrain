@@ -560,14 +560,14 @@ def test_close_terminates_subprocesses(monkeypatch):
 
     def proc(running, name):
         return SimpleNamespace(poll=lambda: None if running else 0, terminate=lambda: terminated.append(name))
-    frame = _frame(_compute_token=None, _closed=False, _subprocesses=[('coregistration', proc(True, 'coreg')), ('raw browser', proc(False, 'browser 1')), ('raw browser', proc(True, 'browser 2'))])
+    frame = _frame(_compute_token=None, _refresh_token=object(), _closed=False, _subprocesses=[('coregistration', proc(True, 'coreg')), ('raw browser', proc(False, 'browser 1')), ('raw browser', proc(True, 'browser 2'))])
     event = SimpleNamespace(Veto=lambda: messages.append('veto'), Skip=lambda: messages.append('skip'))
     frame._on_close(event)
     assert messages == ["1 raw browser window(s) are open. Closing this window will close them, and bad channels set there will not be saved.\n\nClose anyway?", 'veto']
     assert terminated == [] and not frame._closed
     answer = wx.ID_YES
     frame._on_close(event)
-    assert messages[-1] == 'skip' and frame._closed
+    assert messages[-1] == 'skip' and frame._closed and frame._refresh_token is None
     assert terminated == ['coreg', 'browser 2']
 
 
@@ -624,7 +624,7 @@ def test_on_browse_raw_closed(monkeypatch):
         return SimpleNamespace(ShowModal=lambda: (messages.append(message), answer)[1], Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
     pipeline = SimpleNamespace(make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state)))
-    frame = _frame(_pipeline=pipeline, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
+    frame = _frame(_pipeline=pipeline, _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0112', 'MEG 0113'], '')
     assert saved == [(['MEG 0112', 'MEG 0113'], True, 'raw', {'subject': 'R01'})]
     assert refreshed == [True]
@@ -650,6 +650,18 @@ def test_on_browse_raw_closed(monkeypatch):
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
     assert 'MEG 0112 not in raw' in errors[-1][0]
     assert len(saved) == 1 and refreshed == [True]
+    # posted while the GUI was closing
+    frame._closed = True
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
+    assert len(messages) == 3 and len(errors) == 2
+
+
+def test_callbacks_after_close():
+    "A refresh or an error posted by a thread or subprocess that ended while the GUI was closing does not touch the destroyed window"
+    frame = _frame(_closed=True, _refresh_token=None)
+    frame._start_refresh()
+    frame._show_error('Traceback: boom')
+    frame._populate_table([('R01', 'done')], object())
 
 
 def test_set_row_result_writes_status_details_and_colour():

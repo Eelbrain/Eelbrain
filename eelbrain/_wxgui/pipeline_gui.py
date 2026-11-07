@@ -1171,6 +1171,8 @@ class PipelineFrame(EelbrainFrame):
             stderr: str,
     ) -> None:
         """Save the bad channels the MNE raw browser was closed with, after confirmation."""
+        if self._closed:
+            return  # the browser closed while this window was closing
         subject = ' '.join(state.values())
         if new_bads is None:
             self._show_error(stderr, "Raw Browser Failed", f"The MNE raw browser for {subject} did not exit cleanly; bad channels were not updated.")
@@ -1628,6 +1630,8 @@ class PipelineFrame(EelbrainFrame):
     # Background status refresh
 
     def _start_refresh(self) -> None:
+        if self._closed:
+            return  # posted by a subprocess that ended while this window was closing
         scope = self._table_scope()
         task, epoch_rejection, epoch_name, _, _, _ = scope
         token = object()
@@ -1723,6 +1727,8 @@ class PipelineFrame(EelbrainFrame):
         self._refresh_status_bar()
 
     def _show_error(self, tb: str, title: str = "Error", message: str | None = None):
+        if self._closed:
+            return  # posted by a thread that ended while this window was closing
         self.SetStatusText("Error")
         dlg = TracebackDialog(self, tb, title, message)
         dlg.ShowModal()
@@ -1754,6 +1760,7 @@ class PipelineFrame(EelbrainFrame):
                 event.Veto()
                 return
         self._closed = True
+        self._refresh_token = None  # drops the rows a refresh pass still posts
         for _, proc in running:
             proc.terminate()
         event.Skip()  # proceed with normal close
