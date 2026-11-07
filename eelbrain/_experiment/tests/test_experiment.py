@@ -47,6 +47,7 @@ class DependentState(StateModel):
         self._register_slave_field('s', 'a', lambda f: f['a'].upper())
         self._register_field('s_a', a_seq, depends_on='c', slave_handler=self._update_sa)
         self._register_field('s_b', b_seq, depends_on='c', slave_handler=self._update_sb, allow_empty=True)
+        self._register_slave_field('s_s_a', 's_a', lambda f: f['s_a'].upper())  # depends on a slave field
         self._store_state()
 
     @staticmethod
@@ -87,9 +88,11 @@ def test_slave_tree():
     tree.set(c='c2')
     assert tree.get('s_a') == 'a2'
     assert tree.get('s_b') == 'b2'
+    assert tree.get('s_s_a') == 'A2'  # a slave of a slave is updated in the same call
     tree.set(c='c1')
     assert tree.get('s_a') == 'a1'
     assert tree.get('s_b') == 'b1'
+    assert tree.get('s_s_a') == 'A1'
 
     # .iter()
     assert list(tree.iter('a')) == a_seq

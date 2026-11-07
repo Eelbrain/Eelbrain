@@ -297,7 +297,7 @@ class StateModel:
         Restrictions:
 
         - Slave fields can not have any other handlers
-        - Slave fields can not depend on other slave fields
+        - Slave fields can only depend on slave fields that were registered before them
         """
         if isinstance(depends_on, str):
             depends_on = (depends_on,)
@@ -513,16 +513,18 @@ class StateModel:
                     alt = ''
                 raise ValueError(f"{k}={v!r}. {alt}To see all valid values use e.show_fields().")
 
-        # fields depending on changes in other fields; resolved before the change
-        # is committed, so that a handler that raises leaves the state unchanged
+        # Fields depending on changes in other fields, resolved in registration order so that a slave
+        # field sees the new values of the slave fields it depends on. They are resolved before the
+        # change is committed, so that a handler that raises leaves the state unchanged.
         fields = {**self._fields, **state}
+        changed = set(state).union(handled_state)
         slave_state = {}
-        for state_key in set(state).union(handled_state).intersection(self._slave_fields):
-            for slave_key in self._slave_fields[state_key]:
-                if slave_key not in slave_state:
-                    v = self._slave_handlers[slave_key](fields)
-                    if v is not None:
-                        slave_state[slave_key] = v
+        for slave_key, handler in self._slave_handlers.items():
+            if any(slave_key in self._slave_fields.get(dep, ()) for dep in changed):
+                v = handler(fields)
+                if v is not None:
+                    fields[slave_key] = slave_state[slave_key] = v
+                    changed.add(slave_key)
         self._fields.update(state)
         self._fields.update(slave_state)
 
