@@ -22,7 +22,7 @@ import wx
 from .. import load
 from .._data_obj import Dataset
 from .._exceptions import ConfigurationError, DataError
-from .._experiment.derivative_cache import ALLOW_PROTECTED_OVERWRITE, JobSpec, ProtectedArtifactError
+from .._experiment.derivative_cache import ALLOW_PROTECTED_OVERWRITE, CachePolicy, JobSpec, ProtectedArtifactError
 from .._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from .._experiment.epochs import PrimaryEpoch
 from .._experiment.exceptions import FileMissingError, ICAChannelsChangedError, ICAMissingError
@@ -1082,9 +1082,9 @@ class PipelineFrame(EelbrainFrame):
     def _open_mne_browse_raw(self, idx: int) -> None:
         """Open the row's raw data (of the selected raw pipe) in the MNE raw browser, with the current bad channels; bad channels changed there are saved when it closes.
 
-        The browser reads a file: the source recording's own, a cached raw pipe's, or,
-        for a raw pipe that is not cached, a temporary file written here (and removed
-        when the browser closes).
+        The browser reads a file: the source recording's own, a raw pipe's cache file
+        (built here if needed), or, for a raw pipe that does not cache, a temporary
+        file written here (and removed when the browser closes).
         """
         pipeline = self._pipeline
         raw_name = self._raw_name()
@@ -1097,14 +1097,14 @@ class PipelineFrame(EelbrainFrame):
                 raw_ctx = pipeline._resolve_derivative(raw_input_name(raw_name))
                 path = raw_ctx.node.path(raw_ctx)
             else:
+                raw = pipeline.load_raw()  # builds the cache file for a pipe that caches
                 raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
-                if raw_ctx.is_valid():
-                    path = raw_ctx.artifact_path
-                else:
-                    raw = pipeline.load_raw()
+                if raw_ctx.node.cache_policy is CachePolicy.NEVER:
                     tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
                     path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
                     raw.save(path)
+                else:
+                    path = raw_ctx.artifact_path
 
         def on_close(new_bads: list[str] | None, stderr: str) -> None:
             if tmp_dir is not None:

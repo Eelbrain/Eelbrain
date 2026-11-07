@@ -470,35 +470,46 @@ def test_coreg_actions(tmp_path):
     assert opened == [(0, 'fsaverage'), (1, 'R02')]
 
 
-def _browse_raw_frame(monkeypatch, tmp_path, pipe, cached: bool):
-    "Bad channels table whose pipeline serves raw pipe 'raw' (the source, at tmp_path/'R01_raw.fif') and 'filt' (cached at tmp_path/'cache-raw.fif' or not)"
+def _browse_raw_frame(monkeypatch, tmp_path, caches: bool):
+    "Bad channels table whose pipeline serves raw pipe 'raw' (the source, at tmp_path/'R01_raw.fif') and 'filt' (a pipe that caches at tmp_path/'cache-raw.fif', or one that does not cache)"
     frame = _table_frame('bad_chs', [('R01', 'done', '3')])
     source = SimpleNamespace(node=SimpleNamespace(path=lambda ctx: tmp_path / 'R01_raw.fif'))
-    cache = SimpleNamespace(is_valid=lambda: cached, artifact_path=tmp_path / 'cache-raw.fif')
-    saved = []
+    cache_policy = pipeline_gui.CachePolicy.REQUIRED if caches else pipeline_gui.CachePolicy.NEVER
+    cache = SimpleNamespace(node=SimpleNamespace(cache_policy=cache_policy), artifact_path=tmp_path / 'cache-raw.fif')
+    loaded, saved = [], []
+
+    def save(path):
+        path.touch()
+        saved.append(path)
+
+    def load_raw():
+        loaded.append(True)
+        return SimpleNamespace(save=save)
+
     pipeline = SimpleNamespace(
         _temporary_state=contextlib.nullcontext(),
         set=lambda **state: None,
-        _raw={'raw': pipeline_gui.RawSource(), 'filt': pipe},
+        _raw={'raw': pipeline_gui.RawSource(), 'filt': SimpleNamespace()},
         _resolve_derivative=lambda name: {pipeline_gui.raw_input_name('raw'): source, pipeline_gui.raw_node_name('filt'): cache}[name],
         load_bad_channels=lambda: ['MEG 0111'],
-        load_raw=lambda: SimpleNamespace(save=lambda path: (path.touch(), saved.append(path))),
+        load_raw=load_raw,
     )
     launched = []
     monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', lambda *args: launched.append(args) or 'proc')
     monkeypatch.setattr(pipeline_gui.wx, 'BusyCursor', contextlib.nullcontext)
     frame.__dict__.update(_pipeline=pipeline, _n_loading=0, _subprocesses=[], _closed=False)
-    return frame, launched, saved
+    return frame, launched, loaded, saved
 
 
 def test_open_mne_browse_raw(monkeypatch, tmp_path):
     "The bad channels context menu opens the row's raw in the MNE raw browser, in a subprocess seeded with the current bad channels"
-    frame, launched, saved = _browse_raw_frame(monkeypatch, tmp_path, pipe=None, cached=False)
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=False)
     frame._raw_name = lambda: 'raw'
     assert [action.label for action in frame._row_actions(0)] == ["Plot continuous data…", "Set bad channels…", "Open in mne browse_raw…"]
     frame._run_row_action(0, frame._row_actions(0)[2])
     (path, bads, on_close), = launched
     assert (path, bads) == (str(tmp_path / 'R01_raw.fif'), ['MEG 0111'])
+    assert loaded == []  # the source file is shown as it is
     assert frame._subprocesses == [('raw browser', 'proc')]
     # closing the browser posts the result to the main thread
     posted = []
@@ -512,15 +523,14 @@ def test_open_mne_browse_raw(monkeypatch, tmp_path):
 
 
 def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
-    "A raw pipe is shown from its cache file when that is valid, and otherwise written to a temporary file that is removed when the browser closes"
-    pipe = SimpleNamespace()
-    frame, launched, saved = _browse_raw_frame(monkeypatch, tmp_path, pipe, cached=True)
+    "A raw pipe that caches is shown from its cache file, built by loading it; one that does not cache is written to a temporary file that is removed when the browser closes"
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=True)
     frame._raw_name = lambda: 'filt'
     frame._run_row_action(0, frame._row_actions(0)[2])
     assert launched[-1][0] == str(tmp_path / 'cache-raw.fif')
-    assert saved == []
+    assert loaded == [True] and saved == []
 
-    frame, launched, saved = _browse_raw_frame(monkeypatch, tmp_path, pipe, cached=False)
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=False)
     frame._raw_name = lambda: 'filt'
     frame._run_row_action(0, frame._row_actions(0)[2])
     (tmp_file,) = saved
