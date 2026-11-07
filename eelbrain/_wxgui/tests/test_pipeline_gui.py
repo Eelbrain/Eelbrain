@@ -515,7 +515,7 @@ def _browse_raw_frame(monkeypatch, tmp_path, caches: bool):
     launched = []
     monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', lambda *args: launched.append(args) or 'proc')
     monkeypatch.setattr(pipeline_gui.wx, 'BusyCursor', contextlib.nullcontext)
-    frame.__dict__.update(_pipeline=pipeline, _n_loading=0, _subprocesses=[], _closed=False)
+    frame.__dict__.update(_pipeline=pipeline, _n_loading=0, _subprocesses=[], _browse_raw_tmp_dirs=[], _closed=False)
     return frame, launched, loaded, saved
 
 
@@ -559,8 +559,43 @@ def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
     assert not tmp_file.parent.exists()
 
 
-def test_close_terminates_subprocesses(monkeypatch):
-    "Closing the GUI closes the GUIs it opened in subprocesses, asking first when any of them are still open"
+def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
+    "The temporary file for a raw pipe that does not cache is removed when writing it, or starting the browser, fails"
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=False)
+    frame._raw_name = lambda: 'filt'
+    errors = []
+    frame._show_error = lambda *args: errors.append(args)
+    tmp_dir = tmp_path / 'browse'
+
+    def mkdtemp(prefix):
+        tmp_dir.mkdir()
+        return str(tmp_dir)
+
+    monkeypatch.setattr(pipeline_gui.tempfile, 'mkdtemp', mkdtemp)
+    # writing the file fails
+    load_raw = frame._pipeline.load_raw
+
+    def save(path):
+        raise OSError("disk full")
+
+    frame._pipeline.load_raw = lambda: SimpleNamespace(save=save)
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    assert 'disk full' in errors[-1][0] and launched == []
+    assert not tmp_dir.exists()
+    # starting the browser fails
+    frame._pipeline.load_raw = load_raw
+
+    def launch(*args):
+        raise OSError("no python")
+
+    monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', launch)
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    assert 'no python' in errors[-1][0] and frame._subprocesses == []
+    assert not tmp_dir.exists()
+
+
+def test_close_terminates_subprocesses(monkeypatch, tmp_path):
+    "Closing the GUI closes the GUIs it opened in subprocesses, asking first when any of them are still open, and removes the temporary files of its raw browsers"
     messages, terminated = [], []
     answer = wx.ID_NO
 
@@ -569,16 +604,19 @@ def test_close_terminates_subprocesses(monkeypatch):
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
 
     def proc(running, name):
-        return SimpleNamespace(poll=lambda: None if running else 0, terminate=lambda: terminated.append(name))
-    frame = _frame(_compute_token=None, _refresh_token=object(), _closed=False, _subprocesses=[('coregistration', proc(True, 'coreg')), ('raw browser', proc(False, 'browser 1')), ('raw browser', proc(True, 'browser 2'))])
+        return SimpleNamespace(poll=lambda: None if running else 0, terminate=lambda: terminated.append(name), wait=lambda timeout: terminated.append(f'{name} exited'))
+    tmp_dir = tmp_path / 'browse'
+    tmp_dir.mkdir()
+    frame = _frame(_compute_token=None, _refresh_token=object(), _closed=False, _browse_raw_tmp_dirs=[tmp_dir], _subprocesses=[('coregistration', proc(True, 'coreg')), ('raw browser', proc(False, 'browser 1')), ('raw browser', proc(True, 'browser 2'))])
     event = SimpleNamespace(Veto=lambda: messages.append('veto'), Skip=lambda: messages.append('skip'))
     frame._on_close(event)
     assert messages == ["2 window(s) opened from this one are still open (coregistration, raw browser). Closing this window will close them, and changes that were not saved there will be lost.\n\nClose anyway?", 'veto']
-    assert terminated == [] and not frame._closed
+    assert terminated == [] and not frame._closed and tmp_dir.exists()
     answer = wx.ID_YES
     frame._on_close(event)
     assert messages[-1] == 'skip' and frame._closed and frame._refresh_token is None
-    assert terminated == ['coreg', 'browser 2']
+    assert terminated == ['coreg', 'browser 2', 'coreg exited', 'browser 2 exited']
+    assert not tmp_dir.exists()
 
 
 def test_browse_raw_script(monkeypatch, capsys):
