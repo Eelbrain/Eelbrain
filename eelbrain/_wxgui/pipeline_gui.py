@@ -63,9 +63,10 @@ def _launch_coreg_subprocess(
 # Bad channels that the displayed raw does not contain (dropped by a raw pipe) are kept as they are.
 _BROWSE_RAW_SCRIPT = '''
 import json, sys
-import mne
+from pathlib import Path
+from eelbrain._experiment.preprocessing.nodes import RawSourceInput
 path, bads = sys.argv[1], json.loads(sys.argv[2])
-raw = mne.io.read_raw(path, allow_maxshield='yes')
+raw = RawSourceInput._read_raw(Path(path), preload=False)  # the reader the pipeline uses
 raw.info['bads'] = [ch for ch in bads if ch in raw.ch_names]
 raw.plot(block=True)
 print(json.dumps(raw.info['bads'] + [ch for ch in bads if ch not in raw.ch_names]))
