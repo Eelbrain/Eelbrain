@@ -3887,7 +3887,8 @@ class Pipeline(StateModel):
 
         # pipe-specific
         if isinstance(pipe, RawICA):
-            fields = ('subject', 'task') if pipe.per_task else ('subject',)
+            # one row per combination of the ICA's key fields that vary in this experiment
+            fields = tuple(field for field in pipe.ica_key_fields() if field == 'subject' or len(self._field_values.get(field, ())) > 1)
             rows = []
             for key in self.iter(fields):
                 ctx = self._resolve_derivative(ica_input_name(raw))
