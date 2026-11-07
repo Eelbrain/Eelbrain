@@ -175,8 +175,10 @@ State parameters
 
 Selects a mapping from MEG/EEG subjects to MRI subjects defined in
 :attr:`Pipeline.mri_subjects`. The default (``''``) is the identity mapping, in
-which each subject uses their own MRI directory. Source space results are
-cached separately for each mapping. In the :ref:`pipeline-gui`, the MRI and
+which each subject uses their own MRI directory. Group-level source space
+results are cached separately for each mapping; subject-level results are
+cached per MRI subject, so mappings that select the same MRI subject share
+them. In the :ref:`pipeline-gui`, the MRI and
 Coregistration tasks offer the mapping in the **MRI** dropdown (when the
 pipeline defines more than one).
 
