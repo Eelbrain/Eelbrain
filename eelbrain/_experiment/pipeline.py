@@ -4071,7 +4071,7 @@ class Pipeline(StateModel):
     def show_subjects(
             self,
             raw: bool = False,
-            mri: bool = None,
+            mri: bool | str | None = None,
             mrisubject: bool = False,
             caption: str | bool = True,
             asds: bool = False,
