@@ -2522,7 +2522,9 @@ class Pipeline(StateModel):
             Load data from this :ref:`state-epoch` for visualization during
             component selection (does not affect the ICA components themselvs).
             If unspecified, the default is to load the data form the entire
-            :ref:`state-task` that the ICA is based on.
+            :ref:`state-task` that the ICA is based on. For a
+            :class:`pipeline.RawICA` step with ``per_task=True``, the epoch's
+            task selects the ICA (the epoch can not combine several tasks).
         samplingrate
             Samplingrate in Hz for the visualization (set to a lower value to
             improve GUI performance; for raw data, the default is ~100 Hz, for
@@ -2548,30 +2550,33 @@ class Pipeline(StateModel):
             ...
         """
         debug = state.pop('debug', False)
-        if epoch is not None:
-            if task is not None:
+        if task is not None:
+            if epoch is not None:
                 raise TypeError(f"{task=} with {epoch=}")
-            state['epoch'] = epoch  # with per_task, the epoch determines the task and thus the ICA
-        elif task is not None:
             task = sequence_arg('task', task)
-            raw_name = self.get('raw', **state)
-            if self._raw.ica_pipe(raw_name).per_task:  # one ICA per task: the task selects the ICA
+        raw_name = self.get('raw', **state)
+        pipe = self._raw.ica_pipe(raw_name)
+        if pipe.per_task:  # one ICA per task: the epoch or task selects the ICA
+            if epoch is not None:
+                epoch_tasks = self._epochs[epoch].tasks
+                if len(epoch_tasks) != 1:
+                    raise ValueError(f"{epoch=} contains data from tasks {enumeration(epoch_tasks)}, but the ICA {pipe.name!r} is estimated separately for each task (per_task=True); use an epoch with a single task")
+                state['task'] = epoch_tasks[0]
+            elif task is not None:
                 if len(task) != 1:
                     raise ValueError(f"{task=}: the ICA is estimated separately for each task (per_task=True), specify a single task")
-                state = {'task': task[0]}
+                state['task'] = task[0]
         # ICA
         path = self.make_ica(**state)  # sets raw to ica-raw
         # display data
         subject = self.get('subject')
         ica_name = self.get('raw')
-        pipe = self._raw.ica_pipe(ica_name)
-        ctx = self._resolve_derivative(ica_input_name(ica_name))
-        fit_tasks = pipe.fit_tasks(ctx)
         bads = self._load_derivative(raw_node_name(ica_name), options={'noise': False}, view='bads')
         labeled_events = None
         if epoch is None:
+            ctx = self._resolve_derivative(ica_input_name(ica_name))
             if task is None:
-                task = fit_tasks
+                task = pipe.fit_tasks(ctx)
             raw = ctx.node.load_concatenated_source_raw(ctx, task, preload=False)
             decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
             info = raw.info
@@ -2589,9 +2594,6 @@ class Pipeline(StateModel):
                         offset += (ds_t.info['raw.last_samp'] - ds_t.info['raw.first_samp'] + 1) / ds_t.info['raw.samplingrate']
                 labeled_events = combine(event_dss, incomplete='fill in')
         else:
-            epoch_tasks = self._epochs[epoch].tasks
-            if not set(epoch_tasks).issubset(fit_tasks):
-                raise ValueError(f"{epoch=} contains data from task {enumeration(epoch_tasks)}, but the ICA {ica_name!r} is estimated from task {enumeration(fit_tasks)}; load the ICA with a matching epoch or task")
             with self._temporary_state:
                 ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe.source, samplingrate=samplingrate, decim=decim)
                 epochs = ds['epochs']
