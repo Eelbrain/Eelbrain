@@ -455,7 +455,7 @@ def test_mri_actions(tmp_path):
 
 def test_coreg_actions(tmp_path):
     "A subject without a FreeSurfer reconstruction is coregistered to the template brain"
-    frame = _table_frame('coreg', [('R01', 's1', 'R01', 'missing'), ('R02', 's1', 'R02', 'ok')])
+    frame = _table_frame('coreg', [('R01', 's1', 'R01', 'missing'), ('R02', 's1', 'R02', 'ok'), ('R03', 's1', PLACEHOLDER, pipeline_gui.ERROR)])
     (tmp_path / MRI_SDIR / 'R02' / 'surf').mkdir(parents=True)
     (tmp_path / MRI_SDIR / 'R02' / 'surf' / 'lh.white').touch()
     opened = []
@@ -463,8 +463,11 @@ def test_coreg_actions(tmp_path):
     frame.__dict__.update(_pipeline=pipeline, _n_loading=0, _open_coreg=lambda idx, mrisubject: opened.append((idx, mrisubject)))
     assert [action.label for action in frame._row_actions(0)] == ["Open coregistration with fsaverage…"]
     assert [action.label for action in frame._row_actions(1)] == ["Open coregistration…"]
+    # a row that could not be resolved (e.g. a subject the mri mapping omits) has no MRI subject to coregister with
+    assert [(action.label, action.run) for action in frame._row_actions(2)] == [("Row could not be resolved (see the error reported when the table loaded)", None)]
     frame._activate_row(0)
     frame._activate_row(1)
+    frame._activate_row(2)
     assert opened == [(0, 'fsaverage'), (1, 'R02')]
 
 

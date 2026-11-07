@@ -1341,6 +1341,8 @@ class PipelineFrame(EelbrainFrame):
         dlg.Destroy()
 
     def _coreg_actions(self, idx: int) -> list[RowAction]:
+        if self._list.GetItemText(idx, self._layout.status_col) == ERROR:  # e.g. a subject the selected mri mapping omits; the MRI-subject column holds a placeholder
+            return [RowAction("Row could not be resolved (see the error reported when the table loaded)")]
         mrisubject = self._list.GetItemText(idx, 2)
         if (self._pipeline.root / MRI_SDIR / mrisubject / 'surf' / 'lh.white').exists():
             label = "Open coregistration…"
