@@ -582,7 +582,10 @@ def test_close_terminates_subprocesses(monkeypatch):
     answer = wx.ID_NO
 
     def dialog(parent, message, title, style):
-        return SimpleNamespace(ShowModal=lambda: (messages.append(message), answer)[1], Destroy=lambda: None)
+        def show_modal():
+            messages.append(message)
+            return answer
+        return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
 
     def proc(running, name):
@@ -628,7 +631,8 @@ def test_launch_browse_raw_subprocess(monkeypatch):
     done = threading.Event()
 
     def on_close(bads, stderr):
-        return (results.append((bads, stderr)), done.set())
+        results.append((bads, stderr))
+        done.set()
     popen.output, popen.returncode = ('Using qt as 2D backend.\n["MEG 0111", "MEG 0112"]\n', ''), 0
     pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
     assert done.wait(5)
@@ -649,7 +653,10 @@ def test_on_browse_raw_closed(monkeypatch):
     answer = wx.ID_YES
 
     def dialog(parent, message, title, style):
-        return SimpleNamespace(ShowModal=lambda: (messages.append(message), answer)[1], Destroy=lambda: None)
+        def show_modal():
+            messages.append(message)
+            return answer
+        return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
     pipeline = SimpleNamespace(make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state)))
     frame = _frame(_pipeline=pipeline, _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
