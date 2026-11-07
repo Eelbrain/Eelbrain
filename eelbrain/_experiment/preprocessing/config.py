@@ -666,7 +666,7 @@ class RawICA(CachedRawPipe):
         # Task that has not been used for ICA fit
         if noise:
             bads.update(ctx.load(raw_node_name(self.source), options={'noise': True}, view='bads'))
-        elif ctx.state['task'] not in self.task:
+        elif ctx.state['task'] not in self.fit_tasks(ctx):
             bads.update(ctx.load(raw_node_name(self.source), view='bads'))
         return sorted(bads)
 

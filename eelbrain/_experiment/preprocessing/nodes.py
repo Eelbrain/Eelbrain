@@ -990,7 +990,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
                     options={'noise': True},
                     label=f'{source_node}:noise_bads',
                 ))
-            elif ctx.state['task'] not in self.pipe.task:
+            elif ctx.state['task'] not in self.pipe.fit_tasks(ctx):
                 deps.append(Dependency(source_node, view='bads', label=f'{source_node}:task_bads'))
         elif isinstance(self.pipe, RawApplyICA):
             ica_name = self.pipes.ica_name(self.raw_name)
@@ -1064,7 +1064,7 @@ class RawDerivative(Derivative[mne.io.BaseRaw]):
                 bads = set(ctx.load(f'{ica_node}:bads'))
                 if ctx.options['noise']:
                     bads.update(ctx.load(f'{source_node}:noise_bads'))
-                elif ctx.state['task'] not in self.pipe.task:
+                elif ctx.state['task'] not in self.pipe.fit_tasks(ctx):
                     bads.update(ctx.load(f'{source_node}:task_bads'))
                 bad_channels = sorted(bads)
             else:
