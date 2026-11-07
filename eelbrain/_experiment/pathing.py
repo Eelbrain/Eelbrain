@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from collections.abc import Container
 from typing import Any
 
 from mne_bids import BIDSPath
@@ -122,18 +121,6 @@ def subject_predictor_path(
         path /= f"ses-{state['session']}"
     basename = _bids_name(state, entity_keys, suffix='')
     return SUBJECT_PREDICTOR_DIR / path / f"{basename}_desc-{code}.pickle"
-
-
-def mri_subject_name(mri_subject: str, templates: Container[str]) -> str:
-    """FreeSurfer subject directory name for an entry of :attr:`Pipeline.mri_subjects`
-
-    MEG/EEG subjects map to ``sub-{subject}`` directories, so the ``sub-`` prefix
-    is added unless the entry is a template (:attr:`Pipeline.mri_templates`) or
-    already carries it.
-    """
-    if mri_subject in templates or mri_subject.startswith('sub-'):
-        return mri_subject
-    return f'sub-{mri_subject}'
 
 
 def mri_dir(state: dict[str, Any]) -> Path:

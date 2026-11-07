@@ -48,7 +48,7 @@ from .state_model import StateModel
 from .statistics.nodes import ROITestResult
 from .groups import assemble_groups
 from .pathing import (
-    LOG_DIR, MRI_SDIR, bids_path, join_stem_parts, mri_dir, mri_subject_name, raw_basename,
+    LOG_DIR, MRI_SDIR, bids_path, join_stem_parts, mri_dir, raw_basename,
     src_file_path, trans_file_path,
 )
 from .parc import SEEDED_PARC_RE, AnnotDerivative, CombinationParc, EelbrainParc, FreeSurferParc, FSAverageParc, IndividualSeededParc, LabelParc, Parcellation, SeededParc, VolumeParc, _resolve_parc
@@ -213,7 +213,7 @@ class Pipeline(StateModel):
     mri_subjects: dict[str, dict[str, str]] = {}
     # FreeSurfer subjects that are not derived from a MEG/EEG subject; their
     # directories are named without the 'sub-' prefix
-    mri_templates: Sequence[str] = ('fsaverage',)
+    mri_templates: Sequence[str] = ('fsaverage', 'fsaverage_sym')
 
     # Parcellations
     _default_parcs = {
@@ -404,7 +404,6 @@ class Pipeline(StateModel):
         check_names(self.mri_templates, 'mri_templates', allow_empty=False)
         templates = frozenset(self.mri_templates)
         # self._mri_subjects holds FreeSurfer directory names (sub- prefix applied), resolved on demand
-        # so that a plain dict only needs entries for the subjects that are analyzed with it
         self._mri_subjects = {}
         for name, mapping in {**self._default_mri_subjects, **self.mri_subjects}.items():
             if not isinstance(mapping, dict):
@@ -415,7 +414,9 @@ class Pipeline(StateModel):
                     mri_subject = mapping[subject]
                 except KeyError:
                     raise ConfigurationError(f"mri_subjects[{name!r}] has no entry for subject {subject!r}") from None
-                return mri_subject_name(mri_subject, templates)
+                if mri_subject in templates or mri_subject.startswith('sub-'):
+                    return mri_subject
+                return f'sub-{mri_subject}'
 
             self._mri_subjects[name] = keydefaultdict(resolve)
 
