@@ -3437,6 +3437,7 @@ def test_mri_subjects(samples_experiment):
     assert e.get('mrisubject', subject='R0000') == 'sub-R0000'
     assert e.get('mrisubject', subject='R0001') == ''  # a subject the mapping omits has no MRI subject
     assert list(e.iter()) == ['R0000', 'R0001', 'R0002']  # but can be iterated over, e.g. for sensor-space analyses
+    assert e.get_field_values('mrisubject') == ['fsaverage', 'sub-R0000']  # and contributes no MRI subject
     e.load_evoked(subject='R0001', epoch='target', raw='1-40')
     with pytest.raises(ConfigurationError, match="R0001"):  # anything that needs the MRI raises
         e.load_src()

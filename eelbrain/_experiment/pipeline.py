@@ -785,7 +785,13 @@ class Pipeline(StateModel):
         if field == 'mrisubject':
             subjects = StateModel.get_field_values(self, 'subject')
             mri_subjects = self._mri_subjects[self.get('mri')]
-            mrisubjects = sorted({mri_subjects[subject] for subject in subjects})
+            mrisubjects = set()
+            for subject in subjects:
+                try:
+                    mrisubjects.add(mri_subjects[subject])
+                except MissingMRISubjectError:  # a subject the mapping omits has no MRI subject
+                    pass
+            mrisubjects = sorted(mrisubjects)
             common_brain = self.get('common_brain')
             if common_brain and common_brain not in mrisubjects:
                 mrisubjects.insert(0, common_brain)
