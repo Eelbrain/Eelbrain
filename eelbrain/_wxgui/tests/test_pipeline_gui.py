@@ -532,7 +532,7 @@ def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
 
 
 def test_close_terminates_subprocesses(monkeypatch):
-    "Closing the GUI closes the GUIs it opened in subprocesses, asking first when raw browser windows are open"
+    "Closing the GUI closes the GUIs it opened in subprocesses, asking first when any of them are still open"
     messages, terminated = [], []
     answer = wx.ID_NO
 
@@ -545,7 +545,7 @@ def test_close_terminates_subprocesses(monkeypatch):
     frame = _frame(_compute_token=None, _closed=False, _subprocesses=[('coregistration', proc(True, 'coreg')), ('raw browser', proc(False, 'browser 1')), ('raw browser', proc(True, 'browser 2'))])
     event = SimpleNamespace(Veto=lambda: messages.append('veto'), Skip=lambda: messages.append('skip'))
     frame._on_close(event)
-    assert messages == ["1 raw browser window(s) are open. Closing this window will close them, and bad channels set there will not be saved.\n\nClose anyway?", 'veto']
+    assert messages == ["2 window(s) opened from this one are still open (coregistration, raw browser). Closing this window will close them, and changes that were not saved there will be lost.\n\nClose anyway?", 'veto']
     assert terminated == [] and not frame._closed
     answer = wx.ID_YES
     frame._on_close(event)

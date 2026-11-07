@@ -1701,9 +1701,9 @@ class PipelineFrame(EelbrainFrame):
                 return
             self._compute_token = None  # let the thread wind down
         running = [(kind, proc) for kind, proc in self._subprocesses if proc.poll() is None]
-        n_browsers = sum(kind == 'raw browser' for kind, _ in running)
-        if n_browsers:
-            dlg = wx.MessageDialog(self, f"{n_browsers} raw browser window(s) are open. Closing this window will close them, and bad channels set there will not be saved.\n\nClose anyway?", "Close raw browser windows?", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
+        if running:
+            kinds = ', '.join(sorted({kind for kind, _ in running}))
+            dlg = wx.MessageDialog(self, f"{len(running)} window(s) opened from this one are still open ({kinds}). Closing this window will close them, and changes that were not saved there will be lost.\n\nClose anyway?", "Close open windows?", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
             confirmed = dlg.ShowModal() == wx.ID_YES
             dlg.Destroy()
             if not confirmed:
