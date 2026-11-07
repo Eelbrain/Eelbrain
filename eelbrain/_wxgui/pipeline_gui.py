@@ -84,10 +84,13 @@ def _launch_browse_raw_subprocess(
     def wait() -> None:
         stdout, stderr = proc.communicate()
         lines = stdout.strip().splitlines()
+        bads = None
         if proc.returncode == 0 and lines:
-            on_close(json.loads(lines[-1]), stderr)
-        else:
-            on_close(None, stderr)
+            try:
+                bads = json.loads(lines[-1])
+            except json.JSONDecodeError:  # MNE logs to stdout, so something may have been printed after the result
+                stderr += f"Unexpected last line of output: {lines[-1]}"
+        on_close(bads, stderr)
 
     threading.Thread(target=wait, daemon=True).start()
     return proc

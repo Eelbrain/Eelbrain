@@ -572,7 +572,7 @@ def test_browse_raw_script(monkeypatch, capsys):
 
 
 def test_launch_browse_raw_subprocess(monkeypatch):
-    "The browser subprocess reports the bad channels it was closed with on its last line; a failed run reports None with stderr"
+    "The browser subprocess reports the bad channels it was closed with on its last line; a failed run, or one whose last line is not the result, reports None with stderr"
     results = []
 
     def popen(args, stdout, stderr, text):
@@ -591,7 +591,11 @@ def test_launch_browse_raw_subprocess(monkeypatch):
     popen.output, popen.returncode = ('', 'Traceback: boom'), 1
     pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
     assert done.wait(5)
-    assert results == [(['MEG 0111', 'MEG 0112'], ''), (None, 'Traceback: boom')]
+    done.clear()
+    popen.output, popen.returncode = ('["MEG 0111"]\nClosing\n', ''), 0
+    pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
+    assert done.wait(5)
+    assert results == [(['MEG 0111', 'MEG 0112'], ''), (None, 'Traceback: boom'), (None, 'Unexpected last line of output: Closing')]
 
 
 def test_on_browse_raw_closed(monkeypatch):
