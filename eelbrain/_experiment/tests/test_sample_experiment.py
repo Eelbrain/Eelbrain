@@ -3412,11 +3412,20 @@ def test_mri_subjects(samples_experiment):
             assert level_1.key()['mrisubject'] == f'sub-{dep.label}'
             level_1_paths[mri, dep.label] = level_1.artifact_path
     assert level_1_paths['', 'R0001'] == level_1_paths['prefixed', 'R0001']
-    # the group→subject edge derives the MRI from the mri and common_brain state, like the pipeline
+    # the mappings hold FreeSurfer directory names, so the group→subject edge only needs the mri state
     from eelbrain._experiment.source.nodes import _subject_state
-    state = {'mri': 'fsaverage', 'common_brain': 'fsaverage'}
-    assert _subject_state(state, 'R0001', e._mri_subjects) == {'subject': 'R0001', 'mrisubject': 'fsaverage'}
-    assert _subject_state({**state, 'common_brain': 'other'}, 'R0001', e._mri_subjects) == {'subject': 'R0001', 'mrisubject': 'sub-fsaverage'}
+    assert _subject_state({'mri': 'fsaverage'}, 'R0001', e._mri_subjects) == {'subject': 'R0001', 'mrisubject': 'fsaverage'}
+    assert _subject_state({'mri': 'scaled'}, 'R0001', e._mri_subjects) == {'subject': 'R0001', 'mrisubject': 'sub-R0001-scaled'}
+
+    # templates other than fsaverage are stored without the sub- prefix
+    class Templates(SampleExperiment):
+        mri_templates = ('fsaverage', 'template')
+        mri_subjects = {'template': keydefaultdict(lambda s: 'template'), 'other': keydefaultdict(lambda s: 'other')}
+
+    e = Templates(root)
+    assert e.get('mrisubject', mri='template') == 'template'
+    assert e.get('mrisubject', mri='other') == 'sub-other'
+    assert e.get('mrisubject', mri='') == 'sub-R0000'
 
     # a plain dict only needs entries for the subjects that are analyzed with it (here, the identity mapping is overridden)
     class Incomplete(SampleExperiment):

@@ -207,10 +207,13 @@ class Pipeline(StateModel):
 
     # MRI subject names: {name: {subject: mri_subject}} mappings, selected with
     # e.set(mri=name); the 'sub-' prefix is added to mri_subject unless it is
-    # the common brain (see pathing.mri_subject_name). The identity mapping ''
-    # is always available unless mri_subjects overrides it.
+    # a template (see pathing.mri_subject_name). The identity mapping '' is
+    # always available unless mri_subjects overrides it.
     _default_mri_subjects = {'': keydefaultdict(lambda s: s)}
     mri_subjects: dict[str, dict[str, str]] = {}
+    # FreeSurfer subjects that are not derived from a MEG/EEG subject; their
+    # directories are named without the 'sub-' prefix
+    mri_templates: Sequence[str] = ('fsaverage',)
 
     # Parcellations
     _default_parcs = {
@@ -396,16 +399,25 @@ class Pipeline(StateModel):
         if not isinstance(self.mri_subjects, dict):
             raise TypeError(f"{self.__class__.__name__}.mri_subjects={self.mri_subjects!r}: need a dict of {{name: {{subject: mri_subject}}}} mappings")
         check_names(self.mri_subjects, 'mri_subjects', allow_empty=True)
+        if isinstance(self.mri_templates, str) or not all(isinstance(name, str) for name in self.mri_templates):
+            raise TypeError(f"{self.__class__.__name__}.mri_templates={self.mri_templates!r}: need a sequence of MRI subject names")
+        check_names(self.mri_templates, 'mri_templates', allow_empty=False)
+        templates = frozenset(self.mri_templates)
+        # self._mri_subjects holds FreeSurfer directory names (sub- prefix applied), resolved on demand
+        # so that a plain dict only needs entries for the subjects that are analyzed with it
         self._mri_subjects = {}
         for name, mapping in {**self._default_mri_subjects, **self.mri_subjects}.items():
             if not isinstance(mapping, dict):
                 raise TypeError(f"mri_subjects[{name!r}]={mapping!r}: need a dict mapping subject to MRI subject (or a keydefaultdict)")
-            if not isinstance(mapping, defaultdict):
-                # a plain dict only needs entries for the subjects that are analyzed with it; a missing entry is reported when it is needed
-                def missing_entry(subject: str, name: str = name) -> str:
-                    raise ConfigurationError(f"mri_subjects[{name!r}] has no entry for subject {subject!r}")
-                mapping = keydefaultdict(missing_entry, mapping)
-            self._mri_subjects[name] = mapping
+
+            def resolve(subject: str, name: str = name, mapping: dict = mapping) -> str:
+                try:
+                    mri_subject = mapping[subject]
+                except KeyError:
+                    raise ConfigurationError(f"mri_subjects[{name!r}] has no entry for subject {subject!r}") from None
+                return mri_subject_name(mri_subject, templates)
+
+            self._mri_subjects[name] = keydefaultdict(resolve)
 
         # Sensor noise covariance estimates
         check_names(self.noise_covariance, 'noise_covariance', allow_empty=False)
@@ -771,8 +783,8 @@ class Pipeline(StateModel):
         if field == 'mrisubject':
             subjects = StateModel.get_field_values(self, 'subject')
             mri_subjects = self._mri_subjects[self.get('mri')]
+            mrisubjects = sorted({mri_subjects[subject] for subject in subjects})
             common_brain = self.get('common_brain')
-            mrisubjects = sorted({mri_subject_name(mri_subjects[subject], common_brain) for subject in subjects})
             if common_brain and common_brain not in mrisubjects:
                 mrisubjects.insert(0, common_brain)
             if exclude:
@@ -3485,7 +3497,7 @@ class Pipeline(StateModel):
         mri = fields['mri']
         if subject == '*' or mri == '*':
             return '*'
-        return mri_subject_name(self._mri_subjects[mri][subject], self.get('common_brain'))
+        return self._mri_subjects[mri][subject]
 
     def _update_task(self, fields: dict) -> str | None:
         epoch = fields['epoch']

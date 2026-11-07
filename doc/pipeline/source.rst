@@ -22,7 +22,7 @@ See the wiki for more information on using `structural MRIs <https://github.com/
 .. py:attribute:: Pipeline.mri_subjects
    :type: Dict[str, Dict[str, str]]
 
-Map MEG/EEG subjects to FreeSurfer MRI subjects. Keys in ``mri_subjects`` are names for different mappings and correspond to values of the :ref:`state-mri` state parameter; the inner dictionaries map :ref:`state-subject` values to MRI subject names. MRI subjects are directories under ``{root}/derivatives/freesurfer``; like the subject directories, they are named ``sub-{name}``, and the ``sub-`` prefix is added automatically (unless the name is the common brain, ``fsaverage``, or already starts with ``sub-``). By default, an identity mapping is used, i.e., each subject uses their own MRI directory ``sub-{subject}``. Custom mappings can be defined, for example to let several subjects share a template brain or to point to individually scaled MRI subjects. A plain dictionary needs an entry for every subject that is analyzed with it; a mapping that follows from the subject name is more easily defined as a function with :class:`~eelbrain.keydefaultdict`, e.g.::
+Map MEG/EEG subjects to FreeSurfer MRI subjects. Keys in ``mri_subjects`` are names for different mappings and correspond to values of the :ref:`state-mri` state parameter; the inner dictionaries map :ref:`state-subject` values to MRI subject names. MRI subjects are directories under ``{root}/derivatives/freesurfer``; like the subject directories, they are named ``sub-{name}``, and the ``sub-`` prefix is added automatically (unless the name is a template listed in :attr:`Pipeline.mri_templates`, or already starts with ``sub-``). By default, an identity mapping is used, i.e., each subject uses their own MRI directory ``sub-{subject}``. Custom mappings can be defined, for example to let several subjects share a template brain or to point to individually scaled MRI subjects. A plain dictionary needs an entry for every subject that is analyzed with it; a mapping that follows from the subject name is more easily defined as a function with :class:`~eelbrain.keydefaultdict`, e.g.::
 
     from eelbrain import keydefaultdict
 
@@ -36,6 +36,11 @@ Map MEG/EEG subjects to FreeSurfer MRI subjects. Keys in ``mri_subjects`` are na
     }
 
 The identity mapping ``''`` (``keydefaultdict(lambda subject: subject)``) is always available and is the initial :ref:`state-mri` value, unless ``mri_subjects`` overrides the ``''`` entry. The resulting MRI subject is available as the :ref:`state-mrisubject` state.
+
+.. py:attribute:: Pipeline.mri_templates
+   :type: Sequence[str]
+
+FreeSurfer subjects that are not derived from a MEG/EEG subject, such as template brains. Their directories under ``{root}/derivatives/freesurfer`` are named without the ``sub-`` prefix. The default is ``('fsaverage',)``.
 
 Missing MRI subjects are created automatically when they are first needed, as long as they can be derived without user input:
 

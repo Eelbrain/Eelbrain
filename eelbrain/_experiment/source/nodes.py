@@ -30,7 +30,7 @@ from ... import load
 from ..._data_obj import Dataset, Datalist, NDVar, combine
 from ..derivative_cache import CachePolicy, Dependency, Derivative, ExternalArtifactDerivative, OptionSpec, Request, Input, UncachedDerivative, file_fingerprint
 from ..pathing import (
-    MRI_SDIR, bem_dir, bem_file_path, mri_dir, mri_subject_name, src_file_path, trans_file_path,
+    MRI_SDIR, bem_dir, bem_file_path, mri_dir, src_file_path, trans_file_path,
 )
 from ..preprocessing import Reference, canonical_recording, raw_node_name
 from ..data import DataSpec
@@ -460,12 +460,11 @@ def _subject_state(
     """The state fields to override to switch to ``subject`` (a dependency delta).
 
     Only the changed fields are returned; the parent state propagates to the
-    dependency automatically. The subject's MRI follows from ``mri`` and
-    ``common_brain`` (like :meth:`Pipeline._update_mrisubject`), so the group
-    node has to key on both.
+    dependency automatically. ``mri_subjects`` holds FreeSurfer directory names
+    (see :attr:`Pipeline._mri_subjects`), so the subject's MRI follows from
+    ``mri`` alone and the group node has to key on ``mri``.
     """
-    mrisubject = mri_subject_name(mri_subjects[state['mri']][subject], state['common_brain'])
-    return {'subject': subject, 'mrisubject': mrisubject}
+    return {'subject': subject, 'mrisubject': mri_subjects[state['mri']][subject]}
 
 
 @dataclass
@@ -876,8 +875,11 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
-        # each subject's MRI follows from ('mri', 'common_brain', 'subject') and is pinned per dependency (see _subject_state)
-        return ('group', 'mri', 'common_brain', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'adjacency')
+        # each subject's MRI follows from ('mri', 'subject') and is pinned per dependency (see _subject_state)
+        fields = ('group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'adjacency')
+        if ctx.options['morph']:
+            fields += ('common_brain',)
+        return fields
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         return {'subjects': tuple(self.groups[ctx.state['group']])}
