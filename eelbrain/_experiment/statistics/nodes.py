@@ -77,12 +77,6 @@ RESULT_SOURCE_GROUP_KEY_FIELDS = (
     'group', *_RESULT_COMMON_KEY_FIELDS, 'cov', 'inv', 'src', 'mri',
     'parc', 'common_brain', 'adjacency',
 )
-# Subject-level artifacts key on 'mrisubject' but not on 'mri': the MRI subject
-# determines the MRI, so the same artifact serves every mapping that selects it.
-RESULT_SOURCE_SUBJECT_KEY_FIELDS = (
-    'subject', *_RESULT_COMMON_KEY_FIELDS, 'cov', 'inv', 'src', 'mrisubject',
-    'parc', 'common_brain', 'adjacency',
-)
 
 
 def _test_result_options(

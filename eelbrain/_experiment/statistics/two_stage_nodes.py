@@ -187,7 +187,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         data = ctx.options['data']
         fields = ['subject', 'session', 'acquisition', 'epoch', 'raw', 'epoch_rejection']
         if data is None or data.source:
-            fields += ['equalize_evoked_count', 'cov', 'inv', 'src', 'mrisubject', 'parc', 'common_brain', 'adjacency']  # see RESULT_SOURCE_SUBJECT_KEY_FIELDS
+            fields += ['equalize_evoked_count', 'cov', 'inv', 'src', 'mrisubject', 'parc', 'common_brain', 'adjacency']  # 'mrisubject' but not 'mri': the MRI subject determines the MRI, so the same artifact serves every mapping that selects it
         return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
