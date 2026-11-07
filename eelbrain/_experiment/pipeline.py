@@ -22,7 +22,7 @@ from .. import load
 from .. import plot
 from .. import save
 from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
-from .._exceptions import ConfigurationError, DimensionMismatchError
+from .._exceptions import ConfigurationError, DimensionMismatchError, MissingMRISubjectError
 from .._info import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from ..mne_fixes import suppress_mne_warning
@@ -205,10 +205,14 @@ class Pipeline(StateModel):
     # here (e.g. {'baseline': EpochCovariance('baseline')})
     noise_covariance: dict[str, Covariance] = {}
 
-    # MRI subject names: {subject: mrisubject} mappings
-    # selected with e.set(mri=dict_name)
-    # default is identity (mrisubject = subject)
-    mri_subjects = {'': keydefaultdict(lambda s: s)}
+    # MRI subject names: {name: {subject: mri_subject}} mappings, selected with
+    # e.set(mri=name); the 'sub-' prefix is added to mri_subject unless it is a template.
+    # The identity mapping '' is always available unless mri_subjects overrides it.
+    _default_mri_subjects = {'': keydefaultdict(lambda s: s)}
+    mri_subjects: dict[str, dict[str, str]] = {}
+    # FreeSurfer subjects that are not derived from a MEG/EEG subject; their
+    # directories are named without the 'sub-' prefix
+    mri_templates: Sequence[str] = ('fsaverage', 'fsaverage_sym')
 
     # Parcellations
     _default_parcs = {
@@ -391,7 +395,28 @@ class Pipeline(StateModel):
         self._references = ConfigurationDict('reference', references)
 
         # mri_subjects
-        self._mri_subjects = self.mri_subjects.copy()
+        if not isinstance(self.mri_subjects, dict):
+            raise TypeError(f"{self.__class__.__name__}.mri_subjects={self.mri_subjects!r}: need a dict of {{name: {{subject: mri_subject}}}} mappings")
+        check_names(self.mri_subjects, 'mri_subjects', allow_empty=True)
+        templates = sequence_arg(f"{self.__class__.__name__}.mri_templates", self.mri_templates, allow_none=False, sequence_type=frozenset) | {'fsaverage', 'fsaverage_sym'}
+        # self._mri_subjects holds FreeSurfer directory names (sub- prefix applied), resolved on demand
+        self._mri_subjects = {}
+        for name, mapping in {**self._default_mri_subjects, **self.mri_subjects}.items():
+            if not isinstance(mapping, dict):
+                raise TypeError(f"mri_subjects[{name!r}]={mapping!r}: need a dict mapping subject to MRI subject (or a keydefaultdict)")
+
+            def resolve(subject: str, name: str = name, mapping: dict = mapping) -> str:
+                try:
+                    mri_subject = mapping[subject]
+                except KeyError:
+                    raise MissingMRISubjectError(f"mri_subjects[{name!r}] has no entry for subject {subject!r}") from None
+                if not isinstance(mri_subject, str):
+                    raise TypeError(f"mri_subjects[{name!r}][{subject!r}]={mri_subject!r}: need an MRI subject name")
+                if mri_subject in templates or mri_subject.startswith('sub-'):
+                    return mri_subject
+                return f'sub-{mri_subject}'
+
+            self._mri_subjects[name] = keydefaultdict(resolve)
 
         # Sensor noise covariance estimates
         check_names(self.noise_covariance, 'noise_covariance', allow_empty=False)
@@ -596,7 +621,7 @@ class Pipeline(StateModel):
         self._derivatives.register(TwoStageDataDerivative(self.tests, self._epochs))
         self._derivatives.register(TwoStageLevel1Derivative(self.tests))
         self._derivatives.register(TestResultDerivative(*result_args))
-        self._derivatives.register(TwoStageLevel2Derivative(*result_args))
+        self._derivatives.register(TwoStageLevel2Derivative(*result_args, self._mri_subjects))
 
     def _resolve_derivative(
             self,
@@ -604,7 +629,10 @@ class Pipeline(StateModel):
             options: dict[str, Any] | None = None,
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
     ) -> Request:
-        return self._derivatives.resolve(name, state=self.state, options=options, controls=controls)
+        ctx = self._derivatives.resolve(name, state=self.state, options=options, controls=controls)
+        if 'mrisubject' in ctx.node._get_key_fields(ctx):
+            self._mrisubject()  # raises for a subject the mri mapping omits
+        return ctx
 
     def _load_derivative(
             self,
@@ -743,7 +771,9 @@ class Pipeline(StateModel):
         field
             Field for which to find values.
         exclude
-            Exclude these values.
+            Exclude these values. For ``mrisubject``, these are the resulting
+            MRI subject names, i.e., directory names with the ``sub-`` prefix
+            (see :attr:`mri_subjects`).
         ...
             State parameters.
         """
@@ -755,13 +785,18 @@ class Pipeline(StateModel):
         if field == 'mrisubject':
             subjects = StateModel.get_field_values(self, 'subject')
             mri_subjects = self._mri_subjects[self.get('mri')]
-            mrisubjects = sorted(mri_subjects[s] for s in subjects)
+            mrisubjects = set()
+            for subject in subjects:
+                try:
+                    mrisubjects.add(mri_subjects[subject])
+                except MissingMRISubjectError:  # a subject the mapping omits has no MRI subject
+                    pass
+            mrisubjects = sorted(mrisubjects)
+            common_brain = self.get('common_brain')
+            if common_brain and common_brain not in mrisubjects:
+                mrisubjects.insert(0, common_brain)
             if exclude:
                 mrisubjects = [s for s in mrisubjects if s not in exclude]
-            common_brain = self.get('common_brain')
-            if common_brain and (not exclude or common_brain not in exclude):
-                mrisubjects.insert(0, common_brain)
-            mrisubjects = ['sub-' + s for s in mrisubjects if (s != common_brain and not s.startswith('sub-'))]
             return mrisubjects
         else:
             return StateModel.get_field_values(self, field, exclude)
@@ -2961,10 +2996,9 @@ class Pipeline(StateModel):
 
         state_ = self._fields
         subjects_dir = str(self.root / MRI_SDIR)
+        subject = self._mrisubject()
         if (not plot_on_scaled_common_brain) and is_fake_mri(self.root / mri_dir(state_)):
             subject = self.get('common_brain')
-        else:
-            subject = self.get('mrisubject')
 
         kwa = self._surfer_plot_kwargs(surf, views, foreground, background, None, hemi)
         brain = plot.brain.annot(parc_name, subject, borders=borders, alpha=alpha, w=w, h=h, axw=axw, axh=axh, subjects_dir=subjects_dir, **kwa)
@@ -3009,11 +3043,9 @@ class Pipeline(StateModel):
         brain_args['subjects_dir'] = str(self.root / MRI_SDIR)
 
         # find subject
+        mrisubject = self._mrisubject()
         if common_brain and is_fake_mri(self.root / mri_dir(state_)):
             mrisubject = self.get('common_brain')
-            self.set(mrisubject=mrisubject, match=False)
-        else:
-            mrisubject = self.get('mrisubject')
 
         return Brain(mrisubject, **brain_args)
 
@@ -3048,7 +3080,7 @@ class Pipeline(StateModel):
         with self._temporary_state:
             raw = self.load_raw(raw='raw')
         state_ = self._fields
-        fig = mne.viz.plot_alignment(raw.info, self.root / trans_file_path(state_, datatype=self._datatype), self.get('mrisubject'), self.root / MRI_SDIR, surfaces, meg=meg, dig=dig, interaction='terrain')
+        fig = mne.viz.plot_alignment(raw.info, self.root / trans_file_path(state_, datatype=self._datatype), self._mrisubject(), self.root / MRI_SDIR, surfaces, meg=meg, dig=dig, interaction='terrain')
         if parallel:
             fig.plotter.enable_parallel_projection()
         return fig
@@ -3471,10 +3503,17 @@ class Pipeline(StateModel):
         mri = fields['mri']
         if subject == '*' or mri == '*':
             return '*'
-        mrisubject = self._mri_subjects[mri][subject]
-        if mrisubject == self.get('common_brain') or mrisubject.startswith('sub-'):
-            return mrisubject
-        return 'sub-' + mrisubject
+        try:
+            return self._mri_subjects[mri][subject]
+        except MissingMRISubjectError:  # a subject the mapping omits can still be iterated over, see _mrisubject
+            return ''
+
+    def _mrisubject(self) -> str:
+        "The current MRI subject; raises for a subject the mri mapping omits (whose mrisubject is empty, see _update_mrisubject)"
+        mrisubject = self.get('mrisubject')
+        if not mrisubject:
+            raise MissingMRISubjectError(f"mri_subjects[{self.get('mri')!r}] has no entry for subject {self.get('subject')!r}")
+        return mrisubject
 
     def _update_task(self, fields: dict) -> str | None:
         epoch = fields['epoch']
@@ -4035,7 +4074,9 @@ class Pipeline(StateModel):
             Display which raw input files exist.
         mri
             Add a column specifying whether the subject is using a scaled MRI
-            or whether it has its own MRI.
+            or whether it has its own MRI. A string selects the
+            :attr:`mri_subjects` mapping (the ``mri`` state) and adds the
+            column.
         mrisubject
             Add a column showing the MRI subject corresponding to each subject.
         caption
@@ -4076,7 +4117,9 @@ class Pipeline(StateModel):
                 raw_list.append(', '.join(basenames))
             if mri:
                 subject_mri_dir = str(self.root / mri_dir(self._fields))
-                if not exists(subject_mri_dir):
+                if not mrisubject_:
+                    mri_list.append('*not mapped')
+                elif not exists(subject_mri_dir):
                     mri_list.append('*missing')
                 elif is_fake_mri(subject_mri_dir):
                     subjects_dir = str(self.root / MRI_SDIR)

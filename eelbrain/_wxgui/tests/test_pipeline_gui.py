@@ -280,8 +280,8 @@ def _table_frame(name: str, rows: list[tuple] = (), **kwargs) -> PipelineFrame:
 
 # see PipelineFrame._table_scope
 _ICA_LAYOUT = _layout('ica')
-_ICA_SCOPE = (TASKS_BY_NAME['ica'], None, None, '1-40', _ICA_LAYOUT)
-_OTHER_SCOPE = (TASKS_BY_NAME['ica'], None, None, 'ica-2', _ICA_LAYOUT)
+_ICA_SCOPE = (TASKS_BY_NAME['ica'], None, None, '1-40', _ICA_LAYOUT, None)
+_OTHER_SCOPE = (TASKS_BY_NAME['ica'], None, None, 'ica-2', _ICA_LAYOUT, None)
 
 
 def test_setup_columns_installs_and_caches_the_layout():
@@ -626,9 +626,9 @@ def test_displayed_row_requires_a_matching_scope():
     assert frame._displayed_row(_ICA_SCOPE, ('R0000',)) == 2
     # same combo, but the Raw choice has moved on since the job was queued
     assert frame._displayed_row(_OTHER_SCOPE, ('R0000',)) == -1
-    assert frame._displayed_row((TASKS_BY_NAME['epoch_rej'], 'man', 'target', '1-40', _layout('epoch_rej')), ('R0000',)) == -1
+    assert frame._displayed_row((TASKS_BY_NAME['epoch_rej'], 'man', 'target', '1-40', _layout('epoch_rej'), None), ('R0000',)) == -1
     # the same table, but the Raw choice has changed the number of key-field columns
-    assert frame._displayed_row((TASKS_BY_NAME['ica'], None, None, '1-40', _layout('ica', sessions=2)), ('R0000',)) == -1
+    assert frame._displayed_row((TASKS_BY_NAME['ica'], None, None, '1-40', _layout('ica', sessions=2), None), ('R0000',)) == -1
 
 
 def test_queue_jobs_dedupes_within_one_scope_only():
@@ -924,26 +924,118 @@ def test_iter_rows_mri_status(tmp_path):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
     p = pipeline()
-    p.__dict__.update(root=tmp_path, _state={}, get=lambda field: 'fsaverage' if field == 'common_brain' else p._state['subject'], set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
+    p.__dict__.update(root=tmp_path, _state={}, get=lambda field: 'fsaverage', _mrisubject=lambda: p._state['subject'], set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
     frame = _frame(_pipeline=p, _refresh_token='TOKEN')
-    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'))
+    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), '')
     rows = list(frame._iter_rows('TOKEN', scope, [('R01',), ('R02',), ('R03',), ('R04',), (COMMON_BRAIN_ROW,)]))
     assert [row for _, row, _, _ in rows] == [('R01', 'R01', 'ok'), ('R02', 'R02', 'template'), ('R03', 'R03', 'cfg'), ('R04', 'R04', 'no MRI'), (COMMON_BRAIN_ROW, 'fsaverage', 'ok')]
 
 
 def test_iter_rows_reports_a_failing_row_and_keeps_going(tmp_path):
     "A row whose inspection raises is shown as error, without hiding the rest of the table"
-    def get(field):
+    def mrisubject():
         if p._state['subject'] == 'R02':
             raise RuntimeError("no MRI subject")
         return p._state['subject']
 
     p = pipeline()
-    p.__dict__.update(root=tmp_path, _state={}, get=get, set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
+    p.__dict__.update(root=tmp_path, _state={}, _mrisubject=mrisubject, set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
     frame = _frame(_pipeline=p, _refresh_token='TOKEN')
-    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'))
+    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), '')
     rows = list(frame._iter_rows('TOKEN', scope, [('R01',), ('R02',)]))
     assert rows[0] == (('R01',), ('R01', 'R01', 'no MRI'), None, None)
     combo, row, spec, error = rows[1]
     assert (combo, row, spec) == (('R02',), ('R02', PLACEHOLDER, pipeline_gui.ERROR), None)
     assert str(error) == "no MRI subject"
+
+
+def test_iter_rows_reports_a_subject_missing_from_the_mri_mapping(tmp_path):
+    "A subject the selected mri mapping omits has no MRI subject (Pipeline._mrisubject raises); the row shows the error and the table goes on"
+    def mrisubject():
+        if p._state['subject'] == 'R02':
+            raise ConfigurationError("mri_subjects['own'] has no entry for subject 'R02'")
+        return p._state['subject']
+
+    p = pipeline()
+    p.__dict__.update(root=tmp_path, _state={}, _mrisubject=mrisubject, set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
+    frame = _frame(_pipeline=p, _refresh_token='TOKEN')
+    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), 'own')
+    rows = list(frame._iter_rows('TOKEN', scope, [('R01',), ('R02',)]))
+    assert p._state['mri'] == 'own'  # the rows are resolved under the selected mapping
+    assert rows[0] == (('R01',), ('R01', 'R01', 'no MRI'), None, None)
+    combo, row, spec, error = rows[1]
+    assert (combo, row, spec) == (('R02',), ('R02', PLACEHOLDER, pipeline_gui.ERROR), None)
+    assert str(error) == "mri_subjects['own'] has no entry for subject 'R02'"
+
+
+def test_mri_mapping_dropdown():
+    "The MRI dropdown (the ``mri`` state) applies to the MRI and Coregistration tasks, whose rows are resolved under the selected mapping"
+    assert [task.name for task in TASKS if task.shows_mri] == ['mri', 'coreg']
+    frame = SimpleNamespace()
+    mri_scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), 'scaled')
+    assert PipelineFrame._iter_state(frame, mri_scope) == {'mri': 'scaled'}
+    coreg_scope = (TASKS_BY_NAME['coreg'], None, None, None, _layout('coreg'), '')
+    assert PipelineFrame._iter_state(frame, coreg_scope) == {'raw': 'raw', 'mri': ''}
+    assert PipelineFrame._iter_state(frame, _ICA_SCOPE) == {}
+    assert PipelineFrame._mri_label_for('') == '(default)'
+    assert PipelineFrame._mri_label_for('scaled') == 'scaled'
+
+
+class _FakeChoice:
+    "Minimal wx.Choice stand-in"
+
+    def __init__(self):
+        self.items = []
+        self.selection = wx.NOT_FOUND
+
+    def Clear(self):
+        self.items = []
+        self.selection = wx.NOT_FOUND
+
+    def Append(self, label):
+        self.items.append(label)
+
+    def GetCount(self):
+        return len(self.items)
+
+    def FindString(self, label):
+        return self.items.index(label) if label in self.items else wx.NOT_FOUND
+
+    def GetSelection(self):
+        return self.selection
+
+    def SetSelection(self, index):
+        self.selection = index
+
+
+def test_mri_choices():
+    "The MRI dropdown lists the pipeline's mappings, starts from the pipeline's state and keeps its selection when repopulated"
+    p = SimpleNamespace(get_field_values=lambda field: ['', 'fsaverage', 'scaled'], get=lambda field: 'scaled')
+    frame = _frame(_pipeline=p, _mri_choice=_FakeChoice(), _mri_names=[], _current_task=lambda: TASKS_BY_NAME['mri'])
+    frame._populate_mri_choices()
+    assert frame._mri_choice.items == ['(default)', 'fsaverage', 'scaled']
+    assert frame._mri_name() == 'scaled'
+    frame._mri_choice.SetSelection(0)
+    assert frame._mri_name() == ''
+    p.get_field_values = lambda field: ['', 'scaled']
+    frame._populate_mri_choices()
+    assert frame._mri_choice.items == ['(default)', 'scaled']
+    assert frame._mri_name() == ''
+    frame._mri_choice.SetSelection(1)
+    assert frame._mri_name() == 'scaled'
+    # a task without the dropdown resolves its rows under the pipeline's own mapping
+    frame._current_task = lambda: TASKS_BY_NAME['ica']
+    assert frame._mri_name() is None
+
+
+def test_iter_combos_resolves_rows_under_the_selected_mri_mapping():
+    calls = []
+
+    def iter_(fields, **constants):
+        calls.append((fields, constants))
+        return [('R01',), ('R02',)]
+
+    frame = _frame(_pipeline=SimpleNamespace(iter=iter_, get=lambda field: 'fsaverage'))
+    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), 'own')
+    assert list(frame._iter_combos(scope)) == [('R01',), ('R02',), (COMMON_BRAIN_ROW,)]
+    assert calls == [(['subject'], {'mri': 'own'})]

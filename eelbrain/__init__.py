@@ -31,6 +31,7 @@ from ._trf._boosting import boosting, BoostingResult, ExecutionContext
 from ._trf._predictors import epoch_impulse_predictor, event_impulse_predictor
 from ._trf.shared import Splits
 from ._utils import set_log_level
+from ._utils.basic import keydefaultdict
 from ._utils.system import system_info
 
 from . import datasets

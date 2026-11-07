@@ -24,6 +24,10 @@ class ConfigurationError(Exception):
     "Pipeline configuration error"
 
 
+class MissingMRISubjectError(ConfigurationError):
+    "An mri_subjects mapping has no entry for a subject (see Pipeline.mri_subjects)"
+
+
 class ConfigurationKeyError(ConfigurationError, KeyError):
     "A ConfigurationDict is missing a requested key (more information than KeyError)"
 

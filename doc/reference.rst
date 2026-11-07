@@ -833,8 +833,12 @@ Datasets for experimenting and testing:
     datasets.simulate_erp
 
 
-^^^^^^^^^^^^^
-Configuration
-^^^^^^^^^^^^^
+^^^^^^^^^
+Utilities
+^^^^^^^^^
 
-.. autofunction:: configure
+.. autosummary::
+   :toctree: generated
+
+   configure
+   keydefaultdict
