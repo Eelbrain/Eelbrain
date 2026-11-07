@@ -1,5 +1,4 @@
 import contextlib
-import json
 import logging
 import sys
 import threading
@@ -585,12 +584,12 @@ def test_browse_raw_script(monkeypatch, capsys):
     monkeypatch.setattr(RawSourceInput, '_read_raw', staticmethod(read_raw))
     monkeypatch.setattr(sys, 'argv', ['-c', '/data/raw.fif', '["MEG 0111", "EEG 001"]'])
     exec(pipeline_gui._BROWSE_RAW_SCRIPT, {})
-    assert json.loads(capsys.readouterr().out.strip()) == ['MEG 0111', 'MEG 0112', 'EEG 001']
+    assert capsys.readouterr().out == 'eelbrain-bad-channels: ["MEG 0111", "MEG 0112", "EEG 001"]\n'
     assert calls == [(Path('/data/raw.fif'), False)]
 
 
 def test_launch_browse_raw_subprocess(monkeypatch):
-    "The browser subprocess reports the bad channels it was closed with on its last line; a failed run reports None with stderr"
+    "The browser subprocess reports the bad channels it was closed with on a marked line, whatever is printed around it; a failed run reports None with stderr"
     results = []
 
     def popen(args, stdout, stderr, text):
@@ -602,14 +601,18 @@ def test_launch_browse_raw_subprocess(monkeypatch):
 
     def on_close(bads, stderr):
         return (results.append((bads, stderr)), done.set())
-    popen.output, popen.returncode = ('Using qt as 2D backend.\n["MEG 0111", "MEG 0112"]\n', ''), 0
+    popen.output, popen.returncode = ('Using qt as 2D backend.\neelbrain-bad-channels: ["MEG 0111", "MEG 0112"]\n', ''), 0
     pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
     assert done.wait(5)
     done.clear()
     popen.output, popen.returncode = ('', 'Traceback: boom'), 1
     pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
     assert done.wait(5)
-    assert results == [(['MEG 0111', 'MEG 0112'], ''), (None, 'Traceback: boom')]
+    done.clear()
+    popen.output, popen.returncode = ('eelbrain-bad-channels: ["MEG 0111"]\nClosing\n0\n', ''), 0
+    pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
+    assert done.wait(5)
+    assert results == [(['MEG 0111', 'MEG 0112'], ''), (None, 'Traceback: boom'), (['MEG 0111'], '')]
 
 
 def test_on_browse_raw_closed(monkeypatch):

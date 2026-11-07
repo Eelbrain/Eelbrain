@@ -59,9 +59,11 @@ def _launch_coreg_subprocess(
     return proc
 
 
-# Runs in a subprocess: the MNE raw browser (what ``mne browse_raw`` does), seeded with the pipeline's bad channels, reporting the edited ones as JSON on its last line of output.
+# Marks the line of output on which the raw browser subprocess reports its result (MNE logs to stdout as well)
+_BROWSE_RAW_RESULT = 'eelbrain-bad-channels: '
+# Runs in a subprocess: the MNE raw browser (what ``mne browse_raw`` does), seeded with the pipeline's bad channels, reporting the edited ones as JSON on a line starting with _BROWSE_RAW_RESULT.
 # Bad channels that the displayed raw does not contain (dropped by a raw pipe) are kept as they are.
-_BROWSE_RAW_SCRIPT = '''
+_BROWSE_RAW_SCRIPT = f'''
 import json, sys
 from pathlib import Path
 from eelbrain._experiment.preprocessing.nodes import RawSourceInput
@@ -69,7 +71,7 @@ path, bads = sys.argv[1], json.loads(sys.argv[2])
 raw = RawSourceInput._read_raw(Path(path), preload=False)  # the reader the pipeline uses
 raw.info['bads'] = [ch for ch in bads if ch in raw.ch_names]
 raw.plot(block=True)
-print(json.dumps(raw.info['bads'] + [ch for ch in bads if ch not in raw.ch_names]))
+print({_BROWSE_RAW_RESULT!r} + json.dumps(raw.info['bads'] + [ch for ch in bads if ch not in raw.ch_names]))
 '''
 
 
@@ -83,11 +85,12 @@ def _launch_browse_raw_subprocess(
 
     def wait() -> None:
         stdout, stderr = proc.communicate()
-        lines = stdout.strip().splitlines()
-        if proc.returncode == 0 and lines:
-            on_close(json.loads(lines[-1]), stderr)
+        results = [line for line in stdout.splitlines() if line.startswith(_BROWSE_RAW_RESULT)]
+        if proc.returncode == 0 and results:
+            new_bads = json.loads(results[-1].removeprefix(_BROWSE_RAW_RESULT))
         else:
-            on_close(None, stderr)
+            new_bads = None
+        on_close(new_bads, stderr)
 
     threading.Thread(target=wait, daemon=True).start()
     return proc
