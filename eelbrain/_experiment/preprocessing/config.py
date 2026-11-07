@@ -556,7 +556,13 @@ class RawICA(CachedRawPipe):
         return tuple(fields)
 
     def fit_tasks(self, ctx: Request) -> tuple[str, ...]:
-        """Tasks whose data the ICA for ``ctx`` is estimated from"""
+        """Tasks whose data the ICA for ``ctx`` is estimated from
+
+        Parameters
+        ----------
+        ctx
+            Request whose state identifies the ICA (with ``per_task``, its task).
+        """
         if self.per_task:
             return (ctx.state['task'],)
         return self.task
