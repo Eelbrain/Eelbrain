@@ -22,7 +22,7 @@ from .. import load
 from .. import plot
 from .. import save
 from .._data_obj import CellArg, Datalist, Dataset, Factor, Var, NDVar, SourceSpace, VolumeSourceSpace, assert_is_legal_dataset_key, combine
-from .._exceptions import ConfigurationError, DimensionMismatchError
+from .._exceptions import ConfigurationError, DimensionMismatchError, MissingMRISubjectError
 from .._info import INTERPOLATE_CHANNELS
 from .._meeg import new_rejection_ds
 from ..mne_fixes import suppress_mne_warning
@@ -409,7 +409,7 @@ class Pipeline(StateModel):
                 try:
                     mri_subject = mapping[subject]
                 except KeyError:
-                    raise ConfigurationError(f"mri_subjects[{name!r}] has no entry for subject {subject!r}") from None
+                    raise MissingMRISubjectError(f"mri_subjects[{name!r}] has no entry for subject {subject!r}") from None
                 if not isinstance(mri_subject, str):
                     raise TypeError(f"mri_subjects[{name!r}][{subject!r}]={mri_subject!r}: need an MRI subject name")
                 if mri_subject in templates or mri_subject.startswith('sub-'):
@@ -3499,14 +3499,14 @@ class Pipeline(StateModel):
             return '*'
         try:
             return self._mri_subjects[mri][subject]
-        except ConfigurationError:  # a subject the mapping omits can still be iterated over, see _mrisubject
+        except MissingMRISubjectError:  # a subject the mapping omits can still be iterated over, see _mrisubject
             return ''
 
     def _mrisubject(self) -> str:
         "The current MRI subject; raises for a subject the mri mapping omits (whose mrisubject is empty, see _update_mrisubject)"
         mrisubject = self.get('mrisubject')
         if not mrisubject:
-            raise ConfigurationError(f"mri_subjects[{self.get('mri')!r}] has no entry for subject {self.get('subject')!r}")
+            raise MissingMRISubjectError(f"mri_subjects[{self.get('mri')!r}] has no entry for subject {self.get('subject')!r}")
         return mrisubject
 
     def _update_task(self, fields: dict) -> str | None:

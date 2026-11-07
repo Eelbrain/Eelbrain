@@ -3457,3 +3457,13 @@ def test_mri_subjects(samples_experiment):
 
     with pytest.raises(TypeError, match=r"mri_subjects\[''\]\['R0000'\]=None"):
         NotAName(root)
+
+    # only a missing entry resolves to an empty mrisubject; other errors from a mapping are raised
+    def lookup(subject):
+        raise ConfigurationError("the subject table has no MRI column")
+
+    class Failing(SampleExperiment):
+        mri_subjects = {'': keydefaultdict(lookup)}
+
+    with pytest.raises(ConfigurationError, match="no MRI column"):
+        Failing(root)
