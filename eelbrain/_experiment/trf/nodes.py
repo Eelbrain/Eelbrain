@@ -671,7 +671,7 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         if (smooth := ctx.options['smooth']) and not _is_source_space(ctx, self.estimators[ctx.options['estimator']]):
             raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
 
-    def _subject_state(self, ctx: Request, subject: str) -> dict[str, Any]:
+    def _dependency_state(self, ctx: Request, subject: str) -> dict[str, Any]:
         "Dependency state for one subject: in source space, pins the subject's MRI (see source.nodes._subject_state)"
         if _is_source_space(ctx, self.estimators[ctx.options['estimator']]):
             return _subject_state(ctx.state, subject, self.mri_subjects)
@@ -680,7 +680,7 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = self._subject_options(ctx)
         return tuple(
-            Dependency('trf-dataset', label=subject, state=self._subject_state(ctx, subject), options=options)
+            Dependency('trf-dataset', label=subject, state=self._dependency_state(ctx, subject), options=options)
             for subject in self.groups[ctx.state['group']]
         )
 
@@ -707,7 +707,7 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         if view != 'shell':
             return super().load_view(ctx, view)
         options = self._subject_options(ctx)
-        dss = [ctx.load('trf-dataset', state=self._subject_state(ctx, subject), options=options, view='shell') for subject in self.groups[ctx.state['group']]]
+        dss = [ctx.load('trf-dataset', state=self._dependency_state(ctx, subject), options=options, view='shell') for subject in self.groups[ctx.state['group']]]
         return self.apply_view_options(ctx, combine(dss))
 
 
