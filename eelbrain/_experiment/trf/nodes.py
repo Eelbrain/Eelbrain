@@ -96,8 +96,10 @@ def _trf_dataset_key_fields(ctx: Request, estimators: dict[str, Estimator], *cas
     fields = [*case_fields, 'session', 'acquisition', 'epoch', 'epoch_rejection', 'raw', 'inv']
     if _is_source_space(ctx, est):
         fields += ['cov', 'src', 'parc', 'adjacency', 'common_brain']
-        if 'subject' in case_fields:  # a group pins each subject's mrisubject on the dependency edge (see _subject_state)
+        if 'subject' in case_fields:
             fields.append('mrisubject')
+        else:  # a group pins each subject's mrisubject on the dependency edge based on the mri mapping (see _subject_state)
+            fields.append('mri')
     else:
         fields.append('reference')  # source modeling pins reference='' (see TRFDerivative)
     fields += est.extra_input_fields
@@ -656,7 +658,7 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
-        return _trf_dataset_key_fields(ctx, self.estimators, 'group', 'mri')
+        return _trf_dataset_key_fields(ctx, self.estimators, 'group')
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         return {'subjects': self.groups[ctx.state['group']]}
@@ -760,7 +762,7 @@ class TRFModelTestDerivative(Derivative[Any]):
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
-        return _trf_dataset_key_fields(ctx, self.estimators, 'group', 'mri')
+        return _trf_dataset_key_fields(ctx, self.estimators, 'group')
 
     def validate_options(self, ctx: Request) -> None:
         _normalize_trf_options(ctx.options)
