@@ -76,6 +76,8 @@ def test_sequence_arg():
         sequence_arg('sequence', ['a', 2], str)
     with pytest.raises(TypeError):
         sequence_arg('sequence', (1, 'b'), int)
+    with pytest.raises(TypeError):  # a mapping is not a sequence
+        sequence_arg('sequence', {'a': 1})
 
 
 def test_config_base():
