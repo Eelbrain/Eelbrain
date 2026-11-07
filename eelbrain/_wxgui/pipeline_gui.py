@@ -22,7 +22,7 @@ import wx
 from .. import load
 from .._data_obj import Dataset
 from .._exceptions import ConfigurationError, DataError
-from .._experiment.derivative_cache import ALLOW_PROTECTED_OVERWRITE, JobSpec, ProtectedArtifactError
+from .._experiment.derivative_cache import ALLOW_PROTECTED_OVERWRITE, CachePolicy, JobSpec, ProtectedArtifactError
 from .._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
 from .._experiment.epochs import PrimaryEpoch
 from .._experiment.exceptions import FileMissingError, ICAChannelsChangedError, ICAMissingError
@@ -65,7 +65,8 @@ _BROWSE_RAW_SCRIPT = '''
 import json, sys
 import mne
 path, bads = sys.argv[1], json.loads(sys.argv[2])
-raw = mne.io.read_raw(path, allow_maxshield='yes')
+kwargs = {'allow_maxshield': 'yes'} if path.endswith('.fif') else {}  # only the FIFF reader accepts it
+raw = mne.io.read_raw(path, **kwargs)
 raw.info['bads'] = [ch for ch in bads if ch in raw.ch_names]
 raw.plot(block=True)
 print(json.dumps(raw.info['bads'] + [ch for ch in bads if ch not in raw.ch_names]))
@@ -83,10 +84,13 @@ def _launch_browse_raw_subprocess(
     def wait() -> None:
         stdout, stderr = proc.communicate()
         lines = stdout.strip().splitlines()
+        bads = None
         if proc.returncode == 0 and lines:
-            on_close(json.loads(lines[-1]), stderr)
-        else:
-            on_close(None, stderr)
+            try:
+                bads = json.loads(lines[-1])
+            except json.JSONDecodeError:  # MNE logs to stdout, so something may have been printed after the result
+                stderr += f"Unexpected last line of output: {lines[-1]}"
+        on_close(bads, stderr)
 
     threading.Thread(target=wait, daemon=True).start()
     return proc
@@ -1078,37 +1082,42 @@ class PipelineFrame(EelbrainFrame):
     def _open_mne_browse_raw(self, idx: int) -> None:
         """Open the row's raw data (of the selected raw pipe) in the MNE raw browser, with the current bad channels; bad channels changed there are saved when it closes.
 
-        The browser reads a file: the source recording's own, a cached raw pipe's, or,
-        for a raw pipe that is not cached, a temporary file written here (and removed
-        when the browser closes).
+        The browser reads a file: the source recording's own, a raw pipe's cache file
+        (built here if needed), or, for a raw pipe that does not cache, a temporary
+        file written here (and removed when the browser closes).
         """
         pipeline = self._pipeline
         raw_name = self._raw_name()
         state = dict(zip(self._layout.key_fields, self._row_combo(idx)))
         tmp_dir = None
-        with pipeline._temporary_state, wx.BusyCursor():
-            pipeline.set(raw=raw_name, **state)
-            bads = pipeline.load_bad_channels()
-            if isinstance(pipeline._raw[raw_name], RawSource):
-                raw_ctx = pipeline._resolve_derivative(raw_input_name(raw_name))
-                path = raw_ctx.node.path(raw_ctx)
-            else:
-                raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
-                if raw_ctx.is_valid():
-                    path = raw_ctx.artifact_path
+        try:
+            with pipeline._temporary_state, wx.BusyCursor():
+                pipeline.set(raw=raw_name, **state)
+                bads = pipeline.load_bad_channels()
+                if isinstance(pipeline._raw[raw_name], RawSource):
+                    raw_ctx = pipeline._resolve_derivative(raw_input_name(raw_name))
+                    path = raw_ctx.node.path(raw_ctx)
                 else:
-                    raw = pipeline.load_raw()
-                    tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
-                    path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
-                    raw.save(path)
+                    raw = pipeline.load_raw()  # builds the cache file for a pipe that caches
+                    raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
+                    if raw_ctx.node.cache_policy is CachePolicy.NEVER:
+                        tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
+                        path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
+                        raw.save(path)
+                    else:
+                        path = raw_ctx.artifact_path
 
-        def on_close(new_bads: list[str] | None, stderr: str) -> None:
-            if tmp_dir is not None:
+            def on_close(new_bads: list[str] | None, stderr: str) -> None:
+                if tmp_dir is not None:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                if not self._closed:
+                    wx.CallAfter(self._on_browse_raw_closed, raw_name, state, bads, new_bads, stderr)
+
+            proc = _launch_browse_raw_subprocess(str(path), bads, on_close)
+        except Exception:
+            if tmp_dir is not None:  # the browser never started, so on_close will not remove it
                 shutil.rmtree(tmp_dir, ignore_errors=True)
-            if not self._closed:
-                wx.CallAfter(self._on_browse_raw_closed, raw_name, state, bads, new_bads, stderr)
-
-        proc = _launch_browse_raw_subprocess(str(path), bads, on_close)
+            raise
         self._subprocesses.append(('raw browser', proc))
 
     def _on_browse_raw_closed(
@@ -1120,6 +1129,8 @@ class PipelineFrame(EelbrainFrame):
             stderr: str,
     ) -> None:
         """Save the bad channels the MNE raw browser was closed with, after confirmation."""
+        if self._closed:
+            return  # the browser closed while this window was closing
         subject = ' '.join(state.values())
         if new_bads is None:
             self._show_error(stderr, "Raw Browser Failed", f"The MNE raw browser for {subject} did not exit cleanly; bad channels were not updated.")
@@ -1141,7 +1152,7 @@ class PipelineFrame(EelbrainFrame):
             return
         try:
             self._pipeline.make_bad_channels(new_bads, redo=True, raw=raw_name, **state)
-        except _USER_ERROR_TYPES as error:
+        except Exception as error:  # not run through _run_row_action, so every error has to be shown here
             self._show_error(*_error_dialog_args(error))
             return
         self._start_refresh()
@@ -1576,6 +1587,8 @@ class PipelineFrame(EelbrainFrame):
     # Background status refresh
 
     def _start_refresh(self) -> None:
+        if self._closed:
+            return  # posted by a subprocess that ended while this window was closing
         scope = self._table_scope()
         task, epoch_rejection, epoch_name, _, _ = scope
         token = object()
@@ -1693,9 +1706,9 @@ class PipelineFrame(EelbrainFrame):
                 return
             self._compute_token = None  # let the thread wind down
         running = [(kind, proc) for kind, proc in self._subprocesses if proc.poll() is None]
-        n_browsers = sum(kind == 'raw browser' for kind, _ in running)
-        if n_browsers:
-            dlg = wx.MessageDialog(self, f"{n_browsers} raw browser window(s) are open. Closing this window will close them, and bad channels set there will not be saved.\n\nClose anyway?", "Close raw browser windows?", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
+        if running:
+            kinds = ', '.join(sorted({kind for kind, _ in running}))
+            dlg = wx.MessageDialog(self, f"{len(running)} window(s) opened from this one are still open ({kinds}). Closing this window will close them, and changes that were not saved there will be lost.\n\nClose anyway?", "Close open windows?", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
             confirmed = dlg.ShowModal() == wx.ID_YES
             dlg.Destroy()
             if not confirmed:
