@@ -2052,7 +2052,10 @@ class PipelineFrame(EelbrainFrame):
         """
         task, _, _, raw_name, layout, _ = scope
         pipeline = self._pipeline
-        combos = pipeline.iter(list(layout.key_fields), **self._iter_state(scope))
+        # The rows do not depend on the mri mapping (the MRI subject is a display-only column), and
+        # resolving it raises for a subject the mapping omits, so leave it to _iter_rows (one row at a time)
+        constants = {field: value for field, value in self._iter_state(scope).items() if field != 'mri'}
+        combos = pipeline.iter(list(layout.key_fields), **constants)
         # the tasks that show one row per recording skip recordings that were never acquired
         source_name = pipeline._raw.root_source_name(raw_name) if task.name == 'bad_chs' else 'raw'
         skip_missing_recordings = task.name in ('bad_chs', 'coreg')
@@ -2112,10 +2115,10 @@ class PipelineFrame(EelbrainFrame):
             for combo in _timed_rows(combos, pipeline._log, task.name):
                 if token is not self._refresh_token:
                     return
-                if combo != (COMMON_BRAIN_ROW,):
-                    pipeline.set(**constants, **dict(zip(layout.key_fields, combo)))
                 spec = error = None
                 try:
+                    if combo != (COMMON_BRAIN_ROW,):
+                        pipeline.set(**constants, **dict(zip(layout.key_fields, combo)))  # raises for a subject the mri mapping omits
                     if task.name == 'bad_chs':
                         source_name = pipeline._raw.root_source_name(raw_name)
                         bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
