@@ -3374,7 +3374,7 @@ def test_mri_subjects(samples_experiment):
     e = Experiment(root)
     assert e.get_field_values('mri') == ['', 'fsaverage', 'prefixed', 'scaled']
     assert e.get('mri') == ''
-    # the sub- prefix is added unless the entry is the common brain or already has it
+    # the sub- prefix is added unless the entry is a template (see mri_templates) or already has it
     assert e.get('mrisubject', subject='R0001') == 'sub-R0001'
     assert e.get_field_values('mrisubject') == ['fsaverage', 'sub-R0000', 'sub-R0001', 'sub-R0002']
     assert e.get('mrisubject', mri='fsaverage') == 'fsaverage'
