@@ -2522,7 +2522,9 @@ class Pipeline(StateModel):
             Load data from this :ref:`state-epoch` for visualization during
             component selection (does not affect the ICA components themselvs).
             If unspecified, the default is to load the data form the entire
-            :ref:`state-task` that the ICA is based on.
+            :ref:`state-task` that the ICA is based on. For a
+            :class:`pipeline.RawICA` step with ``per_task=True``, the epoch's
+            task selects the ICA (the epoch can not combine several tasks).
         samplingrate
             Samplingrate in Hz for the visualization (set to a lower value to
             improve GUI performance; for raw data, the default is ~100 Hz, for
@@ -2532,7 +2534,8 @@ class Pipeline(StateModel):
         task
             One or more tasks for which to plot the raw data (this parameter
             can not be used together with ``epoch``; default is the task used
-            for ICA estimation).
+            for ICA estimation). For a :class:`pipeline.RawICA` step with
+            ``per_task=True``, this is a single task and selects the ICA.
         ...
             State parameters.
 
@@ -2547,20 +2550,32 @@ class Pipeline(StateModel):
             ...
         """
         debug = state.pop('debug', False)
+        if task is not None:
+            if epoch is not None:
+                raise TypeError(f"{task=} with {epoch=}")
+            task = sequence_arg('task', task)
+        raw_name = self.get('raw', **state)
+        pipe = self._raw.ica_pipe(raw_name)
+        if pipe.per_task:  # one ICA per task: the epoch or task selects the ICA
+            if epoch is not None:
+                if epoch in self._epochs and len(self._epochs[epoch].tasks) != 1:
+                    raise ValueError(f"{epoch=} contains data from tasks {enumeration(self._epochs[epoch].tasks)}, but the ICA {pipe.name!r} is estimated separately for each task (per_task=True); use an epoch with a single task")
+                state['epoch'] = epoch  # sets task (and run) through the state; an unknown epoch is reported by set()
+            elif task is not None:
+                if len(task) != 1:
+                    raise ValueError(f"{task=}: the ICA is estimated separately for each task (per_task=True), specify a single task")
+                state['task'] = task[0]
         # ICA
         path = self.make_ica(**state)  # sets raw to ica-raw
         # display data
         subject = self.get('subject')
         ica_name = self.get('raw')
-        pipe = self._raw.ica_pipe(ica_name)
         bads = self._load_derivative(raw_node_name(ica_name), options={'noise': False}, view='bads')
         labeled_events = None
         if epoch is None:
-            if task is None:
-                task = pipe.task
-            else:
-                task = sequence_arg('task', task)
             ctx = self._resolve_derivative(ica_input_name(ica_name))
+            if task is None:
+                task = pipe.fit_tasks(ctx)
             raw = ctx.node.load_concatenated_source_raw(ctx, task, preload=False)
             decim = decim_param(samplingrate, decim, None, raw.info, minimal=True)
             info = raw.info
@@ -2577,8 +2592,6 @@ class Pipeline(StateModel):
                         event_dss.append(ds_t)
                         offset += (ds_t.info['raw.last_samp'] - ds_t.info['raw.first_samp'] + 1) / ds_t.info['raw.samplingrate']
                 labeled_events = combine(event_dss, incomplete='fill in')
-        elif task is not None:
-            raise TypeError(f"{task=} with {epoch=}")
         else:
             with self._temporary_state:
                 ds = self.load_epochs(ndvar=False, epoch=epoch, reject=False, raw=pipe.source, samplingrate=samplingrate, decim=decim)
@@ -2665,6 +2678,10 @@ class Pipeline(StateModel):
 
             >>> for subject in e:
             ...     e.make_ica()
+
+        For a :class:`pipeline.RawICA` step with ``per_task=True``, the ICA is
+        computed for the current :ref:`state-task`; to precompute all of them
+        iterate over ``e.iter(('subject', 'task'))``.
 
         If an existing ICA file is stale, that means Eelbrain can still see
         the file but can no longer confirm that it was created from the
@@ -3869,31 +3886,33 @@ class Pipeline(StateModel):
 
         # pipe-specific
         if isinstance(pipe, RawICA):
+            # one row per combination of the ICA's key fields that vary in this experiment
+            fields = tuple(field for field in pipe.ica_key_fields() if field == 'subject' or len(self._field_values.get(field, ())) > 1)
             rows = []
-            for subject in self:
+            for key in self.iter(fields):
                 ctx = self._resolve_derivative(ica_input_name(raw))
                 status = ctx.load(view='status')
                 if status == 'ok':
                     ica = ctx.load()
-                    rows.append((subject, ica.n_components_, len(ica.exclude)))
+                    rows.append((key, ica.n_components_, len(ica.exclude)))
                 elif status == 'missing-ica':
-                    rows.append((subject, "No ICA-file", -1))
+                    rows.append((key, "No ICA-file", -1))
                 elif status == 'missing-raw':
-                    rows.append((subject, "No data", -1))
+                    rows.append((key, "No data", -1))
                 else:
                     raise RuntimeError(f"{status=}")
 
             n_selected = [row[-1] for row in rows]
             mark_unselected = any(n_selected) and not all(n_selected)
 
-            table = fmtxt.Table('lrr' + 'r' * mark_unselected)
-            table.cells('Subject', 'n components', 'reject')
+            table = fmtxt.Table('l' * len(fields) + 'rr' + 'r' * mark_unselected)
+            table.cells(*(field.capitalize() for field in fields), 'n components', 'reject')
             if mark_unselected:
                 table.cell('*')
                 table.caption("*: ICA with no rejected components")
             table.midrule()
-            for subject, n, n_selected in rows:
-                table.cells(subject, n)
+            for key, n, n_selected in rows:
+                table.cells(*key, n)
                 if not isinstance(n, str):
                     table.cell(n_selected)
                     if mark_unselected and n_selected == 0:
