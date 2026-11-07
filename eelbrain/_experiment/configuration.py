@@ -2,7 +2,7 @@
 import inspect
 import logging
 from typing import Any
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 
 from .._exceptions import ConfigurationError, ConfigurationKeyError
 from .._text import enumeration, plural
@@ -302,8 +302,8 @@ def sequence_arg(
             return None
     elif isinstance(arg, item_type):
         return sequence_type((arg,))
-    elif isinstance(arg, Collection):
-        out = sequence_type(arg)
-        if all(isinstance(item, item_type) for item in out):
-            return out
+    elif isinstance(arg, Collection) and all(isinstance(item, item_type) for item in arg):
+        if isinstance(arg, Sequence):
+            return sequence_type(arg)
+        return sequence_type(sorted(arg))  # unordered input (e.g. a set): a stable order
     raise TypeError(f"{name}={arg!r}: expected collection of {item_type.__name__}")

@@ -65,6 +65,10 @@ def test_sequence_arg():
     assert sequence_arg('sequence', ('a', 'b'), str) == ('a', 'b')
     assert sequence_arg('sequence', [1, 2], int) == (1, 2)
     assert sequence_arg('sequence', (1, 2), int) == (1, 2)
+    # unordered input is sorted
+    assert sequence_arg('sequence', {'b', 'a'}) == ('a', 'b')
+    assert sequence_arg('sequence', frozenset({2, 1}), int, sequence_type=list) == [1, 2]
+    assert sequence_arg('sequence', {'b', 'a'}, sequence_type=frozenset) == frozenset({'a', 'b'})
     # wrong type
     with pytest.raises(TypeError):
         sequence_arg('sequence', 1.5, int)
