@@ -3429,16 +3429,22 @@ def test_mri_subjects(samples_experiment):
     assert e.get('mrisubject', mri='other') == 'sub-other'
     assert e.get('mrisubject', mri='') == 'sub-R0000'
 
-    # a plain dict only needs entries for the subjects that are analyzed with it (here, the identity mapping is overridden)
+    # a plain dict only needs entries for the subjects whose MRI is needed (here, the identity mapping is overridden)
     class Incomplete(SampleExperiment):
         mri_subjects = {'': {'R0000': 'R0000'}}
 
     e = Incomplete(root)
     assert e.get('mrisubject', subject='R0000') == 'sub-R0000'
+    assert e.get('mrisubject', subject='R0001') == ''  # a subject the mapping omits has no MRI subject
+    assert list(e.iter()) == ['R0000', 'R0001', 'R0002']  # but can be iterated over, e.g. for sensor-space analyses
+    e.load_evoked(subject='R0001', epoch='target', raw='1-40')
+    with pytest.raises(ConfigurationError, match="R0001"):  # anything that needs the MRI raises
+        e.load_src()
     with pytest.raises(ConfigurationError, match="R0001"):
-        e.set(subject='R0001')
-    assert e.get('subject') == 'R0000'  # the failed set leaves the state unchanged
-    assert e.get('mrisubject') == 'sub-R0000'
+        e.plot_brain()
+    ds = e.show_subjects(mri=True, mrisubject=True, asds=True)
+    assert list(ds['mrisubject']) == ['sub-R0000', '', '']
+    assert list(ds['mri'][1:]) == ['*not mapped', '*not mapped']
 
     class NotAMapping(SampleExperiment):
         mri_subjects = {'': 'fsaverage'}

@@ -2052,10 +2052,7 @@ class PipelineFrame(EelbrainFrame):
         """
         task, _, _, raw_name, layout, _ = scope
         pipeline = self._pipeline
-        # The rows do not depend on the mri mapping (the MRI subject is a display-only column), and
-        # resolving it raises for a subject the mapping omits, so leave it to _iter_rows (one row at a time)
-        constants = {field: value for field, value in self._iter_state(scope).items() if field != 'mri'}
-        combos = pipeline.iter(list(layout.key_fields), **constants)
+        combos = pipeline.iter(list(layout.key_fields), **self._iter_state(scope))
         # the tasks that show one row per recording skip recordings that were never acquired
         source_name = pipeline._raw.root_source_name(raw_name) if task.name == 'bad_chs' else 'raw'
         skip_missing_recordings = task.name in ('bad_chs', 'coreg')
@@ -2118,7 +2115,7 @@ class PipelineFrame(EelbrainFrame):
                 spec = error = None
                 try:
                     if combo != (COMMON_BRAIN_ROW,):
-                        pipeline.set(**constants, **dict(zip(layout.key_fields, combo)))  # raises for a subject the mri mapping omits
+                        pipeline.set(**constants, **dict(zip(layout.key_fields, combo)))
                     if task.name == 'bad_chs':
                         source_name = pipeline._raw.root_source_name(raw_name)
                         bads_ctx = pipeline._resolve_derivative(raw_bad_channels_input_name(source_name))
@@ -2169,7 +2166,7 @@ class PipelineFrame(EelbrainFrame):
 
                     elif task.name == 'mri':
                         is_common_brain = combo == (COMMON_BRAIN_ROW,)
-                        mrisubject = pipeline.get('common_brain' if is_common_brain else 'mrisubject')
+                        mrisubject = pipeline.get('common_brain') if is_common_brain else pipeline._mrisubject()  # raises for a subject the mri mapping omits
                         mri_dir = pipeline.root / MRI_SDIR / mrisubject
                         has_surfaces = (mri_dir / 'surf' / 'lh.white').exists()
                         if is_common_brain:
@@ -2181,7 +2178,7 @@ class PipelineFrame(EelbrainFrame):
                         row = (*combo, mrisubject, status)
 
                     elif task.name == 'coreg':
-                        mrisubject = pipeline.get('mrisubject')
+                        mrisubject = pipeline._mrisubject()  # raises for a subject the mri mapping omits
                         trans_ctx = pipeline._resolve_derivative('trans-input')
                         has_trans = trans_ctx.node.exists(trans_ctx)
                         row = (*combo, mrisubject, task.done_status if has_trans else task.missing_status)

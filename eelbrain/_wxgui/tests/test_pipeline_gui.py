@@ -791,7 +791,7 @@ def test_iter_rows_mri_status(tmp_path):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
     p = pipeline()
-    p.__dict__.update(root=tmp_path, _state={}, get=lambda field: 'fsaverage' if field == 'common_brain' else p._state['subject'], set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
+    p.__dict__.update(root=tmp_path, _state={}, get=lambda field: 'fsaverage', _mrisubject=lambda: p._state['subject'], set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
     frame = _frame(_pipeline=p, _refresh_token='TOKEN')
     scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), '')
     rows = list(frame._iter_rows('TOKEN', scope, [('R01',), ('R02',), ('R03',), ('R04',), (COMMON_BRAIN_ROW,)]))
@@ -800,13 +800,13 @@ def test_iter_rows_mri_status(tmp_path):
 
 def test_iter_rows_reports_a_failing_row_and_keeps_going(tmp_path):
     "A row whose inspection raises is shown as error, without hiding the rest of the table"
-    def get(field):
+    def mrisubject():
         if p._state['subject'] == 'R02':
             raise RuntimeError("no MRI subject")
         return p._state['subject']
 
     p = pipeline()
-    p.__dict__.update(root=tmp_path, _state={}, get=get, set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
+    p.__dict__.update(root=tmp_path, _state={}, _mrisubject=mrisubject, set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
     frame = _frame(_pipeline=p, _refresh_token='TOKEN')
     scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), '')
     rows = list(frame._iter_rows('TOKEN', scope, [('R01',), ('R02',)]))
@@ -817,17 +817,18 @@ def test_iter_rows_reports_a_failing_row_and_keeps_going(tmp_path):
 
 
 def test_iter_rows_reports_a_subject_missing_from_the_mri_mapping(tmp_path):
-    "A subject the selected mri mapping omits makes pipeline.set() raise; the row shows the error and the table goes on"
-    def set_(**state):
-        if state.get('subject') == 'R02':
+    "A subject the selected mri mapping omits has no MRI subject (Pipeline._mrisubject raises); the row shows the error and the table goes on"
+    def mrisubject():
+        if p._state['subject'] == 'R02':
             raise ConfigurationError("mri_subjects['own'] has no entry for subject 'R02'")
-        p._state.update(state)
+        return p._state['subject']
 
     p = pipeline()
-    p.__dict__.update(root=tmp_path, _state={}, get=lambda field: 'fsaverage' if field == 'common_brain' else p._state['subject'], set=set_, _temporary_state=contextlib.nullcontext())
+    p.__dict__.update(root=tmp_path, _state={}, _mrisubject=mrisubject, set=lambda **state: p._state.update(state), _temporary_state=contextlib.nullcontext())
     frame = _frame(_pipeline=p, _refresh_token='TOKEN')
     scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), 'own')
     rows = list(frame._iter_rows('TOKEN', scope, [('R01',), ('R02',)]))
+    assert p._state['mri'] == 'own'  # the rows are resolved under the selected mapping
     assert rows[0] == (('R01',), ('R01', 'R01', 'no MRI'), None, None)
     combo, row, spec, error = rows[1]
     assert (combo, row, spec) == (('R02',), ('R02', PLACEHOLDER, pipeline_gui.ERROR), None)

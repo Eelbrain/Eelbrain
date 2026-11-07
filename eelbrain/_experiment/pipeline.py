@@ -627,7 +627,10 @@ class Pipeline(StateModel):
             options: dict[str, Any] | None = None,
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
     ) -> Request:
-        return self._derivatives.resolve(name, state=self.state, options=options, controls=controls)
+        ctx = self._derivatives.resolve(name, state=self.state, options=options, controls=controls)
+        if 'mrisubject' in ctx.node._get_key_fields(ctx):
+            self._mrisubject()  # raises for a subject the mri mapping omits
+        return ctx
 
     def _load_derivative(
             self,
@@ -2985,10 +2988,9 @@ class Pipeline(StateModel):
 
         state_ = self._fields
         subjects_dir = str(self.root / MRI_SDIR)
+        subject = self._mrisubject()
         if (not plot_on_scaled_common_brain) and is_fake_mri(self.root / mri_dir(state_)):
             subject = self.get('common_brain')
-        else:
-            subject = self.get('mrisubject')
 
         kwa = self._surfer_plot_kwargs(surf, views, foreground, background, None, hemi)
         brain = plot.brain.annot(parc_name, subject, borders=borders, alpha=alpha, w=w, h=h, axw=axw, axh=axh, subjects_dir=subjects_dir, **kwa)
@@ -3033,10 +3035,9 @@ class Pipeline(StateModel):
         brain_args['subjects_dir'] = str(self.root / MRI_SDIR)
 
         # find subject
+        mrisubject = self._mrisubject()
         if common_brain and is_fake_mri(self.root / mri_dir(state_)):
             mrisubject = self.get('common_brain')
-        else:
-            mrisubject = self.get('mrisubject')
 
         return Brain(mrisubject, **brain_args)
 
@@ -3071,7 +3072,7 @@ class Pipeline(StateModel):
         with self._temporary_state:
             raw = self.load_raw(raw='raw')
         state_ = self._fields
-        fig = mne.viz.plot_alignment(raw.info, self.root / trans_file_path(state_, datatype=self._datatype), self.get('mrisubject'), self.root / MRI_SDIR, surfaces, meg=meg, dig=dig, interaction='terrain')
+        fig = mne.viz.plot_alignment(raw.info, self.root / trans_file_path(state_, datatype=self._datatype), self._mrisubject(), self.root / MRI_SDIR, surfaces, meg=meg, dig=dig, interaction='terrain')
         if parallel:
             fig.plotter.enable_parallel_projection()
         return fig
@@ -3494,7 +3495,17 @@ class Pipeline(StateModel):
         mri = fields['mri']
         if subject == '*' or mri == '*':
             return '*'
-        return self._mri_subjects[mri][subject]
+        try:
+            return self._mri_subjects[mri][subject]
+        except ConfigurationError:  # a subject the mapping omits can still be iterated over, see _mrisubject
+            return ''
+
+    def _mrisubject(self) -> str:
+        "The current MRI subject; raises for a subject the mri mapping omits (whose mrisubject is empty, see _update_mrisubject)"
+        mrisubject = self.get('mrisubject')
+        if not mrisubject:
+            raise ConfigurationError(f"mri_subjects[{self.get('mri')!r}] has no entry for subject {self.get('subject')!r}")
+        return mrisubject
 
     def _update_task(self, fields: dict) -> str | None:
         epoch = fields['epoch']
@@ -4098,7 +4109,9 @@ class Pipeline(StateModel):
                 raw_list.append(', '.join(basenames))
             if mri:
                 subject_mri_dir = str(self.root / mri_dir(self._fields))
-                if not exists(subject_mri_dir):
+                if not mrisubject_:
+                    mri_list.append('*not mapped')
+                elif not exists(subject_mri_dir):
                     mri_list.append('*missing')
                 elif is_fake_mri(subject_mri_dir):
                     subjects_dir = str(self.root / MRI_SDIR)
