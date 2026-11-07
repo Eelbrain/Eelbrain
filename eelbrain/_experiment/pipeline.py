@@ -3522,8 +3522,8 @@ class Pipeline(StateModel):
     def _mrisubject(self) -> str:
         "The current MRI subject; raises for a subject the mri mapping omits (whose mrisubject is empty, see _update_mrisubject)"
         mrisubject = self.get('mrisubject')
-        if not mrisubject:
-            raise MissingMRISubjectError(f"mri_subjects[{self.get('mri')!r}] has no entry for subject {self.get('subject')!r}")
+        if not mrisubject:  # a failed lookup is not cached, so this re-raises the mapping's MissingMRISubjectError
+            return self._mri_subjects[self.get('mri')][self.get('subject')]
         return mrisubject
 
     def _update_task(self, fields: dict) -> str | None:
