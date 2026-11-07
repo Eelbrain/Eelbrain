@@ -439,9 +439,9 @@ class RawICA(CachedRawPipe):
         Name of the raw pipe to use for input data.
     task
         Task(s) to use for estimating ICA components. Can be omitted (``None``)
-        when the experiment has exactly one task, or when the ICA step occurs
+        when the experiment has exactly one task, when the ICA step occurs
         after a :class:`RawMaxwell` step (in which case all tasks are used, see
-        Notes).
+        Notes), or with ``per_task=True`` (which requires ``task=None``).
     method
         Method for ICA decomposition (default: ``'extended-infomax'``; see
         :class:`mne.preprocessing.ICA`).
