@@ -1090,29 +1090,34 @@ class PipelineFrame(EelbrainFrame):
         raw_name = self._raw_name()
         state = dict(zip(self._layout.key_fields, self._row_combo(idx)))
         tmp_dir = None
-        with pipeline._temporary_state, wx.BusyCursor():
-            pipeline.set(raw=raw_name, **state)
-            bads = pipeline.load_bad_channels()
-            if isinstance(pipeline._raw[raw_name], RawSource):
-                raw_ctx = pipeline._resolve_derivative(raw_input_name(raw_name))
-                path = raw_ctx.node.path(raw_ctx)
-            else:
-                raw = pipeline.load_raw()  # builds the cache file for a pipe that caches
-                raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
-                if raw_ctx.node.cache_policy is CachePolicy.NEVER:
-                    tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
-                    path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
-                    raw.save(path)
+        try:
+            with pipeline._temporary_state, wx.BusyCursor():
+                pipeline.set(raw=raw_name, **state)
+                bads = pipeline.load_bad_channels()
+                if isinstance(pipeline._raw[raw_name], RawSource):
+                    raw_ctx = pipeline._resolve_derivative(raw_input_name(raw_name))
+                    path = raw_ctx.node.path(raw_ctx)
                 else:
-                    path = raw_ctx.artifact_path
+                    raw = pipeline.load_raw()  # builds the cache file for a pipe that caches
+                    raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
+                    if raw_ctx.node.cache_policy is CachePolicy.NEVER:
+                        tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
+                        path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
+                        raw.save(path)
+                    else:
+                        path = raw_ctx.artifact_path
 
-        def on_close(new_bads: list[str] | None, stderr: str) -> None:
-            if tmp_dir is not None:
+            def on_close(new_bads: list[str] | None, stderr: str) -> None:
+                if tmp_dir is not None:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                if not self._closed:
+                    wx.CallAfter(self._on_browse_raw_closed, raw_name, state, bads, new_bads, stderr)
+
+            proc = _launch_browse_raw_subprocess(str(path), bads, on_close)
+        except Exception:
+            if tmp_dir is not None:  # the browser never started, so on_close will not remove it
                 shutil.rmtree(tmp_dir, ignore_errors=True)
-            if not self._closed:
-                wx.CallAfter(self._on_browse_raw_closed, raw_name, state, bads, new_bads, stderr)
-
-        proc = _launch_browse_raw_subprocess(str(path), bads, on_close)
+            raise
         self._subprocesses.append(('raw browser', proc))
 
     def _on_browse_raw_closed(

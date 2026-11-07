@@ -541,6 +541,41 @@ def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
     assert not tmp_file.parent.exists()
 
 
+def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
+    "The temporary file for a raw pipe that does not cache is removed when writing it, or starting the browser, fails"
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=False)
+    frame._raw_name = lambda: 'filt'
+    errors = []
+    frame._show_error = lambda *args: errors.append(args)
+    tmp_dir = tmp_path / 'browse'
+
+    def mkdtemp(prefix):
+        tmp_dir.mkdir()
+        return str(tmp_dir)
+
+    monkeypatch.setattr(pipeline_gui.tempfile, 'mkdtemp', mkdtemp)
+    # writing the file fails
+    load_raw = frame._pipeline.load_raw
+
+    def save(path):
+        raise OSError("disk full")
+
+    frame._pipeline.load_raw = lambda: SimpleNamespace(save=save)
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    assert 'disk full' in errors[-1][0] and launched == []
+    assert not tmp_dir.exists()
+    # starting the browser fails
+    frame._pipeline.load_raw = load_raw
+
+    def launch(*args):
+        raise OSError("no python")
+
+    monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', launch)
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    assert 'no python' in errors[-1][0] and frame._subprocesses == []
+    assert not tmp_dir.exists()
+
+
 def test_close_terminates_subprocesses(monkeypatch):
     "Closing the GUI closes the GUIs it opened in subprocesses, asking first when any of them are still open"
     messages, terminated = [], []
