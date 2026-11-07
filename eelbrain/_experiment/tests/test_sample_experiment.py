@@ -3441,6 +3441,8 @@ def test_mri_subjects(samples_experiment):
     e.load_evoked(subject='R0001', epoch='target', raw='1-40')
     with pytest.raises(ConfigurationError, match="R0001"):  # anything that needs the MRI raises
         e.load_src()
+    with pytest.raises(ConfigurationError, match="R0001"):  # also when only the dependency tree is displayed
+        e.load_src(show_dependencies=True)
     with pytest.raises(ConfigurationError, match="R0001"):
         e.plot_brain()
     ds = e.show_subjects(mri=True, mrisubject=True, asds=True)
