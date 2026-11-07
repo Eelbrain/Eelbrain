@@ -40,7 +40,7 @@ The identity mapping ``''`` (``keydefaultdict(lambda subject: subject)``) is alw
 .. py:attribute:: Pipeline.mri_templates
    :type: Sequence[str]
 
-FreeSurfer subjects that are not derived from a MEG/EEG subject, such as template brains. Their directories under ``{root}/derivatives/freesurfer`` are named without the ``sub-`` prefix. The default is ``('fsaverage',)``.
+FreeSurfer subjects that are not derived from a MEG/EEG subject, such as template brains. Their directories under ``{root}/derivatives/freesurfer`` are named without the ``sub-`` prefix. The default is ``('fsaverage',)``; ``fsaverage`` and ``fsaverage_sym``, the FreeSurfer average brains, are always treated as templates, even when ``mri_templates`` does not list them.
 
 Missing MRI subjects are created automatically when they are first needed, as long as they can be derived without user input:
 

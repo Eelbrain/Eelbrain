@@ -402,7 +402,7 @@ class Pipeline(StateModel):
         if isinstance(self.mri_templates, str) or not all(isinstance(name, str) for name in self.mri_templates):
             raise TypeError(f"{self.__class__.__name__}.mri_templates={self.mri_templates!r}: need a sequence of MRI subject names")
         check_names(self.mri_templates, 'mri_templates', allow_empty=False)
-        templates = frozenset(self.mri_templates)
+        templates = frozenset(self.mri_templates) | {'fsaverage', 'fsaverage_sym'}  # the FreeSurfer average brains (fsaverage is the common brain, see _register_field('common_brain')) are always templates
         # self._mri_subjects holds FreeSurfer directory names (sub- prefix applied), resolved on demand
         self._mri_subjects = {}
         for name, mapping in {**self._default_mri_subjects, **self.mri_subjects}.items():

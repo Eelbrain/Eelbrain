@@ -3419,11 +3419,13 @@ def test_mri_subjects(samples_experiment):
 
     # templates other than fsaverage are stored without the sub- prefix
     class Templates(SampleExperiment):
-        mri_templates = ('fsaverage', 'template')
-        mri_subjects = {'template': keydefaultdict(lambda s: 'template'), 'other': keydefaultdict(lambda s: 'other')}
+        mri_templates = ('template',)  # fsaverage and fsaverage_sym are always templates
+        mri_subjects = {'template': keydefaultdict(lambda s: 'template'), 'other': keydefaultdict(lambda s: 'other'), 'fsaverage': keydefaultdict(lambda s: 'fsaverage'), 'fsaverage_sym': keydefaultdict(lambda s: 'fsaverage_sym')}
 
     e = Templates(root)
     assert e.get('mrisubject', mri='template') == 'template'
+    assert e.get('mrisubject', mri='fsaverage') == 'fsaverage'
+    assert e.get('mrisubject', mri='fsaverage_sym') == 'fsaverage_sym'
     assert e.get('mrisubject', mri='other') == 'sub-other'
     assert e.get('mrisubject', mri='') == 'sub-R0000'
 
