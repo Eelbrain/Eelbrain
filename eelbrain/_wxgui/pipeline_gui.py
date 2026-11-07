@@ -65,7 +65,8 @@ _BROWSE_RAW_SCRIPT = '''
 import json, sys
 import mne
 path, bads = sys.argv[1], json.loads(sys.argv[2])
-raw = mne.io.read_raw(path, allow_maxshield='yes')
+kwargs = {'allow_maxshield': 'yes'} if path.endswith('.fif') else {}  # only the FIFF reader accepts it
+raw = mne.io.read_raw(path, **kwargs)
 raw.info['bads'] = [ch for ch in bads if ch in raw.ch_names]
 raw.plot(block=True)
 print(json.dumps(raw.info['bads'] + [ch for ch in bads if ch not in raw.ch_names]))

@@ -1,5 +1,7 @@
 import contextlib
+import json
 import logging
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -549,6 +551,24 @@ def test_close_terminates_subprocesses(monkeypatch):
     frame._on_close(event)
     assert messages[-1] == 'skip' and frame._closed
     assert terminated == ['coreg', 'browser 2']
+
+
+def test_browse_raw_script(monkeypatch, capsys):
+    "The browser script seeds the raw with the bad channels it contains, passes allow_maxshield only to the FIFF reader, and reports the bad channels it was closed with plus those it could not show"
+    calls = []
+
+    def read_raw(path, **kwargs):
+        calls.append((path, kwargs))
+        raw = SimpleNamespace(info={'bads': []}, ch_names=['MEG 0111', 'MEG 0112'])
+        raw.plot = lambda block: raw.info['bads'].append('MEG 0112')
+        return raw
+
+    monkeypatch.setitem(sys.modules, 'mne', SimpleNamespace(io=SimpleNamespace(read_raw=read_raw)))
+    for path in ('/data/raw.fif', '/data/raw.edf'):
+        monkeypatch.setattr(sys, 'argv', ['-c', path, '["MEG 0111", "EEG 001"]'])
+        exec(pipeline_gui._BROWSE_RAW_SCRIPT, {})
+        assert json.loads(capsys.readouterr().out.strip()) == ['MEG 0111', 'MEG 0112', 'EEG 001']
+    assert calls == [('/data/raw.fif', {'allow_maxshield': 'yes'}), ('/data/raw.edf', {})]
 
 
 def test_launch_browse_raw_subprocess(monkeypatch):
