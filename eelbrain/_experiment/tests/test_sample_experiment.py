@@ -3451,3 +3451,9 @@ def test_mri_subjects(samples_experiment):
 
     with pytest.raises(TypeError, match="mri_subjects"):
         NotAMapping(root)
+
+    class NotAName(SampleExperiment):
+        mri_subjects = {'': keydefaultdict(lambda s: None)}
+
+    with pytest.raises(TypeError, match=r"mri_subjects\[''\]\['R0000'\]=None"):
+        NotAName(root)

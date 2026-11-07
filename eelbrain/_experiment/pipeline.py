@@ -410,6 +410,8 @@ class Pipeline(StateModel):
                     mri_subject = mapping[subject]
                 except KeyError:
                     raise ConfigurationError(f"mri_subjects[{name!r}] has no entry for subject {subject!r}") from None
+                if not isinstance(mri_subject, str):
+                    raise TypeError(f"mri_subjects[{name!r}][{subject!r}]={mri_subject!r}: need an MRI subject name")
                 if mri_subject in templates or mri_subject.startswith('sub-'):
                     return mri_subject
                 return f'sub-{mri_subject}'
