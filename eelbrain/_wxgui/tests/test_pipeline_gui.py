@@ -846,3 +846,63 @@ def test_mri_mapping_dropdown():
     assert PipelineFrame._iter_state(frame, _ICA_SCOPE) == {}
     assert PipelineFrame._mri_label_for('') == '(default)'
     assert PipelineFrame._mri_label_for('scaled') == 'scaled'
+
+
+class _FakeChoice:
+    "Minimal wx.Choice stand-in"
+
+    def __init__(self):
+        self.items = []
+        self.selection = wx.NOT_FOUND
+
+    def Clear(self):
+        self.items = []
+        self.selection = wx.NOT_FOUND
+
+    def Append(self, label):
+        self.items.append(label)
+
+    def GetCount(self):
+        return len(self.items)
+
+    def FindString(self, label):
+        return self.items.index(label) if label in self.items else wx.NOT_FOUND
+
+    def GetSelection(self):
+        return self.selection
+
+    def SetSelection(self, index):
+        self.selection = index
+
+
+def test_mri_choices():
+    "The MRI dropdown lists the pipeline's mappings, starts from the pipeline's state and keeps its selection when repopulated"
+    p = SimpleNamespace(get_field_values=lambda field: ['', 'fsaverage', 'scaled'], get=lambda field: 'scaled')
+    frame = _frame(_pipeline=p, _mri_choice=_FakeChoice(), _mri_names=[], _current_task=lambda: TASKS_BY_NAME['mri'])
+    frame._populate_mri_choices()
+    assert frame._mri_choice.items == ['(default)', 'fsaverage', 'scaled']
+    assert frame._mri_name() == 'scaled'
+    frame._mri_choice.SetSelection(0)
+    assert frame._mri_name() == ''
+    p.get_field_values = lambda field: ['', 'scaled']
+    frame._populate_mri_choices()
+    assert frame._mri_choice.items == ['(default)', 'scaled']
+    assert frame._mri_name() == ''
+    frame._mri_choice.SetSelection(1)
+    assert frame._mri_name() == 'scaled'
+    # a task without the dropdown resolves its rows under the pipeline's own mapping
+    frame._current_task = lambda: TASKS_BY_NAME['ica']
+    assert frame._mri_name() is None
+
+
+def test_iter_combos_resolves_rows_under_the_selected_mri_mapping():
+    calls = []
+
+    def iter_(fields, **constants):
+        calls.append((fields, constants))
+        return [('R01',), ('R02',)]
+
+    frame = _frame(_pipeline=SimpleNamespace(iter=iter_, get=lambda field: 'fsaverage'))
+    scope = (TASKS_BY_NAME['mri'], None, None, None, _layout('mri'), 'own')
+    assert list(frame._iter_combos(scope)) == [('R01',), ('R02',), (COMMON_BRAIN_ROW,)]
+    assert calls == [(['subject'], {'mri': 'own'})]
