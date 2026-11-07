@@ -3435,6 +3435,8 @@ def test_mri_subjects(samples_experiment):
     assert e.get('mrisubject', subject='R0000') == 'sub-R0000'
     with pytest.raises(ConfigurationError, match="R0001"):
         e.set(subject='R0001')
+    assert e.get('subject') == 'R0000'  # the failed set leaves the state unchanged
+    assert e.get('mrisubject') == 'sub-R0000'
 
     class NotAMapping(SampleExperiment):
         mri_subjects = {'': 'fsaverage'}

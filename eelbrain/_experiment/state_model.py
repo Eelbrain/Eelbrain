@@ -513,16 +513,17 @@ class StateModel:
                     alt = ''
                 raise ValueError(f"{k}={v!r}. {alt}To see all valid values use e.show_fields().")
 
-        self._fields.update(state)
-
-        # fields depending on changes in other fields
+        # fields depending on changes in other fields; resolved before the change
+        # is committed, so that a handler that raises leaves the state unchanged
+        fields = {**self._fields, **state}
         slave_state = {}
         for state_key in set(state).union(handled_state).intersection(self._slave_fields):
             for slave_key in self._slave_fields[state_key]:
                 if slave_key not in slave_state:
-                    v = self._slave_handlers[slave_key](self._fields)
+                    v = self._slave_handlers[slave_key](fields)
                     if v is not None:
                         slave_state[slave_key] = v
+        self._fields.update(state)
         self._fields.update(slave_state)
 
         # call post_set handlers
