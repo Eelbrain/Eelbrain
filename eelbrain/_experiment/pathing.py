@@ -90,11 +90,13 @@ def raw_dir(state: dict[str, Any], *, datatype: str) -> Path:
     return path / datatype
 
 
-def ica_file_path(state: dict[str, Any], raw: str, concatenate_runs: bool = False, *, datatype: str) -> Path:
-    if concatenate_runs:
-        entity_keys = ('subject', 'session', 'acquisition')
-    else:
-        entity_keys = ('subject', 'session', 'acquisition', 'run')
+def ica_file_path(
+        state: dict[str, Any],
+        raw: str,
+        entity_keys: tuple[str, ...] = ('subject', 'session', 'acquisition', 'run'),
+        *,
+        datatype: str,
+) -> Path:
     basename = _bids_name(state, entity_keys, suffix='', datatype=datatype)
     return DERIV_DIR / 'mne' / raw_dir(state, datatype=datatype) / f"{basename}_desc-{raw}_ica.fif"
 

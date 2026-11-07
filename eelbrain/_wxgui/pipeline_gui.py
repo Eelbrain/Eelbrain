@@ -508,14 +508,16 @@ class ICATask(Task):
             pipeline: Pipeline,
             raw_name: str | None,
     ) -> tuple[str, ...]:
-        # ICA is cached per (subject, session[, run]); show one row per
-        # combination of the key fields that vary in this experiment.
-        fields = ['subject']
-        if len(pipeline._sessions) > 1:
-            fields.append('session')
-        if raw_name and not pipeline._raw[raw_name]._concatenate_runs and len(pipeline._runs) > 1:
-            fields.append('run')
-        return tuple(fields)
+        # show one row per combination of the ICA's key fields that vary in this experiment
+        varying = {'subject'}
+        for field, values in (('session', pipeline._sessions), ('task', pipeline._tasks), ('run', pipeline._runs)):
+            if len(values) > 1:
+                varying.add(field)
+        if raw_name is None:
+            key_fields = ('subject', 'session')
+        else:
+            key_fields = pipeline._raw[raw_name].ica_key_fields()
+        return tuple(field for field in key_fields if field in varying)
 
     def row_colour(
             self,
@@ -914,8 +916,9 @@ class PipelineFrame(EelbrainFrame):
         self._start_refresh()
 
     def _on_raw_changed(self, event):
-        # Switching the ICA raw pipe can change run concatenation, and with it the
-        # per-row key fields, so reinstall the columns before refreshing.
+        # Switching the ICA raw pipe can change run concatenation or per-task
+        # decomposition, and with it the per-row key fields, so reinstall the
+        # columns before refreshing.
         self._setup_columns()
         self._start_refresh()
 
@@ -1219,9 +1222,8 @@ class PipelineFrame(EelbrainFrame):
                 state = dict(zip(layout.key_fields, combo))
                 self._pipeline.set(raw=raw_name, **state)
                 spec = self._pipeline._job_spec(ica_input_name(raw_name))
-                # ICA combines bad channels across tasks/runs
-                node = spec.ctx.node
-                for source_state in node._source_states(spec.ctx, node.pipe.task):
+                # the ICA combines bad channels across the tasks/runs it is estimated from
+                for source_state in spec.ctx.node._source_states(spec.ctx):
                     self._pipeline.make_bad_channels(names, raw=raw_name, **{**state, **source_state})
                 spec.path.unlink(missing_ok=True)
                 jobs.append((combo, spec))
@@ -1329,7 +1331,7 @@ class PipelineFrame(EelbrainFrame):
             ``(ch_name, ch_type)`` per flat channel.
         """
         ctx = spec.ctx
-        raw = ctx.node.load_concatenated_source_raw(ctx, ctx.node.pipe.task, preload=False)
+        raw = ctx.node.load_concatenated_source_raw(ctx, preload=False)
         sysname, adjacency = self._pipeline._ndvar_sensor_args(raw_name, raw.info, ctx.state['subject'])
         doc = ICADocument(spec.path, raw, sysname, adjacency)
         gap_results, _ = doc.channel_gaps()
