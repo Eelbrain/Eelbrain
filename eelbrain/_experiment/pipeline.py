@@ -641,22 +641,15 @@ class Pipeline(StateModel):
             view: str | None = None,
             *,
             controls: frozenset[str] | set[str] | tuple[str, ...] = (),
+            path_only: bool = False,
             show_dependencies: bool = False,
     ) -> Any:
+        ctx = self._resolve_derivative(name, options=options, controls=controls)  # raises for a subject the mri mapping omits
         if show_dependencies:
-            return self._dependency_tree(name, options=options, view=view, controls=controls)
-        return self._resolve_derivative(name, options=options, controls=controls).load(view=view)
-
-    def _dependency_tree(
-            self,
-            name: str,
-            options: dict[str, Any] | None = None,
-            view: str | None = None,
-            controls: frozenset[str] | set[str] | tuple[str, ...] = (),
-    ) -> DependencyTree:
-        "Dependency tree for display; resolves the request first so that a subject the mri mapping omits raises as it would when loading"
-        self._resolve_derivative(name, options=options, controls=controls)
-        return self._derivatives.dependency_tree(name, state=self.state, options=options, view=view, controls=controls)
+            return self._derivatives.dependency_tree(name, state=self.state, options=options, view=view, controls=controls)
+        if path_only:
+            return ctx.artifact_path
+        return ctx.load(view=view)
 
     def _job_spec(
             self,
@@ -1465,12 +1458,7 @@ class Pipeline(StateModel):
             State parameters.
         """
         options = self._trf_options(x, tstart, tstop, estimator, data, samplingrate, filter_x, state)
-        if show_dependencies:
-            return self._dependency_tree('trf', options=options)
-        ctx = self._resolve_derivative('trf', options=options)
-        if path_only:
-            return ctx.artifact_path
-        return ctx.load()
+        return self._load_derivative('trf', options=options, path_only=path_only, show_dependencies=show_dependencies)
 
     def _trf_job_spec(
             self,
