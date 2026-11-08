@@ -95,18 +95,13 @@ def _trf_dataset_key_fields(ctx: Request, estimators: dict[str, Estimator], *cas
     est = estimators[ctx.options['estimator']]
     fields = [*case_fields, 'session', 'acquisition', 'epoch', 'epoch_rejection', 'raw', 'inv']
     if _is_source_space(ctx, est):
-        fields += ['cov', 'src', 'parc', 'adjacency', 'common_brain']
-        if 'subject' in case_fields:
-            fields.append('mrisubject')
-        else:  # a group pins each subject's mrisubject on the dependency edge based on the mri mapping (see _subject_state)
-            fields.append('mri')
+        fields += ['cov', 'src', 'parc', 'adjacency', 'common_brain', 'mrisubject']
     else:
         fields.append('reference')  # source modeling pins reference='' (see TRFDerivative)
-    if 'subject' in case_fields:
-        fields += est.extra_input_fields
-    else:  # the group pins the estimator's MRI subject on the edge, like its own (see above)
-        fields += [field for field in est.extra_input_fields if field != 'mrisubject']
-    return tuple(fields)
+    fields += est.extra_input_fields
+    if 'subject' not in case_fields:  # a group pins each subject's mrisubject on the dependency edge based on the mri mapping (see _subject_state)
+        fields = ['mri' if field == 'mrisubject' else field for field in fields]
+    return tuple(dict.fromkeys(fields))
 
 
 def _post_process_trfs(
