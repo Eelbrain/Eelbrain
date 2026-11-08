@@ -1908,12 +1908,8 @@ class Pipeline(StateModel):
         """
         raw_name = self.get('raw', **state)
         ica_raw_name = self._raw.ica_name(raw_name)
-        state = {**self.state, 'raw': ica_raw_name}
         controls = {REINDEX_ICA} if accept_stale else ()
-        ctx = self._derivatives.resolve(ica_input_name(ica_raw_name), state=state, controls=controls)
-        if show_dependencies:
-            return ctx.dependency_tree()
-        return ctx.load()
+        return self._load_derivative(ica_input_name(ica_raw_name), controls=controls, show_dependencies=show_dependencies)
 
     def load_inv(
             self,
@@ -2055,15 +2051,15 @@ class Pipeline(StateModel):
             epoch_params = self._epochs[epoch]
             if len(epoch_params.tasks) != 1:
                 raise ValueError(f"{epoch=}: epoch has multiple tasks")
+            ds = self.load_epochs(epoch=epoch, reject=False, decim=1, show_dependencies=show_dependencies, **state)
             if show_dependencies:
-                return self.load_epochs(epoch=epoch, reject=False, decim=1, show_dependencies=True, **state)
-            ds = self.load_epochs(epoch=epoch, reject=False, decim=1, **state)
+                return ds
             key = ds.info['sensor_types'][0]
             data = concatenate(ds[key])
         else:
+            data = self.load_raw(ndvar=True, show_dependencies=show_dependencies, **state)
             if show_dependencies:
-                return self.load_raw(ndvar=True, show_dependencies=True, **state)
-            data = self.load_raw(ndvar=True, **state)
+                return data
         n_corr = neighbor_correlation(data)
         if return_data:
             return data, n_corr
