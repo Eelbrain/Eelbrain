@@ -3474,3 +3474,10 @@ def test_mri_subjects(samples_experiment):
 
     with pytest.raises(ConfigurationError, match="no MRI column"):
         Failing(root)
+
+    # a KeyError from inside a keydefaultdict factory is not a missing entry either
+    class FailingLookup(SampleExperiment):
+        mri_subjects = {'': keydefaultdict(lambda s: {'R0000': 'R0000'}[f'{s}-typo'])}
+
+    with pytest.raises(KeyError, match="R0000-typo"):
+        FailingLookup(root)

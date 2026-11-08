@@ -408,7 +408,9 @@ class Pipeline(StateModel):
             def resolve(subject: str, name: str = name, mapping: dict = mapping) -> str:
                 try:
                     mri_subject = mapping[subject]
-                except KeyError:
+                except KeyError as error:
+                    if error.args != (subject,):  # a KeyError from inside a keydefaultdict factory is a bug in the mapping, not a missing entry
+                        raise
                     raise MissingMRISubjectError(f"mri_subjects[{name!r}] has no entry for subject {subject!r}") from None
                 if not isinstance(mri_subject, str):
                     raise TypeError(f"mri_subjects[{name!r}][{subject!r}]={mri_subject!r}: need an MRI subject name")
