@@ -2664,6 +2664,10 @@ def test_trf_ncrf_dependencies(samples_trf_experiment):
     group_ctx = e._derivatives.resolve('trf-group-dataset', state={**e.state, 'group': 'all'}, options={**options, 'smooth': 0.005})
     assert 'common_brain' in group_ctx.node._get_key_fields(group_ctx)
     assert 'reference' not in group_ctx.node._get_key_fields(group_ctx)
+    # the group keys on the mri mapping, not on the current subject's mrisubject (NCRF's extra input field, pinned per edge)
+    assert 'mri' in group_ctx.node._get_key_fields(group_ctx)
+    assert 'mrisubject' not in group_ctx.node._get_key_fields(group_ctx)
+    assert 'mrisubject' in ctx.node._get_key_fields(ctx)
     options = e._trf_options('env > 0', 0., 0.1, 'ncrf', None, None, False, comparison=True)
     e._derivatives.resolve('trf-model-test', state={**e.state, 'group': 'all'}, options={**options, 'metric': 'explained_variance'}).dependency_tree()
 

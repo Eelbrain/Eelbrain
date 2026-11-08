@@ -102,7 +102,10 @@ def _trf_dataset_key_fields(ctx: Request, estimators: dict[str, Estimator], *cas
             fields.append('mri')
     else:
         fields.append('reference')  # source modeling pins reference='' (see TRFDerivative)
-    fields += est.extra_input_fields
+    if 'subject' in case_fields:
+        fields += est.extra_input_fields
+    else:  # the group pins the estimator's MRI subject on the edge, like its own (see above)
+        fields += [field for field in est.extra_input_fields if field != 'mrisubject']
     return tuple(fields)
 
 
