@@ -1869,6 +1869,75 @@ class Request(Generic[T]):
         with self._build_deps_context():
             return [(dep, self._resolve_dependency(dep)) for dep in self._build_deps.values()]
 
+    def _tree_identity(self) -> str:
+        """Stable id for the artifact/value this request resolves to.
+
+        Derived from the node's effective key (key fields and key options,
+        both context-sensitive), not the full request state or view options,
+        so requests that differ only in key-irrelevant state or in view options
+        share one identity.
+        """
+        if self.node.cache_policy is CachePolicy.NEVER:
+            content = {
+                'state': canonical_state_subset(self.state, self.node._get_key_fields(self)),
+                'options': self.registry.canonicalize(self.options),
+            }
+        else:
+            content = {'key': self.key()}
+        return json.dumps({'name': self.node.name, **content}, sort_keys=True, separators=(',', ':'))
+
+    def dependency_tree(self, view: str | None = None) -> DependencyTree:
+        """Dependency tree of this request for display.
+
+        Since dependency edges are context-sensitive, the tree describes this
+        resolved request; enumerating the edges may load upstream artifacts
+        that a node needs for that (e.g. events for TRF predictors).
+
+        Parameters
+        ----------
+        view
+            Named view that would be loaded from this request (shown on the root; it does not affect the tree).
+
+        Returns
+        -------
+        tree
+            Tree whose ``repr`` is an ASCII rendering; in Jupyter notebooks it
+            displays as a graphviz flow chart when the optional ``graphviz``
+            package is installed (see :class:`~eelbrain._experiment.derivative_cache.dependency_tree.DependencyTree`).
+        """
+        seen = set()
+
+        def make_node(handle: Request[Any], dep: Dependency | None) -> DependencyTreeNode:
+            node = handle.node
+            if isinstance(node, Derivative):
+                kind = 'uncached' if node.cache_policy is CachePolicy.NEVER else 'derivative'
+            else:
+                kind = 'input'
+            if dep is None:
+                node_options = self.registry.canonicalize({**handle.options, **handle.view_options})
+            else:
+                node_options = self.registry.canonicalize(dep.options) if dep.options else {}
+            identity = handle._tree_identity()
+            tree_node = DependencyTreeNode(
+                name=node.name,
+                kind=kind,
+                label=dep.label if dep and dep.label and dep.label != dep.name else None,
+                key=handle.key() if kind == 'derivative' else None,
+                state=self.registry.canonicalize(dep.state) if dep and dep.state else {},
+                options=node_options,
+                view=dep.view if dep else view,
+                identity=identity,
+                seen=identity in seen,
+            )
+            if tree_node.seen:
+                return tree_node
+            seen.add(identity)
+            for child_dep, child_handle in handle._dependency_handles():
+                tree_node.children.append(make_node(child_handle, child_dep))
+            return tree_node
+
+        return DependencyTree(make_node(self, None))
+
     def load_artifact(self) -> T:
         """Load or build the underlying derivative artifact without view shaping."""
         derivative = self._require_derivative()
@@ -2396,93 +2465,6 @@ class DerivativeRegistry:
         missing = fields.difference(pinned | coverage)
         if missing:
             raise RuntimeError(f"{parent.name!r} depends on {child.name!r}, whose output depends on state field(s) {missing}, but {parent.name!r} neither keys or pins these on this edge. Fix by adding {missing} to {parent.name!r}.key_fields, or pin it via Dependency({child.name!r}, state=...).")
-
-    def _tree_identity(self, handle: Request[Any]) -> str:
-        """Stable id for the artifact/value a request resolves to.
-
-        Derived from the node's effective key (key fields and key options,
-        both context-sensitive), not the full request state or view options,
-        so requests that differ only in key-irrelevant state or in view options
-        share one identity.
-        """
-        node = handle.node
-        if node.cache_policy is CachePolicy.NEVER:
-            content = {
-                'state': canonical_state_subset(handle.state, node._get_key_fields(handle)),
-                'options': self.canonicalize(handle.options),
-            }
-        else:
-            content = {'key': handle.key()}
-        return json.dumps({'name': node.name, **content}, sort_keys=True, separators=(',', ':'))
-
-    def dependency_tree(
-            self,
-            name: str,
-            state: dict[str, Any] | None = None,
-            options: dict[str, Any] | None = None,
-            view: str | None = None,
-            controls: frozenset[str] | set[str] | tuple[str, ...] = (),
-    ) -> DependencyTree:
-        """Resolve one request and return its dependency tree for display.
-
-        Since dependency edges are context-sensitive, the tree describes the
-        request resolved from the given ``state`` and ``options``; resolving it
-        may load upstream artifacts that a node needs to enumerate its edges
-        (e.g. events for TRF predictors).
-
-        Parameters
-        ----------
-        name
-            Registered node name.
-        state
-            State for resolving the request.
-        options
-            Options for resolving the request.
-        view
-            Named view that would be loaded from the root request (shown on the root; it does not affect the tree).
-        controls
-            Controls for resolving the request (see :meth:`resolve`).
-
-        Returns
-        -------
-        tree
-            Tree whose ``repr`` is an ASCII rendering; in Jupyter notebooks it
-            displays as a graphviz flow chart when the optional ``graphviz``
-            package is installed (see :class:`~eelbrain._experiment.derivative_cache.dependency_tree.DependencyTree`).
-        """
-        seen = set()
-
-        def make_node(handle: Request[Any], dep: Dependency | None) -> DependencyTreeNode:
-            node = handle.node
-            if isinstance(node, Derivative):
-                kind = 'uncached' if node.cache_policy is CachePolicy.NEVER else 'derivative'
-            else:
-                kind = 'input'
-            if dep is None:
-                node_options = self.canonicalize({**handle.options, **handle.view_options})
-            else:
-                node_options = self.canonicalize(dep.options) if dep.options else {}
-            identity = self._tree_identity(handle)
-            tree_node = DependencyTreeNode(
-                name=node.name,
-                kind=kind,
-                label=dep.label if dep and dep.label and dep.label != dep.name else None,
-                key=handle.key() if kind == 'derivative' else None,
-                state=self.canonicalize(dep.state) if dep and dep.state else {},
-                options=node_options,
-                view=dep.view if dep else view,
-                identity=identity,
-                seen=identity in seen,
-            )
-            if tree_node.seen:
-                return tree_node
-            seen.add(identity)
-            for child_dep, child_handle in handle._dependency_handles():
-                tree_node.children.append(make_node(child_handle, child_dep))
-            return tree_node
-
-        root = self.resolve(name, state=state, options=options, controls=controls)
-        return DependencyTree(make_node(root, None))
 
     def is_cache_artifact(self, path: Path) -> bool:
         return path.is_relative_to(self.cache_dir)

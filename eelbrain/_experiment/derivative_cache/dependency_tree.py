@@ -1,7 +1,7 @@
 """Structured, displayable dependency tree for one resolved request.
 
-:meth:`~eelbrain._experiment.derivative_cache.base.DerivativeRegistry.dependency_tree`
-resolves one request and returns a :class:`DependencyTree`. Since dependency
+:meth:`~eelbrain._experiment.derivative_cache.base.Request.dependency_tree`
+returns a :class:`DependencyTree` for a resolved request. Since dependency
 edges are context-sensitive (they can branch on state and options, and may even
 load upstream artifacts to enumerate their edges), the tree always describes
 one concrete request, not the static node graph.

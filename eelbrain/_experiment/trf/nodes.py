@@ -95,11 +95,13 @@ def _trf_dataset_key_fields(ctx: Request, estimators: dict[str, Estimator], *cas
     est = estimators[ctx.options['estimator']]
     fields = [*case_fields, 'session', 'acquisition', 'epoch', 'epoch_rejection', 'raw', 'inv']
     if _is_source_space(ctx, est):
-        fields += ['cov', 'src', 'parc', 'adjacency', 'mrisubject', 'common_brain']
+        fields += ['cov', 'src', 'parc', 'adjacency', 'common_brain', 'mrisubject']
     else:
         fields.append('reference')  # source modeling pins reference='' (see TRFDerivative)
     fields += est.extra_input_fields
-    return tuple(fields)
+    if 'subject' not in case_fields:  # a group pins each subject's mrisubject on the dependency edge based on the mri mapping (see _subject_state)
+        fields = ['mri' if field == 'mrisubject' else field for field in fields]
+    return tuple(dict.fromkeys(fields))
 
 
 def _post_process_trfs(
@@ -654,7 +656,7 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
-        return _trf_dataset_key_fields(ctx, self.estimators, 'group', 'mri')
+        return _trf_dataset_key_fields(ctx, self.estimators, 'group')
 
     def fingerprint(self, ctx: Request) -> dict[str, object]:
         return {'subjects': self.groups[ctx.state['group']]}
@@ -669,10 +671,16 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         if (smooth := ctx.options['smooth']) and not _is_source_space(ctx, self.estimators[ctx.options['estimator']]):
             raise ValueError(f"{smooth=}: smoothing is only available for source-space data")
 
+    def _dependency_state(self, ctx: Request, subject: str) -> dict[str, Any]:
+        "Dependency state for one subject: in source space, pins the subject's MRI (see source.nodes._subject_state)"
+        if _is_source_space(ctx, self.estimators[ctx.options['estimator']]):
+            return _subject_state(ctx.state, subject, self.mri_subjects)
+        return {'subject': subject}
+
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         options = self._subject_options(ctx)
         return tuple(
-            Dependency('trf-dataset', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
+            Dependency('trf-dataset', label=subject, state=self._dependency_state(ctx, subject), options=options)
             for subject in self.groups[ctx.state['group']]
         )
 
@@ -699,7 +707,7 @@ class TRFGroupDatasetDerivative(UncachedDerivative[Dataset]):
         if view != 'shell':
             return super().load_view(ctx, view)
         options = self._subject_options(ctx)
-        dss = [ctx.load('trf-dataset', state=_subject_state(ctx.state, subject, self.mri_subjects), options=options, view='shell') for subject in self.groups[ctx.state['group']]]
+        dss = [ctx.load('trf-dataset', state=self._dependency_state(ctx, subject), options=options, view='shell') for subject in self.groups[ctx.state['group']]]
         return self.apply_view_options(ctx, combine(dss))
 
 
@@ -752,7 +760,7 @@ class TRFModelTestDerivative(Derivative[Any]):
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...]:
-        return _trf_dataset_key_fields(ctx, self.estimators, 'group', 'mri')
+        return _trf_dataset_key_fields(ctx, self.estimators, 'group')
 
     def validate_options(self, ctx: Request) -> None:
         _normalize_trf_options(ctx.options)

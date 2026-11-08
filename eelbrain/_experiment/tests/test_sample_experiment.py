@@ -2742,13 +2742,17 @@ def test_trf_ncrf_dependencies(samples_trf_experiment):
     boosting_ctx = e._resolve_derivative('trf', options=e._trf_options('env', 0., 0.1, 'boosting', None, None, False))
     assert 'reference' in boosting_ctx.node._get_key_fields(boosting_ctx)
     # the dataset nodes key the estimator's extra input fields (dependency_tree validates every edge)
-    e._derivatives.dependency_tree('trf-group-dataset', state={**e.state, 'group': 'all'}, options=options)
+    e._derivatives.resolve('trf-group-dataset', state={**e.state, 'group': 'all'}, options=options).dependency_tree()
     # NCRF results are in source space: morphed to the common brain, and smoothing is available
     group_ctx = e._derivatives.resolve('trf-group-dataset', state={**e.state, 'group': 'all'}, options={**options, 'smooth': 0.005})
     assert 'common_brain' in group_ctx.node._get_key_fields(group_ctx)
     assert 'reference' not in group_ctx.node._get_key_fields(group_ctx)
+    # the group keys on the mri mapping, not on the current subject's mrisubject (NCRF's extra input field, pinned per edge)
+    assert 'mri' in group_ctx.node._get_key_fields(group_ctx)
+    assert 'mrisubject' not in group_ctx.node._get_key_fields(group_ctx)
+    assert 'mrisubject' in ctx.node._get_key_fields(ctx)
     options = e._trf_options('env > 0', 0., 0.1, 'ncrf', None, None, False, comparison=True)
-    e._derivatives.dependency_tree('trf-model-test', state={**e.state, 'group': 'all'}, options={**options, 'metric': 'explained_variance'})
+    e._derivatives.resolve('trf-model-test', state={**e.state, 'group': 'all'}, options={**options, 'metric': 'explained_variance'}).dependency_tree()
 
 
 @requires_mne_sample_data
@@ -3436,3 +3440,127 @@ def test_load_trfs_source(samples_experiment):
     assert ds[0, 'imp'].source.subject == 'fsaverage'
     assert ds[1, 'imp'].source.subject == 'fsaverage'
     assert ds[0, 'imp'].source == ds[1, 'imp'].source
+
+
+def test_mri_subjects(samples_experiment):
+    "Subject → MRI-subject mappings (Pipeline.mri_subjects and the mri state)"
+    from eelbrain._exceptions import ConfigurationError
+    from eelbrain._experiment.data import DataSpec
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+    from eelbrain import keydefaultdict
+
+    root = samples_experiment(n_subjects=3, n_segments=1, mris=True)
+
+    class Experiment(SampleExperiment):
+        mri_subjects = {  # the identity mapping '' is always available
+            'fsaverage': keydefaultdict(lambda s: 'fsaverage'),
+            'scaled': keydefaultdict(lambda s: f'{s}-scaled'),
+            'prefixed': {'R0000': 'sub-R0000', 'R0001': 'sub-R0001', 'R0002': 'sub-R0002'},
+        }
+
+    e = Experiment(root)
+    assert e.get_field_values('mri') == ['', 'fsaverage', 'prefixed', 'scaled']
+    assert e.get('mri') == ''
+    # the sub- prefix is added unless the entry is a template (see mri_templates) or already has it
+    assert e.get('mrisubject', subject='R0001') == 'sub-R0001'
+    assert e.get_field_values('mrisubject') == ['fsaverage', 'sub-R0000', 'sub-R0001', 'sub-R0002']
+    assert e.get('mrisubject', mri='fsaverage') == 'fsaverage'
+    assert e.get_field_values('mrisubject') == ['fsaverage']
+    assert e.get_field_values('mrisubject', exclude='fsaverage') == []
+    assert e.get('mrisubject', mri='scaled') == 'sub-R0001-scaled'
+    assert e.get_field_values('mrisubject') == ['fsaverage', 'sub-R0000-scaled', 'sub-R0001-scaled', 'sub-R0002-scaled']
+    assert e.get('mrisubject', mri='prefixed') == 'sub-R0001'
+    assert e.get_field_values('mrisubject') == ['fsaverage', 'sub-R0000', 'sub-R0001', 'sub-R0002']
+    # show_subjects() can select a mapping
+    ds = e.show_subjects(mri='scaled', mrisubject=True, asds=True)
+    assert list(ds['mrisubject']) == ['sub-R0000-scaled', 'sub-R0001-scaled', 'sub-R0002-scaled']
+    assert e.get('mri') == 'scaled'
+
+    # a group-level artifact is keyed on the mapping, not on the MRI subject of the subject that happens to be current
+    e.set(raw='1-40', epoch='target', inv='free-3-dSPM')
+    options = {'data': DataSpec('source'), 'samples': 0, 'test': 'left=right', 'tstart': None, 'tstop': None, 'pmin': None, 'disconnect_labels': True, 'baseline': True, 'src_baseline': None, 'smooth': None, 'samplingrate': None}
+    paths = {}
+    for mri in ('', 'fsaverage'):
+        for subject in e.iter(mri=mri):
+            ctx = e._resolve_derivative('test-result', options=options)
+            assert 'mrisubject' not in ctx.key()
+            paths[mri, subject] = ctx.artifact_path
+    assert len({path for (mri, _), path in paths.items() if mri == ''}) == 1
+    assert len({path for (mri, _), path in paths.items() if mri == 'fsaverage'}) == 1
+    assert paths['', 'R0000'] != paths['fsaverage', 'R0000']
+    # a subject-level artifact is keyed on the MRI subject, not on the mapping that selects it
+    options = {**options, 'test': 'twostage', 'samples': 8, 'disconnect_labels': False}
+    level_1_paths = {}
+    for mri in ('', 'prefixed'):
+        e.set(mri=mri, subject='R0000')
+        ctx = e._resolve_derivative('two-stage-level-2', options=options)
+        for dep, level_1 in ctx._dependency_handles():  # the group pins each subject's MRI on the edge
+            assert 'mri' not in level_1.key()
+            assert level_1.key()['mrisubject'] == f'sub-{dep.label}'
+            level_1_paths[mri, dep.label] = level_1.artifact_path
+    assert level_1_paths['', 'R0001'] == level_1_paths['prefixed', 'R0001']
+    # the mappings hold FreeSurfer directory names, so the group→subject edge only needs the mri state
+    from eelbrain._experiment.source.nodes import _subject_state
+    assert _subject_state({'mri': 'fsaverage'}, 'R0001', e._mri_subjects) == {'subject': 'R0001', 'mrisubject': 'fsaverage'}
+    assert _subject_state({'mri': 'scaled'}, 'R0001', e._mri_subjects) == {'subject': 'R0001', 'mrisubject': 'sub-R0001-scaled'}
+
+    # templates other than fsaverage are stored without the sub- prefix
+    class Templates(SampleExperiment):
+        mri_templates = ('template',)  # fsaverage and fsaverage_sym are always templates
+        mri_subjects = {'template': keydefaultdict(lambda s: 'template'), 'other': keydefaultdict(lambda s: 'other'), 'fsaverage': keydefaultdict(lambda s: 'fsaverage'), 'fsaverage_sym': keydefaultdict(lambda s: 'fsaverage_sym')}
+
+    e = Templates(root)
+    assert e.get('mrisubject', mri='template') == 'template'
+    assert e.get('mrisubject', mri='fsaverage') == 'fsaverage'
+    assert e.get('mrisubject', mri='fsaverage_sym') == 'fsaverage_sym'
+    assert e.get('mrisubject', mri='other') == 'sub-other'
+    assert e.get('mrisubject', mri='') == 'sub-R0000'
+
+    # a plain dict only needs entries for the subjects whose MRI is needed (here, the identity mapping is overridden)
+    class Incomplete(SampleExperiment):
+        mri_subjects = {'': {'R0000': 'R0000'}}
+
+    e = Incomplete(root)
+    assert e.get('mrisubject', subject='R0000') == 'sub-R0000'
+    assert e.get('mrisubject', subject='R0001') == ''  # a subject the mapping omits has no MRI subject
+    assert list(e.iter()) == ['R0000', 'R0001', 'R0002']  # but can be iterated over, e.g. for sensor-space analyses
+    assert e.get_field_values('mrisubject') == ['fsaverage', 'sub-R0000']  # and contributes no MRI subject
+    e.load_evoked(subject='R0001', epoch='target', raw='1-40')
+    with pytest.raises(ConfigurationError, match="R0001"):  # anything that needs the MRI raises
+        e.load_src()
+    with pytest.raises(ConfigurationError, match="R0001"):  # also when only the dependency tree is displayed
+        e.load_src(show_dependencies=True)
+    with pytest.raises(ConfigurationError, match="R0001"):
+        e.plot_brain()
+    ds = e.show_subjects(mri=True, mrisubject=True, asds=True)
+    assert list(ds['mrisubject']) == ['sub-R0000', '', '']
+    assert list(ds['mri'][1:]) == ['*not mapped', '*not mapped']
+
+    class NotAMapping(SampleExperiment):
+        mri_subjects = {'': 'fsaverage'}
+
+    with pytest.raises(TypeError, match="mri_subjects"):
+        NotAMapping(root)
+
+    class NotAName(SampleExperiment):
+        mri_subjects = {'': keydefaultdict(lambda s: None)}
+
+    with pytest.raises(TypeError, match=r"mri_subjects\[''\]\['R0000'\]=None"):
+        NotAName(root)
+
+    # only a missing entry resolves to an empty mrisubject; other errors from a mapping are raised
+    def lookup(subject):
+        raise ConfigurationError("the subject table has no MRI column")
+
+    class Failing(SampleExperiment):
+        mri_subjects = {'': keydefaultdict(lookup)}
+
+    with pytest.raises(ConfigurationError, match="no MRI column"):
+        Failing(root)
+
+    # a KeyError from inside a keydefaultdict factory is not a missing entry either
+    class FailingLookup(SampleExperiment):
+        mri_subjects = {'': keydefaultdict(lambda s: {'R0000': 'R0000'}[f'{s}-typo'])}
+
+    with pytest.raises(KeyError, match="R0000-typo"):
+        FailingLookup(root)

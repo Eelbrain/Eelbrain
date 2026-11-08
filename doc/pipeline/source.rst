@@ -22,19 +22,25 @@ See the wiki for more information on using `structural MRIs <https://github.com/
 .. py:attribute:: Pipeline.mri_subjects
    :type: Dict[str, Dict[str, str]]
 
-Map MEG/EEG subjects to FreeSurfer MRI subjects. Keys in ``mri_subjects`` are names for different mappings and correspond to values of the :ref:`state-mri` state parameter; the inner dictionaries map :ref:`state-subject` values to MRI subject names (i.e., directory names under ``{root}/derivatives/freesurfer``). By default, an identity mapping is used (each subject uses their own MRI directory), but custom mappings can be defined, for example to let several subjects share a template brain or to point to individually scaled MRI subjects, e.g.::
+Map MEG/EEG subjects to FreeSurfer MRI subjects. Keys in ``mri_subjects`` are names for different mappings and correspond to values of the :ref:`state-mri` state parameter; the inner dictionaries map :ref:`state-subject` values to MRI subject names. MRI subjects are directories under ``{root}/derivatives/freesurfer``; like the subject directories, they are named ``sub-{name}``, and the ``sub-`` prefix is added automatically (unless the name is a template listed in :attr:`Pipeline.mri_templates`, or already starts with ``sub-``). By default, an identity mapping is used, i.e., each subject uses their own MRI directory ``sub-{subject}``. Custom mappings can be defined, for example to let several subjects share a template brain or to point to individually scaled MRI subjects. A plain dictionary needs an entry for every subject whose MRI is used; a mapping that follows from the subject name is more easily defined as a function with :class:`~eelbrain.keydefaultdict`, e.g.::
+
+    from eelbrain import keydefaultdict
 
     mri_subjects = {
-        '': {  # default identity mapping
+        'fsaverage': keydefaultdict(lambda subject: 'fsaverage'),  # all subjects use the template brain
+        'scaled': keydefaultdict(lambda subject: f'{subject}-scaled'),  # sub-{subject}-scaled
+        'own': {  # explicit, needs an entry for every subject whose MRI is used
             'S001': 'S001',
-            'S002': 'S002',
-        },
-        'fsaverage': {  # all subjects use the template brain
-            'S001': 'fsaverage',
-            'S002': 'fsaverage',
+            'S002': 'S001',  # S002 uses the MRI of S001
         },
     }
 
+The identity mapping ``''`` (``keydefaultdict(lambda subject: subject)``) is always available and is the initial :ref:`state-mri` value, unless ``mri_subjects`` overrides the ``''`` entry. The resulting MRI subject is available as the :ref:`state-mrisubject` state. A subject that the selected mapping omits has an empty ``mrisubject``: it can still be iterated over and analyzed in sensor space, but anything that needs its MRI raises an error.
+
+.. py:attribute:: Pipeline.mri_templates
+   :type: Sequence[str]
+
+FreeSurfer subjects that are not derived from a MEG/EEG subject, such as template brains. Their directories under ``{root}/derivatives/freesurfer`` are named without the ``sub-`` prefix. The default is ``('fsaverage', 'fsaverage_sym')``; ``fsaverage`` and ``fsaverage_sym``, the FreeSurfer average brains, are always treated as templates, even when ``mri_templates`` does not list them.
 
 Missing MRI subjects are created automatically when they are first needed, as long as they can be derived without user input:
 
@@ -169,7 +175,25 @@ State parameters
 
 Selects a mapping from MEG/EEG subjects to MRI subjects defined in
 :attr:`Pipeline.mri_subjects`. The default (``''``) is the identity mapping, in
-which each subject uses their own MRI directory.
+which each subject uses their own MRI directory. Group-level source space
+results are cached separately for each mapping; subject-level results are
+cached per MRI subject, so mappings that select the same MRI subject share
+them. In the :ref:`pipeline-gui`, the MRI and
+Coregistration tasks offer the mapping in the **MRI** dropdown (when the
+pipeline defines more than one).
+
+
+.. _state-mrisubject:
+
+``mrisubject``
+--------------
+
+The FreeSurfer MRI subject (directory name under ``{root}/derivatives/freesurfer``)
+for the current :ref:`state-subject` under the current :ref:`state-mri` mapping.
+It is set automatically whenever ``subject`` or ``mri`` change, but can be
+overridden for a single call to load data for a specific MRI subject, e.g.
+``e.load_src(mrisubject='fsaverage')``. It is empty for a subject that the
+mapping omits.
 
 
 .. _state-cov:

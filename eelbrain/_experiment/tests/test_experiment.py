@@ -1,6 +1,8 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from itertools import product
 
+import pytest
+
 from eelbrain._experiment import StateModel
 
 
@@ -47,7 +49,16 @@ class DependentState(StateModel):
         self._register_slave_field('s', 'a', lambda f: f['a'].upper())
         self._register_field('s_a', a_seq, depends_on='c', slave_handler=self._update_sa)
         self._register_field('s_b', b_seq, depends_on='c', slave_handler=self._update_sb, allow_empty=True)
+        self._register_slave_field('s_s_a', 's_a', lambda f: f['s_a'].upper())  # depends on a slave field
+        self._register_field('d', ('d1', 'bad'))
+        self._register_slave_field('s_d', 'd', self._update_sd)  # raises for d='bad'
         self._store_state()
+
+    @staticmethod
+    def _update_sd(fields):
+        if fields['d'] == 'bad':
+            raise ValueError("bad d")
+        return fields['d'].upper()
 
     @staticmethod
     def _update_sa(fields):
@@ -87,9 +98,17 @@ def test_slave_tree():
     tree.set(c='c2')
     assert tree.get('s_a') == 'a2'
     assert tree.get('s_b') == 'b2'
+    assert tree.get('s_s_a') == 'A2'  # a slave of a slave is updated in the same call
     tree.set(c='c1')
     assert tree.get('s_a') == 'a1'
     assert tree.get('s_b') == 'b1'
+    assert tree.get('s_s_a') == 'A1'
+
+    # a slave handler that raises leaves the state unchanged
+    tree.set(a='a1', d='d1')
+    with pytest.raises(ValueError, match="bad d"):
+        tree.set(a='a3', d='bad')
+    assert (tree.get('a'), tree.get('s'), tree.get('d'), tree.get('s_d')) == ('a1', 'A1', 'd1', 'D1')
 
     # .iter()
     assert list(tree.iter('a')) == a_seq

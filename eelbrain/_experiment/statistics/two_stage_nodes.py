@@ -14,6 +14,7 @@ from ..data import DataSpec
 from ..derivative_cache import Dependency, Derivative, Request, UncachedDerivative
 from ..pathing import MRI_SDIR
 from ..source import ROIData, roi_data_from_dataset
+from ..source.nodes import _subject_state
 from .config import ResolvedTestNDSpec, Test, TwoStageTest
 from .nodes import RESULT_OPTION_DEFAULTS, RESULT_SOURCE_GROUP_KEY_FIELDS, ROITestResult, ResultOutputDerivative
 
@@ -186,7 +187,7 @@ class TwoStageLevel1Derivative(Derivative[Any]):
         data = ctx.options['data']
         fields = ['subject', 'session', 'acquisition', 'epoch', 'raw', 'epoch_rejection']
         if data is None or data.source:
-            fields += ['equalize_evoked_count', 'cov', 'inv', 'src', 'mri', 'mrisubject', 'parc', 'common_brain', 'adjacency']
+            fields += ['equalize_evoked_count', 'cov', 'inv', 'src', 'mrisubject', 'parc', 'common_brain', 'adjacency']  # 'mrisubject' but not 'mri': the MRI subject determines the MRI, so the same artifact serves every mapping that selects it
         return tuple(fields)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
@@ -231,6 +232,17 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
     key_options = {**RESULT_OPTION_DEFAULTS, 'disconnect_labels': False}
     view_options = {}
 
+    def __init__(
+            self,
+            tests: dict[str, Test],
+            epochs: dict[str, Any],
+            parcs: dict[str, Any],
+            groups: dict[str, tuple[str, ...] | list[str]],
+            mri_subjects: dict[str, dict[str, str]],
+    ):
+        super().__init__(tests, epochs, parcs, groups)
+        self.mri_subjects = mri_subjects
+
     def cache_label(self, ctx: Request) -> str:
         return self._path_stem(ctx) if ctx.options['samples'] is None else f"{self._path_stem(ctx)}_samples-{ctx.options['samples']}"
 
@@ -239,8 +251,9 @@ class TwoStageLevel2Derivative(ResultOutputDerivative):
 
     def dependencies(self, ctx: Request) -> tuple[Dependency, ...]:
         subjects = self.groups[ctx.state['group']]
+        options = ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS)
         return tuple(
-            Dependency('two-stage-level-1', label=subject, state={'subject': subject}, options=ctx.options_for('two-stage-level-1', *RESULT_OPTION_DEFAULTS))
+            Dependency('two-stage-level-1', label=subject, state=_subject_state(ctx.state, subject, self.mri_subjects), options=options)
             for subject in subjects
         )
 

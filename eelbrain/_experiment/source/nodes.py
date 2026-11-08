@@ -456,18 +456,15 @@ def _subject_state(
         state: dict[str, Any],
         subject: str,
         mri_subjects: dict[str, dict[str, str]],
-        common_brain: str = 'fsaverage',
 ) -> dict[str, Any]:
     """The state fields to override to switch to ``subject`` (a dependency delta).
 
     Only the changed fields are returned; the parent state propagates to the
-    dependency automatically.
+    dependency automatically. ``mri_subjects`` holds FreeSurfer directory names
+    (see :attr:`Pipeline._mri_subjects`), so the subject's MRI follows from
+    ``mri`` alone and the group node has to key on ``mri``.
     """
-    mri = state['mri']
-    mrisubject = mri_subjects[mri][subject]
-    if mrisubject != common_brain and not mrisubject.startswith('sub-'):
-        mrisubject = 'sub-' + mrisubject
-    return {'subject': subject, 'mrisubject': mrisubject}
+    return {'subject': subject, 'mrisubject': mri_subjects[state['mri']][subject]}
 
 
 @dataclass
@@ -878,7 +875,8 @@ class EvokedStcGroupDatasetDerivative(UncachedDerivative[Dataset | ROIData]):
         self.groups = groups
 
     def override_key_fields(self, ctx: Request) -> tuple[str, ...] | None:
-        fields = ('group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'mrisubject', 'adjacency')
+        # each subject's MRI follows from ('mri', 'subject') and is pinned per dependency (see _subject_state)
+        fields = ('group', 'mri', 'session', 'acquisition', 'epoch', 'epoch_rejection', 'equalize_evoked_count', 'inv', 'cov', 'raw', 'src', 'parc', 'adjacency')
         if ctx.options['morph']:
             fields += ('common_brain',)
         return fields
