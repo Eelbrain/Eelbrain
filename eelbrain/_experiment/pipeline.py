@@ -644,9 +644,9 @@ class Pipeline(StateModel):
             path_only: bool = False,
             show_dependencies: bool = False,
     ) -> Any:
-        ctx = self._resolve_derivative(name, options=options, controls=controls)  # raises for a subject the mri mapping omits
+        ctx = self._resolve_derivative(name, options=options, controls=controls)
         if show_dependencies:
-            return self._derivatives.dependency_tree(name, state=self.state, options=options, view=view, controls=controls)
+            return ctx.dependency_tree(view=view)
         if path_only:
             return ctx.artifact_path
         return ctx.load(view=view)
@@ -1910,9 +1910,10 @@ class Pipeline(StateModel):
         ica_raw_name = self._raw.ica_name(raw_name)
         state = {**self.state, 'raw': ica_raw_name}
         controls = {REINDEX_ICA} if accept_stale else ()
+        ctx = self._derivatives.resolve(ica_input_name(ica_raw_name), state=state, controls=controls)
         if show_dependencies:
-            return self._derivatives.dependency_tree(ica_input_name(ica_raw_name), state=state, controls=controls)
-        return self._derivatives.resolve(ica_input_name(ica_raw_name), state=state, controls=controls).load()
+            return ctx.dependency_tree()
+        return ctx.load()
 
     def load_inv(
             self,
