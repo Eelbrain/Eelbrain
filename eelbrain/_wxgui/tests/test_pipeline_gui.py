@@ -688,7 +688,7 @@ def test_launch_browse_raw_subprocess(monkeypatch):
 
 
 def test_on_browse_raw_closed(monkeypatch):
-    "Changed bad channels are saved after confirmation, once the pipeline is free; unchanged ones and a declined dialog save nothing; a failed browser, or save, shows the error"
+    "Changed bad channels are saved after confirmation, once the pipeline is free, with a warning if they were also changed elsewhere; unchanged ones and a declined dialog save nothing; a failed browser, or save, shows the error"
     saved, refreshed, errors, messages = [], [], [], []
     answer = wx.ID_YES
 
@@ -698,7 +698,8 @@ def test_on_browse_raw_closed(monkeypatch):
             return answer
         return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
-    pipeline = SimpleNamespace(make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state)))
+    current = ['MEG 0111']
+    pipeline = SimpleNamespace(load_bad_channels=lambda raw, **state: current, make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state)))
     frame = _frame(_pipeline=pipeline, _pipeline_lock=threading.Lock(), _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0112', 'MEG 0113'], '')
     assert saved == [(['MEG 0112', 'MEG 0113'], True, 'raw', {'subject': 'R01'})]
@@ -707,14 +708,21 @@ def test_on_browse_raw_closed(monkeypatch):
     # unchanged: no dialog
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0111'], '')
     assert len(messages) == 1 and len(saved) == 1
-    # declined
+    # changed elsewhere while the browser was open
+    current = ['MEG 0111', 'MEG 0114']
     answer = wx.ID_NO
-    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0111'], '')
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0112'], '')
+    assert messages[-1] == "Save the bad channels set in the raw browser for R01?\n\nAdded: MEG 0112\nRemoved: MEG 0111, MEG 0114\n\nThe bad channels were changed elsewhere while the raw browser was open; saving replaces them with the ones set in the browser."
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0114', 'MEG 0111'], '')  # the same change
     assert len(messages) == 2 and len(saved) == 1
+    # declined
+    current = []
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0111'], '')
+    assert len(messages) == 3 and len(saved) == 1
     # failed browser
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], None, 'Traceback: boom')
     assert errors == [('Traceback: boom', "Raw Browser Failed", "The MNE raw browser for R01 did not exit cleanly; bad channels were not updated.")]
-    assert len(messages) == 2 and len(saved) == 1
+    assert len(messages) == 3 and len(saved) == 1
     # a save that fails for a reason that is not a user error
 
     def fail(bads, redo, raw, **state):
@@ -733,13 +741,13 @@ def test_on_browse_raw_closed(monkeypatch):
     with frame._pipeline_lock:
         frame._on_browse_raw_closed(*args)
     assert later == [(100, frame._on_browse_raw_closed, *args)]
-    assert len(messages) == 3 and len(saved) == 1
+    assert len(messages) == 4 and len(saved) == 1
     frame._on_browse_raw_closed(*args)
-    assert len(messages) == 4 and len(saved) == 2 and not frame._pipeline_lock.locked()
+    assert len(messages) == 5 and len(saved) == 2 and not frame._pipeline_lock.locked()
     # posted while the GUI was closing
     frame._closed = True
     frame._on_browse_raw_closed(*args)
-    assert len(messages) == 4 and len(errors) == 2
+    assert len(messages) == 5 and len(errors) == 2
 
 
 def test_callbacks_after_close():

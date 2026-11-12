@@ -1198,6 +1198,19 @@ class PipelineFrame(EelbrainFrame):
 
         Like :meth:`_add_ica_bad_channels`, this can arrive while a refresh pass or the
         compute worker is using the pipeline, and is then retried once they are done.
+
+        Parameters
+        ----------
+        raw_name
+            Raw pipe that was shown.
+        state
+            Key-field values identifying the recording.
+        bads
+            Bad channels the browser was opened with.
+        new_bads
+            Bad channels the browser was closed with; ``None`` if it failed.
+        stderr
+            What the browser wrote to stderr.
         """
         if self._closed:
             return  # the browser closed while this window was closing
@@ -1211,14 +1224,19 @@ class PipelineFrame(EelbrainFrame):
             wx.CallLater(100, self._on_browse_raw_closed, raw_name, state, bads, new_bads, stderr)
             return
         try:
-            added = [ch for ch in new_bads if ch not in bads]
-            removed = [ch for ch in bads if ch not in new_bads]
+            current_bads = self._pipeline.load_bad_channels(raw=raw_name, **state)  # may have been changed while the browser was open
+            if sorted(new_bads) == sorted(current_bads):
+                return
+            added = [ch for ch in new_bads if ch not in current_bads]
+            removed = [ch for ch in current_bads if ch not in new_bads]
             changes = []
             if added:
                 changes.append(f"Added: {', '.join(added)}")
             if removed:
                 changes.append(f"Removed: {', '.join(removed)}")
             message = f"Save the bad channels set in the raw browser for {subject}?\n\n" + '\n'.join(changes)
+            if sorted(current_bads) != sorted(bads):
+                message += "\n\nThe bad channels were changed elsewhere while the raw browser was open; saving replaces them with the ones set in the browser."
             dlg = wx.MessageDialog(self, message, "Save Bad Channels", wx.YES_NO | wx.ICON_QUESTION)
             answer = dlg.ShowModal()
             dlg.Destroy()
