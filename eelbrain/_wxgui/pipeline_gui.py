@@ -1133,28 +1133,45 @@ class PipelineFrame(EelbrainFrame):
         The browser reads a file: the source recording's own, a raw pipe's cache file
         (built here if needed), or, for a raw pipe that does not cache, a temporary
         file written here (and removed when the browser closes).
+
+        While the compute worker is using the pipeline (it may be building the same
+        cache file), this is tried again later, unless the table changed meanwhile.
         """
         pipeline = self._pipeline
         raw_name = self._raw_name()
-        state = dict(zip(self._layout.key_fields, self._row_combo(idx)))
+        combo = self._row_combo(idx)
+        state = dict(zip(self._layout.key_fields, combo))
+        if not self._pipeline_lock.acquire(blocking=False):
+            scope = self._table_scope()
+
+            def retry() -> None:
+                row = self._displayed_row(scope, combo)
+                if row >= 0:
+                    self._run_row_action(row, RowAction("Open in mne browse_raw…", partial(self._open_mne_browse_raw, row)))
+
+            wx.CallLater(100, retry)
+            return
         tmp_dir = None
         try:
-            with pipeline._temporary_state, wx.BusyCursor():
-                pipeline.set(raw=raw_name, **state)
-                bads = pipeline.load_bad_channels()
-                if isinstance(pipeline._raw[raw_name], RawSource):
-                    raw_ctx = pipeline._resolve_derivative(raw_input_name(raw_name))
-                    path = raw_ctx.node.path(raw_ctx)
-                else:
-                    raw = pipeline.load_raw()  # builds the cache file for a pipe that caches
-                    raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
-                    if raw_ctx.node.cache_policy is CachePolicy.NEVER:
-                        tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
-                        self._browse_raw_tmp_dirs.append(tmp_dir)
-                        path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
-                        raw.save(path)
+            try:
+                with pipeline._temporary_state, wx.BusyCursor():
+                    pipeline.set(raw=raw_name, **state)
+                    bads = pipeline.load_bad_channels()
+                    if isinstance(pipeline._raw[raw_name], RawSource):
+                        raw_ctx = pipeline._resolve_derivative(raw_input_name(raw_name))
+                        path = raw_ctx.node.path(raw_ctx)
                     else:
-                        path = raw_ctx.artifact_path
+                        raw = pipeline.load_raw()  # builds the cache file for a pipe that caches
+                        raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
+                        if raw_ctx.node.cache_policy is CachePolicy.NEVER:
+                            tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
+                            self._browse_raw_tmp_dirs.append(tmp_dir)
+                            path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
+                            raw.save(path)
+                        else:
+                            path = raw_ctx.artifact_path
+            finally:
+                self._pipeline_lock.release()
 
             def on_close(new_bads: list[str] | None, stderr: str) -> None:
                 if tmp_dir is not None:
@@ -1177,7 +1194,11 @@ class PipelineFrame(EelbrainFrame):
             new_bads: list[str] | None,
             stderr: str,
     ) -> None:
-        """Save the bad channels the MNE raw browser was closed with, after confirmation."""
+        """Save the bad channels the MNE raw browser was closed with, after confirmation.
+
+        Like :meth:`_add_ica_bad_channels`, this can arrive while a refresh pass or the
+        compute worker is using the pipeline, and is then retried once they are done.
+        """
         if self._closed:
             return  # the browser closed while this window was closing
         subject = ' '.join(state.values())
@@ -1186,24 +1207,29 @@ class PipelineFrame(EelbrainFrame):
             return
         elif sorted(new_bads) == sorted(bads):
             return
-        added = [ch for ch in new_bads if ch not in bads]
-        removed = [ch for ch in bads if ch not in new_bads]
-        changes = []
-        if added:
-            changes.append(f"Added: {', '.join(added)}")
-        if removed:
-            changes.append(f"Removed: {', '.join(removed)}")
-        message = f"Save the bad channels set in the raw browser for {subject}?\n\n" + '\n'.join(changes)
-        dlg = wx.MessageDialog(self, message, "Save Bad Channels", wx.YES_NO | wx.ICON_QUESTION)
-        answer = dlg.ShowModal()
-        dlg.Destroy()
-        if answer != wx.ID_YES:
+        if not self._pipeline_lock.acquire(blocking=False):
+            wx.CallLater(100, self._on_browse_raw_closed, raw_name, state, bads, new_bads, stderr)
             return
         try:
+            added = [ch for ch in new_bads if ch not in bads]
+            removed = [ch for ch in bads if ch not in new_bads]
+            changes = []
+            if added:
+                changes.append(f"Added: {', '.join(added)}")
+            if removed:
+                changes.append(f"Removed: {', '.join(removed)}")
+            message = f"Save the bad channels set in the raw browser for {subject}?\n\n" + '\n'.join(changes)
+            dlg = wx.MessageDialog(self, message, "Save Bad Channels", wx.YES_NO | wx.ICON_QUESTION)
+            answer = dlg.ShowModal()
+            dlg.Destroy()
+            if answer != wx.ID_YES:
+                return
             self._pipeline.make_bad_channels(new_bads, redo=True, raw=raw_name, **state)
         except Exception as error:  # not run through _run_row_action, so every error has to be shown here
             self._show_error(*_error_dialog_args(error))
             return
+        finally:
+            self._pipeline_lock.release()
         self._start_refresh()
 
     def _open_ica_gui(self, idx: int) -> None:

@@ -515,7 +515,7 @@ def _browse_raw_frame(monkeypatch, tmp_path, caches: bool):
     launched = []
     monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', lambda *args: launched.append(args) or 'proc')
     monkeypatch.setattr(pipeline_gui.wx, 'BusyCursor', contextlib.nullcontext)
-    frame.__dict__.update(_pipeline=pipeline, _n_loading=0, _subprocesses=[], _browse_raw_tmp_dirs=[], _closed=False)
+    frame.__dict__.update(_pipeline=pipeline, _pipeline_lock=threading.Lock(), _n_loading=0, _subprocesses=[], _browse_raw_tmp_dirs=[], _closed=False)
     return frame, launched, loaded, saved
 
 
@@ -557,6 +557,26 @@ def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: None)
     launched[-1][2](['MEG 0111'], '')
     assert not tmp_file.parent.exists()
+
+
+def test_open_mne_browse_raw_busy(monkeypatch, tmp_path):
+    "While the pipeline is in use the browser is not opened; it is opened later, unless the table changed meanwhile"
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=True)
+    frame._raw_name = lambda: 'filt'
+    scope = ['bad_chs table']
+    frame._table_scope = lambda: scope[0]
+    later = []
+    monkeypatch.setattr(pipeline_gui.wx, 'CallLater', lambda *args: later.append(args))
+    with frame._pipeline_lock:
+        frame._run_row_action(0, frame._row_actions(0)[2])
+    (delay, retry), = later
+    assert delay == 100 and launched == [] and loaded == []
+    retry()
+    assert launched[-1][0] == str(tmp_path / 'cache-raw.fif') and not frame._pipeline_lock.locked()
+    # the table changed before the retry
+    scope[0] = 'ica table'
+    retry()
+    assert len(launched) == 1
 
 
 def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
@@ -668,7 +688,7 @@ def test_launch_browse_raw_subprocess(monkeypatch):
 
 
 def test_on_browse_raw_closed(monkeypatch):
-    "Changed bad channels are saved after confirmation; unchanged ones and a declined dialog save nothing; a failed browser, or save, shows the error"
+    "Changed bad channels are saved after confirmation, once the pipeline is free; unchanged ones and a declined dialog save nothing; a failed browser, or save, shows the error"
     saved, refreshed, errors, messages = [], [], [], []
     answer = wx.ID_YES
 
@@ -679,7 +699,7 @@ def test_on_browse_raw_closed(monkeypatch):
         return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
     pipeline = SimpleNamespace(make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state)))
-    frame = _frame(_pipeline=pipeline, _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
+    frame = _frame(_pipeline=pipeline, _pipeline_lock=threading.Lock(), _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0112', 'MEG 0113'], '')
     assert saved == [(['MEG 0112', 'MEG 0113'], True, 'raw', {'subject': 'R01'})]
     assert refreshed == [True]
@@ -705,10 +725,21 @@ def test_on_browse_raw_closed(monkeypatch):
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
     assert 'MEG 0112 not in raw' in errors[-1][0]
     assert len(saved) == 1 and refreshed == [True]
+    # a refresh pass or the compute worker is using the pipeline: tried again later
+    later = []
+    monkeypatch.setattr(pipeline_gui.wx, 'CallLater', lambda *args: later.append(args))
+    pipeline.make_bad_channels = lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state))
+    args = ('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
+    with frame._pipeline_lock:
+        frame._on_browse_raw_closed(*args)
+    assert later == [(100, frame._on_browse_raw_closed, *args)]
+    assert len(messages) == 3 and len(saved) == 1
+    frame._on_browse_raw_closed(*args)
+    assert len(messages) == 4 and len(saved) == 2 and not frame._pipeline_lock.locked()
     # posted while the GUI was closing
     frame._closed = True
-    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
-    assert len(messages) == 3 and len(errors) == 2
+    frame._on_browse_raw_closed(*args)
+    assert len(messages) == 4 and len(errors) == 2
 
 
 def test_callbacks_after_close():
