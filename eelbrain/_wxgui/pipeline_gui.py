@@ -1161,14 +1161,14 @@ class PipelineFrame(EelbrainFrame):
                         raw_ctx = pipeline._resolve_derivative(raw_input_name(raw_name))
                         path = raw_ctx.node.path(raw_ctx)
                     else:
-                        raw = pipeline.load_raw()  # builds the cache file for a pipe that caches
                         raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
                         if raw_ctx.node.cache_policy is CachePolicy.NEVER:
                             tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
                             self._browse_raw_tmp_dirs.append(tmp_dir)
                             path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
-                            raw.save(path)
+                            raw_ctx.load().save(path)
                         else:
+                            raw_ctx.ensure()  # builds the cache file if needed, without reading it
                             path = raw_ctx.artifact_path
             finally:
                 self._pipeline_lock.release()

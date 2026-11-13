@@ -493,24 +493,23 @@ def _browse_raw_frame(monkeypatch, tmp_path, caches: bool):
     frame = _table_frame('bad_chs', [('R01', 'done', '3')])
     source = SimpleNamespace(node=SimpleNamespace(path=lambda ctx: tmp_path / 'R01_raw.fif'))
     cache_policy = pipeline_gui.CachePolicy.REQUIRED if caches else pipeline_gui.CachePolicy.NEVER
-    cache = SimpleNamespace(node=SimpleNamespace(cache_policy=cache_policy), artifact_path=tmp_path / 'cache-raw.fif')
-    loaded, saved = [], []
+    loaded, saved = [], []  # loaded: how the pipe's request was used ('load' reads the data, 'ensure' only builds the cache file)
 
     def save(path):
         path.touch()
         saved.append(path)
 
-    def load_raw():
-        loaded.append(True)
+    def load():
+        loaded.append('load')
         return SimpleNamespace(save=save)
 
+    cache = SimpleNamespace(node=SimpleNamespace(cache_policy=cache_policy), artifact_path=tmp_path / 'cache-raw.fif', load=load, ensure=lambda: loaded.append('ensure'))
     pipeline = SimpleNamespace(
         _temporary_state=contextlib.nullcontext(),
         set=lambda **state: None,
         _raw={'raw': pipeline_gui.RawSource(), 'filt': SimpleNamespace()},
         _resolve_derivative=lambda name: {pipeline_gui.raw_input_name('raw'): source, pipeline_gui.raw_node_name('filt'): cache}[name],
         load_bad_channels=lambda: ['MEG 0111'],
-        load_raw=load_raw,
     )
     launched = []
     monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', lambda *args: launched.append(args) or 'proc')
@@ -541,17 +540,18 @@ def test_open_mne_browse_raw(monkeypatch, tmp_path):
 
 
 def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
-    "A raw pipe that caches is shown from its cache file, built by loading it; one that does not cache is written to a temporary file that is removed when the browser closes"
+    "A raw pipe that caches is shown from its cache file, built if needed but not read; one that does not cache is written to a temporary file that is removed when the browser closes"
     frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=True)
     frame._raw_name = lambda: 'filt'
     frame._run_row_action(0, frame._row_actions(0)[2])
     assert launched[-1][0] == str(tmp_path / 'cache-raw.fif')
-    assert loaded == [True] and saved == []
+    assert loaded == ['ensure'] and saved == []
 
     frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=False)
     frame._raw_name = lambda: 'filt'
     frame._run_row_action(0, frame._row_actions(0)[2])
     (tmp_file,) = saved
+    assert loaded == ['load']
     assert launched[-1][0] == str(tmp_file)
     assert tmp_file.name == 'R01_filt-raw.fif' and tmp_file.exists()
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: None)
@@ -593,17 +593,18 @@ def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
 
     monkeypatch.setattr(pipeline_gui.tempfile, 'mkdtemp', mkdtemp)
     # writing the file fails
-    load_raw = frame._pipeline.load_raw
+    cache = frame._pipeline._resolve_derivative(pipeline_gui.raw_node_name('filt'))
+    load = cache.load
 
     def save(path):
         raise OSError("disk full")
 
-    frame._pipeline.load_raw = lambda: SimpleNamespace(save=save)
+    cache.load = lambda: SimpleNamespace(save=save)
     frame._run_row_action(0, frame._row_actions(0)[2])
     assert 'disk full' in errors[-1][0] and launched == []
     assert not tmp_dir.exists()
     # starting the browser fails
-    frame._pipeline.load_raw = load_raw
+    cache.load = load
 
     def launch(*args):
         raise OSError("no python")
