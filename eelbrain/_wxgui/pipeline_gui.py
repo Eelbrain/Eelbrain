@@ -41,29 +41,68 @@ if TYPE_CHECKING:
     from .._experiment.pipeline import Pipeline
 
 
-def _launch_coreg_subprocess(
-        mrisubject: str,
-        subjects_dir: str,
-        inst: str,
-        trans: str | None = None,
-        on_close: Callable | None = None,
-) -> subprocess.Popen:
-    """Launch mne.gui.coregistration in a subprocess to avoid Qt/wx event loop conflict."""
-    kwargs = f'subject={mrisubject!r}, {subjects_dir=}, {inst=}, block=True'
-    if trans is not None:
-        kwargs += f', {trans=}'
-    proc = subprocess.Popen([
-        sys.executable, '-c',
-        f'import mne; mne.gui.coregistration({kwargs})',
-    ])
-    if on_close is not None:
-        threading.Thread(target=lambda: (proc.wait(), on_close()), daemon=True).start()
-    return proc
+class _SubprocessWindow:
+    """A GUI running in a subprocess (to avoid a Qt/wx event loop conflict), with what has to be done once it closes.
+
+    Parameters
+    ----------
+    kind
+        What the GUI is, to name it to the user.
+    script
+        Python code that shows the GUI and returns once the user closed it.
+    args
+        Command line arguments for the script.
+    on_close
+        Called in a thread of its own once the GUI closed, with whether it exited
+        cleanly and what it wrote to stdout and stderr (``None`` unless ``capture``).
+    capture
+        Capture what the GUI writes to stdout and stderr, rather than leaving it to the terminal.
+    tmp_dir
+        Directory with a temporary file the GUI reads; removed once the GUI closed.
+    """
+
+    def __init__(
+            self,
+            kind: str,
+            script: str,
+            args: Sequence[str],
+            on_close: Callable[[bool, str | None, str | None], None],
+            capture: bool = False,
+            tmp_dir: Path | None = None,
+    ) -> None:
+        self.kind = kind
+        self._tmp_dir = tmp_dir
+        pipe = subprocess.PIPE if capture else None
+        self._proc = subprocess.Popen([sys.executable, '-c', script, *args], stdout=pipe, stderr=pipe, text=True)
+        threading.Thread(target=self._wait, args=(on_close,), daemon=True).start()
+
+    def _wait(self, on_close: Callable[[bool, str | None, str | None], None]) -> None:
+        stdout, stderr = self._proc.communicate()
+        self._remove_tmp_dir()
+        on_close(self._proc.returncode == 0, stdout, stderr)
+
+    def _remove_tmp_dir(self) -> None:
+        if self._tmp_dir is not None:
+            shutil.rmtree(self._tmp_dir, ignore_errors=True)
+
+    def is_open(self) -> bool:
+        return self._proc.poll() is None
+
+    def close(self) -> None:
+        """Close the GUI, discarding what the user did there, and remove its temporary file."""
+        self._proc.terminate()
+        if self._tmp_dir is not None:  # the waiting thread may not get to it before the app exits
+            try:
+                self._proc.wait(5)  # until the GUI has closed its file (immediate for one that closed before)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+                self._proc.wait()
+            self._remove_tmp_dir()
 
 
 # Marks the line of output on which the raw browser subprocess reports its result (MNE logs to stdout as well)
 _BROWSE_RAW_RESULT = 'eelbrain-bad-channels: '
-# Runs in a subprocess: the MNE raw browser (what ``mne browse_raw`` does), seeded with the pipeline's bad channels, reporting the edited ones as JSON on a line starting with _BROWSE_RAW_RESULT.
+# Runs in a :class:`_SubprocessWindow`: the MNE raw browser (what ``mne browse_raw`` does), seeded with the pipeline's bad channels, reporting the edited ones as JSON on a line starting with _BROWSE_RAW_RESULT.
 # Bad channels that the displayed raw does not contain (dropped by a raw pipe) are kept as they are.
 _BROWSE_RAW_SCRIPT = f'''
 import json, sys
@@ -75,27 +114,6 @@ raw.info['bads'] = [ch for ch in bads if ch in raw.ch_names]
 raw.plot(block=True)
 print({_BROWSE_RAW_RESULT!r} + json.dumps(raw.info['bads'] + [ch for ch in bads if ch not in raw.ch_names]))
 '''
-
-
-def _launch_browse_raw_subprocess(
-        path: str,
-        bads: list[str],
-        on_close: Callable[[list[str] | None, str], None],
-) -> subprocess.Popen:
-    """Open ``path`` in the MNE raw browser in a subprocess (to avoid Qt/wx event loop conflict); ``on_close`` receives the bad channels it was closed with (``None`` if it failed) and its stderr output."""
-    proc = subprocess.Popen([sys.executable, '-c', _BROWSE_RAW_SCRIPT, path, json.dumps(bads)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-    def wait() -> None:
-        stdout, stderr = proc.communicate()
-        results = [line for line in stdout.splitlines() if line.startswith(_BROWSE_RAW_RESULT)]
-        if proc.returncode == 0 and results:
-            new_bads = json.loads(results[-1].removeprefix(_BROWSE_RAW_RESULT))
-        else:
-            new_bads = None
-        on_close(new_bads, stderr)
-
-    threading.Thread(target=wait, daemon=True).start()
-    return proc
 
 
 class _PipelineThread:
@@ -727,8 +745,7 @@ class PipelineFrame(EelbrainFrame):
         self._job_in_progress = None  # (scope, combo) the worker popped and is computing
         self._job_queue_lock = threading.Lock()
         # GUIs opened in subprocesses (coregistration, raw browser), closed with this window
-        self._subprocesses: list[tuple[str, subprocess.Popen]] = []
-        self._browse_raw_tmp_dirs: list[tuple[subprocess.Popen, Path]] = []  # (raw browser, its temporary directory), removed when the browser closes, or with this window
+        self._subprocess_windows: list[_SubprocessWindow] = []
         self._closed = False
         self._n_done = self._n_total = 0  # progress of the current run
         self._n_loading = 0  # rows of the displayed table whose status is still to be filled in
@@ -1286,20 +1303,21 @@ class PipelineFrame(EelbrainFrame):
                         raw_ctx.ensure()  # builds the cache file if needed, without reading it
                         path = raw_ctx.artifact_path
 
-            def on_close(new_bads: list[str] | None, stderr: str) -> None:
-                if tmp_dir is not None:
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
+            def on_close(ok: bool, stdout: str, stderr: str) -> None:
+                results = [line for line in stdout.splitlines() if line.startswith(_BROWSE_RAW_RESULT)]
+                if ok and results:
+                    new_bads = json.loads(results[-1].removeprefix(_BROWSE_RAW_RESULT))
+                else:
+                    new_bads = None
                 if not self._closed:
                     wx.CallAfter(self._on_browse_raw_closed, raw_name, state, bads, new_bads, stderr)
 
-            proc = _launch_browse_raw_subprocess(str(path), bads, on_close)
+            window = _SubprocessWindow('raw browser', _BROWSE_RAW_SCRIPT, [str(path), json.dumps(bads)], on_close, capture=True, tmp_dir=tmp_dir)
         except Exception:
-            if tmp_dir is not None:  # the browser never started, so on_close will not remove it
+            if tmp_dir is not None:  # the browser never started, so nothing else will remove it
                 shutil.rmtree(tmp_dir, ignore_errors=True)
             raise
-        self._subprocesses.append(('raw browser', proc))
-        if tmp_dir is not None:
-            self._browse_raw_tmp_dirs.append((proc, tmp_dir))
+        self._subprocess_windows.append(window)
 
     def _on_browse_raw_closed(
             self,
@@ -1639,8 +1657,12 @@ class PipelineFrame(EelbrainFrame):
             inst = str(raw_ctx.node.path(raw_ctx))
             trans_ctx = pipeline._resolve_derivative('trans-input')
             trans = str(trans_ctx.node.path(trans_ctx)) if trans_ctx.node.exists(trans_ctx) else None
-        proc = _launch_coreg_subprocess(mrisubject, str(pipeline.root / MRI_SDIR), inst, trans, on_close=lambda: wx.CallAfter(self._start_refresh))
-        self._subprocesses.append(('coregistration', proc))
+        subjects_dir = str(pipeline.root / MRI_SDIR)
+        kwargs = f'subject={mrisubject!r}, {subjects_dir=}, {inst=}, block=True'
+        if trans is not None:
+            kwargs += f', {trans=}'
+        window = _SubprocessWindow('coregistration', f'import mne; mne.gui.coregistration({kwargs})', (), lambda *output: wx.CallAfter(self._start_refresh))
+        self._subprocess_windows.append(window)
 
     # ------------------------------------------------------------------
     # Table management
@@ -1905,9 +1927,9 @@ class PipelineFrame(EelbrainFrame):
             if not confirmed:
                 event.Veto()
                 return
-        running = [(kind, proc) for kind, proc in self._subprocesses if proc.poll() is None]
+        running = [window for window in self._subprocess_windows if window.is_open()]
         if running:
-            kinds = ', '.join(sorted({kind for kind, _ in running}))
+            kinds = ', '.join(sorted({window.kind for window in running}))
             dlg = wx.MessageDialog(self, f"{len(running)} window(s) opened from this one are still open ({kinds}). Closing this window will close them, and changes that were not saved there will be lost.\n\nClose anyway?", "Close open windows?", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING)
             confirmed = dlg.ShowModal() == wx.ID_YES
             dlg.Destroy()
@@ -1917,14 +1939,8 @@ class PipelineFrame(EelbrainFrame):
         self._closed = True
         self._compute_token = None  # let the thread wind down (only now: the close can be vetoed up to here)
         self._refresh_token = None  # drops the rows a refresh pass still posts
-        for _, proc in running:
-            proc.terminate()
-        for proc, tmp_dir in self._browse_raw_tmp_dirs:  # the thread that removes a browser's temporary file may not get to it before the app exits
-            try:
-                proc.wait(5)  # until the browser has closed its file (immediate for one that closed before)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        for window in self._subprocess_windows:
+            window.close()
         event.Skip()  # proceed with normal close
 
     # ------------------------------------------------------------------

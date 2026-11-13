@@ -1,4 +1,5 @@
 import contextlib
+import json
 import logging
 import queue
 import sys
@@ -562,10 +563,16 @@ def _browse_raw_frame(monkeypatch, tmp_path, caches: bool):
         _resolve_derivative=lambda name: {pipeline_gui.raw_input_name('raw'): source, pipeline_gui.raw_node_name('filt'): cache}[name],
         load_bad_channels=lambda: ['MEG 0111'],
     )
-    launched = []
-    monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', lambda *args: launched.append(args) or 'proc')
+    launched = []  # [(path, bads, on_close, options), ...]
+
+    def subprocess_window(kind: str, script: str, args: list[str], on_close, **options) -> str:
+        assert (kind, script) == ('raw browser', pipeline_gui._BROWSE_RAW_SCRIPT)
+        launched.append((args[0], json.loads(args[1]), on_close, options))
+        return 'window'
+
+    monkeypatch.setattr(pipeline_gui, '_SubprocessWindow', subprocess_window)
     monkeypatch.setattr(pipeline_gui.wx, 'BusyCursor', contextlib.nullcontext)
-    frame.__dict__.update(_pipeline=pipeline, _n_loading=0, _subprocesses=[], _browse_raw_tmp_dirs=[])
+    frame.__dict__.update(_pipeline=pipeline, _n_loading=0, _subprocess_windows=[])
     return frame, launched, loaded, saved
 
 
@@ -575,23 +582,28 @@ def test_open_mne_browse_raw(monkeypatch, tmp_path):
     frame._raw_name = lambda: 'raw'
     assert [action.label for action in frame._row_actions(0)] == ["Plot continuous data…", "Set bad channels…", "Open in mne browse_raw…"]
     frame._run_row_action(0, frame._row_actions(0)[2])
-    (path, bads, on_close), = launched
+    (path, bads, on_close, options), = launched
     assert (path, bads) == (str(tmp_path / 'R01_raw.fif'), ['MEG 0111'])
+    assert options == {'capture': True, 'tmp_dir': None}
     assert loaded == []  # the source file is shown as it is
-    assert frame._subprocesses == [('raw browser', 'proc')]
-    # closing the browser posts the result to the main thread
+    assert frame._subprocess_windows == ['window']
+    # closing the browser posts the bad channels it reported on its marked line, whatever is printed around it, to the main thread
     posted = []
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
-    on_close(['MEG 0111', 'MEG 0112'], '')
+    on_close(True, 'Using qt as 2D backend.\neelbrain-bad-channels: ["MEG 0111", "MEG 0112"]\nClosing\n0\n', '')
     assert posted == [(frame._on_browse_raw_closed, 'raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0111', 'MEG 0112'], '')]
-    # but not after the GUI was closed
+    # a browser that failed, or reported nothing, has no bad channels
+    on_close(False, 'eelbrain-bad-channels: ["MEG 0111"]\n', 'Traceback: boom')
+    on_close(True, '', '')
+    assert [args[4:] for args in posted[1:]] == [(None, 'Traceback: boom'), (None, '')]
+    # nothing is posted after the GUI was closed
     frame._closed = True
-    on_close(['MEG 0111', 'MEG 0112'], '')
-    assert len(posted) == 1
+    on_close(True, 'eelbrain-bad-channels: ["MEG 0111"]\n', '')
+    assert len(posted) == 3
 
 
 def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
-    "A raw pipe that caches is shown from its cache file, built if needed but not read; one that does not cache is written to a temporary file that is removed when the browser closes"
+    "A raw pipe that caches is shown from its cache file, built if needed but not read; one that does not cache is written to a temporary file that the browser's window removes"
     frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=True)
     frame._raw_name = lambda: 'filt'
     frame._run_row_action(0, frame._row_actions(0)[2])
@@ -605,10 +617,7 @@ def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
     assert loaded == ['load']
     assert launched[-1][0] == str(tmp_file)
     assert tmp_file.name == 'R01_filt-raw.fif' and tmp_file.exists()
-    assert frame._browse_raw_tmp_dirs == [('proc', tmp_file.parent)]
-    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: None)
-    launched[-1][2](['MEG 0111'], '')
-    assert not tmp_file.parent.exists()
+    assert launched[-1][3] == {'capture': True, 'tmp_dir': tmp_file.parent}
 
 
 def test_pipeline_thread():
@@ -759,18 +768,18 @@ def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
     # starting the browser fails
     cache.load = load
 
-    def launch(*args) -> None:
+    def launch(*args, **kwargs) -> None:
         raise OSError("no python")
 
-    monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', launch)
+    monkeypatch.setattr(pipeline_gui, '_SubprocessWindow', launch)
     frame._run_row_action(0, frame._row_actions(0)[2])
-    assert 'no python' in errors[-1][0] and frame._subprocesses == []
+    assert 'no python' in errors[-1][0] and frame._subprocess_windows == []
     assert not tmp_dir.exists()
 
 
-def test_close_terminates_subprocesses(monkeypatch, tmp_path):
-    "Closing the GUI closes the GUIs it opened in subprocesses, asking first when any of them are still open, and removes the temporary files of its raw browsers"
-    messages, terminated = [], []
+def test_close_terminates_subprocesses(monkeypatch):
+    "Closing the GUI closes the GUIs it opened in subprocesses, asking first when any of them are still open"
+    messages, closed = [], []
     answer = wx.ID_NO
 
     def dialog(parent, message, title, style):
@@ -780,21 +789,18 @@ def test_close_terminates_subprocesses(monkeypatch, tmp_path):
         return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
 
-    def proc(running, name):
-        return SimpleNamespace(poll=lambda: None if running else 0, terminate=lambda: terminated.append(name), wait=lambda timeout: terminated.append(f'{name} exited'))
-    tmp_dir = tmp_path / 'browse'
-    tmp_dir.mkdir()
-    browser_2 = proc(True, 'browser 2')
-    frame = _frame(_compute_token=None, _refresh_token=object(), _closed=False, _browse_raw_tmp_dirs=[(browser_2, tmp_dir)], _subprocesses=[('coregistration', proc(True, 'coreg')), ('raw browser', proc(False, 'browser 1')), ('raw browser', browser_2)])
+    def window(kind: str, is_open: bool, name: str) -> SimpleNamespace:
+        return SimpleNamespace(kind=kind, is_open=lambda: is_open, close=lambda: closed.append(name))
+
+    frame = _frame(_compute_token=None, _refresh_token=object(), _closed=False, _subprocess_windows=[window('coregistration', True, 'coreg'), window('raw browser', False, 'browser 1'), window('raw browser', True, 'browser 2')])
     event = SimpleNamespace(Veto=lambda: messages.append('veto'), Skip=lambda: messages.append('skip'))
     frame._on_close(event)
     assert messages == ["2 window(s) opened from this one are still open (coregistration, raw browser). Closing this window will close them, and changes that were not saved there will be lost.\n\nClose anyway?", 'veto']
-    assert terminated == [] and not frame._closed and tmp_dir.exists()
+    assert closed == [] and not frame._closed
     answer = wx.ID_YES
     frame._on_close(event)
     assert messages[-1] == 'skip' and frame._closed and frame._refresh_token is None
-    assert terminated == ['coreg', 'browser 2', 'browser 2 exited']  # waits only for the browser whose temporary file it removes
-    assert not tmp_dir.exists()
+    assert closed == ['coreg', 'browser 1', 'browser 2']  # also one that just closed: its temporary file may still be there
 
 
 def test_close_vetoed_keeps_computation(monkeypatch):
@@ -806,7 +812,7 @@ def test_close_vetoed_keeps_computation(monkeypatch):
 
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
     token = object()
-    frame = _frame(_compute_token=token, _closed=False, _subprocesses=[('coregistration', SimpleNamespace(poll=lambda: None))])
+    frame = _frame(_compute_token=token, _closed=False, _subprocess_windows=[SimpleNamespace(kind='coregistration', is_open=lambda: True)])
     vetoed = []
     frame._on_close(SimpleNamespace(Veto=lambda: vetoed.append(True)))
     assert vetoed == [True] and answers == []
@@ -832,32 +838,57 @@ def test_browse_raw_script(monkeypatch, capsys):
     assert calls == [('/data/raw.fif', {'allow_maxshield': True}), ('/data/raw.vhdr', {})]
 
 
-def test_launch_browse_raw_subprocess(monkeypatch):
-    "The browser subprocess reports the bad channels it was closed with on a marked line, whatever is printed around it; a failed run reports None with stderr"
-    results = []
-
-    def popen(args, stdout, stderr, text):
-        assert args[:2] == [pipeline_gui.sys.executable, '-c'] and args[3:] == ['/data/raw.fif', '["MEG 0111"]']
-        return SimpleNamespace(communicate=lambda: popen.output, returncode=popen.returncode)
-
-    monkeypatch.setattr(pipeline_gui.subprocess, 'Popen', popen)
+def test_subprocess_window(monkeypatch, tmp_path):
+    "A subprocess window runs its script, reports how it closed, and removes its temporary directory; closing it terminates the GUI, and kills one that does not exit, before removing the directory"
+    calls, outcomes = [], []
     done = threading.Event()
 
-    def on_close(bads, stderr):
-        results.append((bads, stderr))
+    def popen(args: list[str], stdout: int | None, stderr: int | None, text: bool) -> SimpleNamespace:
+        calls.append((args, stdout, stderr))
+        return proc
+
+    def wait(timeout: float | None = None) -> None:
+        calls.append(('wait', timeout))
+        if timeout and proc.hangs:
+            raise pipeline_gui.subprocess.TimeoutExpired('python', timeout)
+
+    def on_close(*outcome) -> None:
+        outcomes.append((*outcome, tmp_dir.exists()))
         done.set()
-    popen.output, popen.returncode = ('Using qt as 2D backend.\neelbrain-bad-channels: ["MEG 0111", "MEG 0112"]\n', ''), 0
-    pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
+
+    exited = threading.Event()
+    proc = SimpleNamespace(communicate=lambda: exited.wait(5) and ('OUT', 'ERR'), returncode=0, poll=lambda: 0 if exited.is_set() else None, terminate=lambda: calls.append('terminate'), kill=lambda: calls.append('kill'), wait=wait, hangs=False)
+    monkeypatch.setattr(pipeline_gui.subprocess, 'Popen', popen)
+    tmp_dir = tmp_path / 'browse'
+    tmp_dir.mkdir()
+    window = pipeline_gui._SubprocessWindow('raw browser', 'SCRIPT', ['/data/raw.fif'], on_close, capture=True, tmp_dir=tmp_dir)
+    pipe = pipeline_gui.subprocess.PIPE
+    assert calls == [([pipeline_gui.sys.executable, '-c', 'SCRIPT', '/data/raw.fif'], pipe, pipe)]
+    assert window.kind == 'raw browser' and window.is_open() and outcomes == []
+    exited.set()
     assert done.wait(5)
+    assert outcomes == [(True, 'OUT', 'ERR', False)] and not window.is_open()  # the directory is gone before the close is reported
+    # a GUI that failed; its output is left to the terminal
     done.clear()
-    popen.output, popen.returncode = ('', 'Traceback: boom'), 1
-    pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
+    proc.returncode = 1
+    pipeline_gui._SubprocessWindow('coregistration', 'SCRIPT', (), on_close)
     assert done.wait(5)
-    done.clear()
-    popen.output, popen.returncode = ('eelbrain-bad-channels: ["MEG 0111"]\nClosing\n0\n', ''), 0
-    pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
-    assert done.wait(5)
-    assert results == [(['MEG 0111', 'MEG 0112'], ''), (None, 'Traceback: boom'), (['MEG 0111'], '')]
+    assert calls[-1][1:] == (None, None) and outcomes[-1][0] is False
+    # closing waits for the GUI to let go of its temporary file
+    calls.clear()
+    tmp_dir.mkdir()
+    window.close()
+    assert calls == ['terminate', ('wait', 5)] and not tmp_dir.exists()
+    # a GUI that does not exit is killed
+    calls.clear()
+    tmp_dir.mkdir()
+    proc.hangs = True
+    window.close()
+    assert calls == ['terminate', ('wait', 5), 'kill', ('wait', None)] and not tmp_dir.exists()
+    # without a temporary file there is nothing to wait for
+    calls.clear()
+    pipeline_gui._SubprocessWindow('coregistration', 'SCRIPT', (), lambda *outcome: None).close()
+    assert calls[1:] == ['terminate']
 
 
 def test_on_browse_raw_closed(monkeypatch):
