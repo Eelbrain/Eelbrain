@@ -37,6 +37,9 @@ from .config import ResolvedTestNDSpec, Test
 
 T = TypeVar('T')
 USE_CTX = object()
+# False and None both mean no source-space baseline correction; normalize to None so that both share one cached artifact
+SRC_BASELINE_OPTION = OptionSpec(None, normalize=lambda src_baseline: src_baseline or None)
+
 RESULT_OPTION_DEFAULTS = {
     'samples': None,
     # normalize so that a request reconstructed from a manifest (offline
@@ -47,7 +50,7 @@ RESULT_OPTION_DEFAULTS = {
     'tstop': None,
     'pmin': None,
     'baseline': None,
-    'src_baseline': None,
+    'src_baseline': SRC_BASELINE_OPTION,
     'smooth': None,
     'samplingrate': None,
     'decim': None,
@@ -339,7 +342,7 @@ class EvokedTestDataDerivative(UncachedDerivative[Dataset | ROIData]):
         'data': OptionSpec(DataSpec('source'), DataSpec),
         'test': None,
         'baseline': None,
-        'src_baseline': None,
+        'src_baseline': SRC_BASELINE_OPTION,
         'samplingrate': None,
         'decim': None,
         'smooth': None,

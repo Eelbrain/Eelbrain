@@ -45,7 +45,7 @@ from .events import EpochEventsDerivative, EventsDerivative, EventsInput, Labele
 from .exceptions import FileMissingError, ICAChannelsChangedError
 from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
 from .state_model import StateModel
-from .statistics.nodes import ROITestResult
+from .statistics.nodes import TEST_DATA_OPTION_NAMES, ROITestResult
 from .groups import assemble_groups
 from .pathing import (
     LOG_DIR, MRI_SDIR, bids_path, join_stem_parts, mri_dir, raw_basename,
@@ -1163,7 +1163,7 @@ class Pipeline(StateModel):
             tstop: float = None,
             interpolate_bads: Literal[True, False, 'keep'] = False,
             src_baseline: BaselineArg = False,
-            morph: bool = None,
+            morph: bool = False,
             keep_mne: bool = False,
             show_dependencies: bool = False,
             **state,
@@ -1173,11 +1173,6 @@ class Pipeline(StateModel):
 
         Parameters
         ----------
-        subjects
-            Subject(s) for which to load data. Can be a single subject
-            name or a group name such as ``'all'``. ``1`` to use the current
-            subject; ``-1`` for the current group. Default is current subject
-            (or group if ``group`` is specified).
         baseline
             Apply baseline correction using this period. ``True`` (default) to
             use the epoch's baseline specification; ``False`` to not apply
@@ -1220,8 +1215,7 @@ class Pipeline(StateModel):
             space only; ``True`` to use the epoch's baseline specification).
         morph
             Morph source estimates to the common brain (source space only;
-            default ``False``, except when loading multiple subjects with
-            ``ndvar=True``).
+            default ``False``).
         keep_mne
             Also include the underlying :class:`mne.Epochs` (sensor space) or
             sensor-space data (source space) in the returned :class:`Dataset`.
@@ -1257,6 +1251,8 @@ class Pipeline(StateModel):
             return self._load_derivative('epochs-stc', options=options, show_dependencies=show_dependencies)
 
         # sensor space
+        if morph:
+            raise ValueError(f"{morph=}: morphing is not available for sensor-space epochs; set a non-empty inv for source space")
         if isinstance(ndvar, str):
             data = self._resolve_data(ndvar)
             node_ndvar = 'both' if keep_mne else True
@@ -1752,7 +1748,7 @@ class Pipeline(StateModel):
             space only; ``True`` to use the epoch's baseline specification).
         morph
             Morph source estimates to the common brain (source space only;
-            default ``False``, except when loading multiple subjects with
+            default ``False``, except when loading a group of subjects with
             ``ndvar=True``).
         keep_mne
             Also include the underlying :class:`mne.Evoked` (sensor space) or
@@ -1788,6 +1784,8 @@ class Pipeline(StateModel):
             if isinstance(ndvar, str):
                 raise ValueError(f"{ndvar=} with {inv=}: a data-kind ndvar is only valid for sensor-space evoked; in source space use ndvar=True or ndvar=False")
             self._current_source_parc()
+            if morph is None:
+                morph = group is not None and bool(ndvar)
             options = {
                 'model': model,
                 'baseline': baseline,
@@ -1804,6 +1802,8 @@ class Pipeline(StateModel):
             return self._load_derivative('evoked-stc', options=options, show_dependencies=show_dependencies)
 
         # sensor space
+        if morph:
+            raise ValueError(f"{morph=}: morphing is not available for sensor-space evoked; set a non-empty inv for source space")
         if isinstance(ndvar, str):
             data = self._resolve_data(ndvar)
             node_ndvar = 'both' if keep_mne else True
@@ -2255,7 +2255,7 @@ class Pipeline(StateModel):
             data: str = None,
             baseline: BaselineArg = True,
             smooth: float = None,
-            src_baseline: BaselineArg = None,
+            src_baseline: BaselineArg = False,
             samplingrate: int = None,
             return_data: bool = False,
             show_dependencies: bool = False,
@@ -2352,7 +2352,7 @@ class Pipeline(StateModel):
             return result
         elif isinstance(test_obj, TwoStageTest):
             raise NotImplementedError("Data for two-stage test")
-        data_options = {key: value for key, value in options.items() if key != 'disconnect_labels'}
+        data_options = {key: options[key] for key in TEST_DATA_OPTION_NAMES}
         data = self._load_derivative('evoked-test-data', options=data_options)
         return data, result
 
