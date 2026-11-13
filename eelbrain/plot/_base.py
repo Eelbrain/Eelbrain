@@ -88,7 +88,7 @@ import os
 import re
 import time
 from typing import Any, Literal
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 import weakref
 
 import matplotlib as mpl
@@ -1685,7 +1685,7 @@ class EelFigure(MatplotlibFigure):
         self._crosshair_axes = None
 
         # add callbacks
-        if use_inline_backend():
+        if use_inline_backend() and not layout.interactive:
             return
         self.canvas.mpl_connect('motion_notify_event', self._on_motion)
         self.canvas.mpl_connect('axes_leave_event', self._on_leave_axes)
@@ -1704,7 +1704,13 @@ class EelFigure(MatplotlibFigure):
 
     def _mime_(self) -> tuple[str, str]:
         "Display protocol of marimo, which renders the figure like its own matplotlib figures (marimo adds ``_mime_`` to all matplotlib artists)"
-        return self.figure._mime_()
+        if not self._layout.interactive:
+            return self.figure._mime_()
+        import marimo
+        element = marimo.mpl.interactive(self.figure)
+        # marimo binds the figure to a new canvas; redraws only reach the browser through that canvas
+        self.canvas = self._frame.canvas = self.figure.canvas
+        return element._mime_()
 
     def _repr_png_(self) -> bytes:
         "PNG representation for notebooks that use neither IPython nor marimo"
@@ -1811,12 +1817,14 @@ class EelFigure(MatplotlibFigure):
     def _on_key_press(self, event):
         if event.key in self.__callback_key_press:
             self.__callback_key_press[event.key](event)
-            event.guiEvent.Skip(False)  # Matplotlib Skip()s all events
+            if self._has_frame:
+                event.guiEvent.Skip(False)  # Matplotlib Skip()s all events
 
     def _on_key_release(self, event):
         if event.key in self.__callback_key_release:
             self.__callback_key_release[event.key](event)
-            event.guiEvent.Skip(False)
+            if self._has_frame:
+                event.guiEvent.Skip(False)
 
     def _on_leave_axes(self, event):
         "Update the status bar when the cursor leaves axes"
@@ -1850,7 +1858,7 @@ class EelFigure(MatplotlibFigure):
         # update status bar
         self._frame.SetStatusText(self._on_motion_status_text(event))
         # redraw
-        self.canvas.redraw(redraw_axes)
+        self._redraw(redraw_axes)
 
     @staticmethod
     def _on_motion_status_text(event):
@@ -1869,6 +1877,15 @@ class EelFigure(MatplotlibFigure):
         if self._layout.tight:
             self._tight()
 
+    def _redraw(self, axes: Collection[matplotlib.axes.Axes]):
+        "Redraw ``axes`` after an interactive update"
+        if not axes:
+            return
+        elif self._has_frame:
+            self.canvas.redraw(axes)
+        else:
+            self.canvas.draw_idle()
+
     def _register_key(self, key, press=None, release=None):
         if press:
             if key in self.__callback_key_press:
@@ -1886,7 +1903,7 @@ class EelFigure(MatplotlibFigure):
                 vline.remove()
             self._crosshair_lines = None
             if draw:
-                self.canvas.redraw(self._crosshair_axes)
+                self._redraw(self._crosshair_axes)
 
     def _fill_toolbar(self, tb):
         """
@@ -2253,7 +2270,11 @@ class BaseLayout:
             right_of: EelFigure | int = None,
             below: EelFigure | int = None,
             axes: matplotlib.axes.Axes | list[matplotlib.axes.Axes] = None,
+            interactive: bool = None,
     ):
+        if interactive is None:
+            interactive = CONFIG['interactive']
+        self.interactive = interactive
         self.h = h
         self.w = w
         self.dpi = dpi or mpl.rcParams['figure.dpi']
@@ -3486,7 +3507,7 @@ class TimeSlicerEF(TimeSlicer):
                 self.__time_lines.pop().remove()
 
         if self.__redraw and redraw and self._frame is not None:
-            self.canvas.redraw(self.__axes)
+            self._redraw(self.__axes)
 
     def save_movie(
             self,

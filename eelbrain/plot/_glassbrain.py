@@ -584,7 +584,7 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
                 q.remove()
             self._add_arrows(index)
 
-        self.canvas.redraw(self.figure.axes)
+        self._redraw(self.figure.axes)
 
     def _colorbar_params(self):
         return self.cmap, self.vmin, self.vmax
