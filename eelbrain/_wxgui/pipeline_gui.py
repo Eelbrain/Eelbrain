@@ -677,7 +677,7 @@ class PipelineFrame(EelbrainFrame):
         self._job_queue_lock = threading.Lock()
         # GUIs opened in subprocesses (coregistration, raw browser), closed with this window
         self._subprocesses: list[tuple[str, subprocess.Popen]] = []
-        self._browse_raw_tmp_dirs: list[Path] = []  # removed when their raw browser closes, or with this window
+        self._browse_raw_tmp_dirs: list[tuple[subprocess.Popen, Path]] = []  # (raw browser, its temporary directory), removed when the browser closes, or with this window
         self._closed = False
         self._deferred_row_action: tuple[tuple, tuple, str] | None = None  # (scope, combo, label) of the row action waiting for the pipeline
         self._n_done = self._n_total = 0  # progress of the current run
@@ -1184,7 +1184,6 @@ class PipelineFrame(EelbrainFrame):
                     raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
                     if raw_ctx.node.cache_policy is CachePolicy.NEVER:
                         tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
-                        self._browse_raw_tmp_dirs.append(tmp_dir)
                         path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
                         raw_ctx.load().save(path)
                     else:
@@ -1203,6 +1202,8 @@ class PipelineFrame(EelbrainFrame):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
             raise
         self._subprocesses.append(('raw browser', proc))
+        if tmp_dir is not None:
+            self._browse_raw_tmp_dirs.append((proc, tmp_dir))
 
     def _on_browse_raw_closed(
             self,
@@ -1867,14 +1868,12 @@ class PipelineFrame(EelbrainFrame):
         self._refresh_token = None  # drops the rows a refresh pass still posts
         for _, proc in running:
             proc.terminate()
-        if self._browse_raw_tmp_dirs:  # the thread that removes a browser's temporary file may not get to it before the app exits
-            for _, proc in running:
-                try:
-                    proc.wait(5)  # until the browser has closed its file
-                except subprocess.TimeoutExpired:
-                    pass
-            for tmp_dir in self._browse_raw_tmp_dirs:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+        for proc, tmp_dir in self._browse_raw_tmp_dirs:  # the thread that removes a browser's temporary file may not get to it before the app exits
+            try:
+                proc.wait(5)  # until the browser has closed its file (immediate for one that closed before)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            shutil.rmtree(tmp_dir, ignore_errors=True)
         event.Skip()  # proceed with normal close
 
     # ------------------------------------------------------------------

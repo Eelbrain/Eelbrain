@@ -554,6 +554,7 @@ def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
     assert loaded == ['load']
     assert launched[-1][0] == str(tmp_file)
     assert tmp_file.name == 'R01_filt-raw.fif' and tmp_file.exists()
+    assert frame._browse_raw_tmp_dirs == [('proc', tmp_file.parent)]
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: None)
     launched[-1][2](['MEG 0111'], '')
     assert not tmp_file.parent.exists()
@@ -645,7 +646,8 @@ def test_close_terminates_subprocesses(monkeypatch, tmp_path):
         return SimpleNamespace(poll=lambda: None if running else 0, terminate=lambda: terminated.append(name), wait=lambda timeout: terminated.append(f'{name} exited'))
     tmp_dir = tmp_path / 'browse'
     tmp_dir.mkdir()
-    frame = _frame(_compute_token=None, _refresh_token=object(), _closed=False, _browse_raw_tmp_dirs=[tmp_dir], _subprocesses=[('coregistration', proc(True, 'coreg')), ('raw browser', proc(False, 'browser 1')), ('raw browser', proc(True, 'browser 2'))])
+    browser_2 = proc(True, 'browser 2')
+    frame = _frame(_compute_token=None, _refresh_token=object(), _closed=False, _browse_raw_tmp_dirs=[(browser_2, tmp_dir)], _subprocesses=[('coregistration', proc(True, 'coreg')), ('raw browser', proc(False, 'browser 1')), ('raw browser', browser_2)])
     event = SimpleNamespace(Veto=lambda: messages.append('veto'), Skip=lambda: messages.append('skip'))
     frame._on_close(event)
     assert messages == ["2 window(s) opened from this one are still open (coregistration, raw browser). Closing this window will close them, and changes that were not saved there will be lost.\n\nClose anyway?", 'veto']
@@ -653,7 +655,7 @@ def test_close_terminates_subprocesses(monkeypatch, tmp_path):
     answer = wx.ID_YES
     frame._on_close(event)
     assert messages[-1] == 'skip' and frame._closed and frame._refresh_token is None
-    assert terminated == ['coreg', 'browser 2', 'coreg exited', 'browser 2 exited']
+    assert terminated == ['coreg', 'browser 2', 'browser 2 exited']  # waits only for the browser whose temporary file it removes
     assert not tmp_dir.exists()
 
 
