@@ -1,12 +1,15 @@
 import contextlib
 import logging
+import queue
 import sys
 import threading
+from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 
 import mne
 import numpy as np
+import pytest
 import wx
 
 from eelbrain import Dataset, Var
@@ -274,6 +277,54 @@ class _FakeList:
         self.cleared = True
 
 
+@pytest.fixture(autouse=True)
+def call_after_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    "There is no main loop, so wx.CallAfter calls at once; tests that examine what is posted replace it"
+    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda func, *args: func(*args))
+
+
+class _FakePipelineThread:
+    "Stand-in for the pipeline thread that calls on the calling thread: at once, or in :meth:`run` while ``held`` (the pipeline is in use)"
+
+    def __init__(self, held: bool = False):
+        self.held = held
+        self.calls = []  # [(func, future), ...] waiting
+        self.running = False  # whether a call is in progress
+
+    def submit(self, func) -> Future:
+        future = Future()
+        self.calls.append((func, future))
+        if not self.held:
+            self.run()
+        return future
+
+    def run(self) -> None:
+        while self.calls:
+            func, future = self.calls.pop(0)
+            self.running = True
+            try:
+                result = func()
+            except Exception as error:
+                self.running = False
+                future.set_exception(error)
+            else:
+                self.running = False
+                future.set_result(result)
+
+
+class _MainLoop:
+    "Stand-in for the wx main loop on the test's thread: wx.CallAfter queues, :meth:`process` runs what was queued"
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch):
+        self.events = queue.SimpleQueue()
+        monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda func, *args: self.events.put((func, args)))
+
+    def process(self, n: int = 1) -> None:
+        for _ in range(n):
+            func, args = self.events.get(timeout=5)
+            func(*args)
+
+
 def _frame(**attrs) -> PipelineFrame:
     "PipelineFrame with only the attributes a method under test needs (no wx window)"
     frame = PipelineFrame.__new__(PipelineFrame)
@@ -292,7 +343,7 @@ def _table_frame(name: str, rows: list[tuple] = (), **kwargs) -> PipelineFrame:
         idx = fake.InsertItem(len(fake.rows), row[0])
         for col, value in enumerate(row[1:], 1):
             fake.SetItem(idx, col, value)
-    return _frame(_list=fake, _layout=layout, _current_task=lambda: task, _pipeline_lock=threading.Lock(), _deferred_row_action=None, _closed=False)
+    return _frame(_list=fake, _layout=layout, _current_task=lambda: task, _table_scope=lambda: (task, None, None, None, layout), _pipeline_thread=_FakePipelineThread(), _pipeline_lock=threading.Lock(), _closed=False)
 
 
 # see PipelineFrame._table_scope
@@ -560,38 +611,125 @@ def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
     assert not tmp_file.parent.exists()
 
 
-def test_row_action_waits_for_the_pipeline(monkeypatch, tmp_path):
-    "While the pipeline is in use a row action is not run; it is run once, later, unless the table changed or the window closed meanwhile"
+def test_pipeline_thread():
+    "Calls run one at a time, in the order submitted, in a thread of their own; the future holds what a call returned or raised"
+    thread = pipeline_gui._PipelineThread()
+    order = []
+    gate = threading.Event()
+
+    def first() -> threading.Thread:
+        gate.wait(5)
+        order.append('first')
+        return threading.current_thread()
+
+    def second() -> None:
+        order.append('second')
+        raise DataError("no positions")
+
+    futures = [thread.submit(first), thread.submit(second)]
+    assert order == []
+    gate.set()
+    assert futures[0].result(5) is not threading.current_thread()
+    with pytest.raises(DataError):
+        futures[1].result(5)
+    assert order == ['first', 'second']
+    assert thread.submit(lambda: 'next').result(5) == 'next'  # a call that raised does not end the thread
+
+
+def test_use_pipeline(monkeypatch):
+    "The main thread gets the outcome of a call in the pipeline thread as an event, unless the window closed; with main_thread the call itself is an event, for which the pipeline thread waits"
+    loop = _MainLoop(monkeypatch)
+    frame = _frame(_pipeline_thread=pipeline_gui._PipelineThread(), _pipeline_lock=threading.Lock(), _closed=False)
+    main = threading.current_thread()
+    outcomes = []
+
+    def then(future: Future) -> None:
+        outcomes.append((future.exception() or future.result(), threading.current_thread() is main))
+
+    frame._use_pipeline(threading.current_thread, then)
+    loop.process()
+    (thread, on_main), = outcomes
+    assert thread is not main and on_main
+
+    def fail() -> None:
+        raise DataError("no positions")
+
+    frame._use_pipeline(fail, then)
+    loop.process()
+    assert isinstance(outcomes[-1][0], DataError)
+    # on the main thread, as its turn: the pipeline thread does nothing else until the call returned
+    after = frame._pipeline_thread.submit(lambda: outcomes.append('after the turn'))
+    frame._use_pipeline(threading.current_thread, then, main_thread=True)
+    after.result(5)
+    queued = frame._pipeline_thread.submit(lambda: outcomes.append('queued behind the turn'))
+    assert outcomes[-1] == 'after the turn'
+    loop.process()  # the call
+    queued.result(5)
+    loop.process()  # its outcome
+    assert outcomes[-2:] == ['queued behind the turn', (main, True)]
+    # the window closed before the outcome arrived
+    frame._use_pipeline(lambda: None, then)
+    frame._closed = True
+    loop.process()
+    assert len(outcomes) == 5
+
+
+def test_row_action_takes_its_turn(monkeypatch, tmp_path):
+    "A row action waits for the pipeline; it is dropped if its row is gone or the window closed by then"
     frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=True)
     frame._raw_name = lambda: 'filt'
-    scope = ['bad_chs table']
-    frame._table_scope = lambda: scope[0]
-    status, later = [], []
-    frame.SetStatusText = lambda *args: status.append(args)
-    monkeypatch.setattr(pipeline_gui.wx, 'CallLater', lambda *args: later.append(args))
-    with frame._pipeline_lock:
-        frame._run_row_action(0, frame._row_actions(0)[2])
-        frame._run_row_action(0, frame._row_actions(0)[2])  # asked for again: still a single action waiting
-        assert later == [(100, frame._run_deferred_row_action)]
-        assert status[-1] == ("Waiting for the pipeline: Open in mne browse_raw", 1)
-        frame._run_deferred_row_action()  # still in use
-    assert len(later) == 2 and launched == [] and loaded == []
-    frame._run_deferred_row_action()
+    thread = frame._pipeline_thread = _FakePipelineThread(held=True)
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    assert launched == [] and loaded == []
+    thread.run()
     assert [args[0] for args in launched] == [str(tmp_path / 'cache-raw.fif')]
-    assert frame._deferred_row_action is None and not frame._pipeline_lock.locked()
-    # the table changed while the action was waiting
-    with frame._pipeline_lock:
-        frame._run_row_action(0, frame._row_actions(0)[2])
-    scope[0] = 'ica table'
-    frame._run_deferred_row_action()
-    assert len(launched) == 1 and frame._deferred_row_action is None
+    # the table was refreshed while the action was waiting
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    rows = frame._list.rows
+    frame._list.rows = []
+    thread.run()
+    assert len(launched) == 1
     # the window closed while the action was waiting
-    scope[0] = 'bad_chs table'
-    with frame._pipeline_lock:
-        frame._run_row_action(0, frame._row_actions(0)[2])
+    frame._list.rows = rows
+    frame._run_row_action(0, frame._row_actions(0)[2])
     frame._closed = True
-    frame._run_deferred_row_action()
-    assert len(launched) == 1 and len(later) == 4
+    thread.run()
+    assert len(launched) == 1
+
+
+def test_set_bad_channels_dialog(monkeypatch):
+    "The bad channels dialog opens after the row action's turn, so the pipeline is free while it is open; the channels it is closed with are saved in the pipeline thread"
+    loop = _MainLoop(monkeypatch)
+    frame = _table_frame('bad_chs', [('R01', 'done', '1')])
+    thread = pipeline_gui._PipelineThread()
+    saved, refreshed, free = [], [], []
+    raw = SimpleNamespace(info='INFO')
+    pipeline = SimpleNamespace(
+        set=lambda **state: None,
+        _raw=SimpleNamespace(root_source_name=lambda name: 'raw', root_source_pipe=lambda name: SimpleNamespace(adjacency=None)),
+        _load_derivative=lambda name, options: raw,
+        load_bad_channels=lambda: ['MEG 0111'],
+        make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state, threading.current_thread())),
+    )
+
+    def show_modal() -> int:
+        free.append(thread.submit(lambda: True).result(5))  # times out while the pipeline thread waits for the main thread
+        return wx.ID_OK
+
+    monkeypatch.setattr(pipeline_gui.load.mne, 'sensor_dim', lambda info, adjacency: 'SENSOR')
+    monkeypatch.setattr(pipeline_gui, 'BadChannelsDialog', lambda parent, sensor, bads: SimpleNamespace(ShowModal=show_modal, get_bad_channels=lambda: [*bads, 'MEG 0112'], Destroy=lambda: None))
+    monkeypatch.setattr(pipeline_gui.wx, 'BusyCursor', contextlib.nullcontext)
+    frame.__dict__.update(_pipeline=pipeline, _pipeline_thread=thread, _n_loading=0, _raw_name=lambda: 'raw', _start_refresh=lambda: refreshed.append(True))
+    frame._run_row_action(0, frame._row_actions(0)[1])
+    loop.process()  # the action's turn: loads the sensors and the current bad channels
+    assert free == []
+    loop.process()  # the dialog
+    assert free == [True]
+    loop.process(2)  # the outcome of the action, then of the save
+    (bads, redo, raw_name, state, saved_in), = saved
+    assert (bads, redo, raw_name, state) == (['MEG 0111', 'MEG 0112'], True, 'raw', {'subject': 'R01'})
+    assert saved_in is not threading.current_thread()
+    assert refreshed == [True]
 
 
 def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
@@ -723,23 +861,21 @@ def test_launch_browse_raw_subprocess(monkeypatch):
 
 
 def test_on_browse_raw_closed(monkeypatch):
-    "Changed bad channels are saved after confirmation, once the pipeline is free, with a warning if they were also changed elsewhere; unchanged ones and a declined dialog save nothing; a failed browser, or save, shows the error"
-    saved, refreshed, errors, messages, locked = [], [], [], [], []
+    "Changed bad channels are saved after confirmation, with a warning if they were also changed elsewhere; unchanged ones and a declined dialog save nothing; a failed browser, or save, shows the error; the pipeline is used in the pipeline thread, and not while the dialog is open"
+    saved, refreshed, errors, messages, in_use = [], [], [], [], []
     answer = wx.ID_YES
-    busy_after_dialog = False  # the compute worker takes the pipeline while the dialog is open
 
     def dialog(parent, message, title, style):
         def show_modal() -> int:
             messages.append(message)
-            locked.append(frame._pipeline_lock.locked())
-            if busy_after_dialog:
-                frame._pipeline_lock.acquire()
+            in_use.append(thread.running)
             return answer
         return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
     current = ['MEG 0111']
     pipeline = SimpleNamespace(load_bad_channels=lambda raw, **state: current, make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state)))
-    frame = _frame(_pipeline=pipeline, _pipeline_lock=threading.Lock(), _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
+    thread = _FakePipelineThread()
+    frame = _frame(_pipeline=pipeline, _pipeline_thread=thread, _pipeline_lock=threading.Lock(), _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0112', 'MEG 0113'], '')
     assert saved == [(['MEG 0112', 'MEG 0113'], True, 'raw', {'subject': 'R01'})]
     assert refreshed == [True]
@@ -772,31 +908,23 @@ def test_on_browse_raw_closed(monkeypatch):
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
     assert 'MEG 0112 not in raw' in errors[-1][0]
     assert len(saved) == 1 and refreshed == [True]
-    # a refresh pass or the compute worker is using the pipeline: tried again later
-    later = []
-    monkeypatch.setattr(pipeline_gui.wx, 'CallLater', lambda *args: later.append(args))
+    # a refresh pass or the compute worker is using the pipeline: nothing is asked until the current bad channels could be read
     pipeline.make_bad_channels = lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state))
     args = ('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
-    with frame._pipeline_lock:
-        frame._on_browse_raw_closed(*args)
-    assert later == [(100, frame._on_browse_raw_closed, *args)]
+    thread.held = True
+    frame._on_browse_raw_closed(*args)
     assert len(messages) == 4 and len(saved) == 1
+    thread.run()
+    assert len(messages) == 5 and len(saved) == 2
+    assert in_use == [False] * 5  # the dialog never keeps the pipeline waiting
+    # the window closed while the bad channels were read
     frame._on_browse_raw_closed(*args)
-    assert len(messages) == 5 and len(saved) == 2 and not frame._pipeline_lock.locked()
-    # the pipeline is free while the dialog is open, and the save waits if it is taken meanwhile
-    assert locked == [False] * 5
-    later.clear()
-    busy_after_dialog = True
-    frame._on_browse_raw_closed(*args)
-    assert later == [(100, frame._save_browse_raw_bads, 'raw', {'subject': 'R01'}, ['MEG 0112'])] and len(saved) == 2
-    frame._pipeline_lock.release()
-    frame._save_browse_raw_bads(*later[0][2:])
-    assert len(saved) == 3 and not frame._pipeline_lock.locked()
-    busy_after_dialog = False
-    # posted while the GUI was closing
     frame._closed = True
+    thread.run()
+    assert len(messages) == 5
+    # posted while the GUI was closing
     frame._on_browse_raw_closed(*args)
-    assert len(messages) == 6 and len(errors) == 2
+    assert thread.calls == [] and len(errors) == 2
 
 
 def test_callbacks_after_close():
@@ -894,42 +1022,37 @@ def test_compute_job_holds_the_pipeline_lock_except_for_the_fit():
     assert not frame._pipeline_lock.locked()
 
 
-def test_ica_bad_channels_wait_for_the_pipeline(monkeypatch, tmp_path):
-    "Bad channels found for an ICA are filed once no other thread is using the pipeline, and the ICA is deleted"
-    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
-    monkeypatch.setattr(pipeline_gui.wx, 'CallLater', lambda ms, *args: deferred.append(args))
-    posted, deferred, filed = [], [], []
+def test_ica_bad_channels_wait_for_the_pipeline(tmp_path):
+    "Bad channels found for an ICA are filed in the pipeline thread, once it is free, and the ICA is deleted"
+    calls, filed = [], []
     node = SimpleNamespace(_source_states=lambda ctx: [{'task': 't0'}])
     ica_path = tmp_path / 'ica.fif'
     ica_path.touch()
     spec = SimpleNamespace(ctx=SimpleNamespace(node=node), path=ica_path)
     p = SimpleNamespace(set=lambda **state: None, _job_spec=lambda name: spec, make_bad_channels=lambda names, **state: filed.append((names, state)))
-    frame = _frame(_pipeline=p, _pipeline_lock=threading.Lock())
-    args = (_ICA_SCOPE, [(('R01',), ['MEG 0111'])], True)
+    thread = _FakePipelineThread(held=True)
+    frame = _frame(_pipeline=p, _pipeline_thread=thread, _pipeline_lock=threading.Lock(), _closed=False, _queue_jobs=lambda *args: calls.append(('queue', *args)), _start_refresh=lambda: calls.append(('refresh',)))
 
-    # while a refresh pass holds the pipeline, the call is retried rather than interleaved with it
-    with frame._pipeline_lock:
-        frame._add_ica_bad_channels(*args)
-    assert deferred == [(frame._add_ica_bad_channels, *args)]
-    assert filed == [] and posted == []
+    # while a refresh pass is using the pipeline, nothing is filed
+    frame._add_ica_bad_channels(_ICA_SCOPE, [(('R01',), ['MEG 0111'])], True)
+    assert filed == [] and calls == []
     assert ica_path.exists()
 
-    frame._add_ica_bad_channels(*args)
+    thread.run()
     assert filed == [(['MEG 0111'], {'raw': '1-40', 'subject': 'R01', 'task': 't0'})]
-    assert posted == [(frame._queue_jobs, _ICA_SCOPE, [(('R01',), spec)])]
+    assert calls == [('queue', _ICA_SCOPE, [(('R01',), spec)])]
     assert not ica_path.exists()
-    assert not frame._pipeline_lock.locked()
 
     # without recompute, the table is re-read instead
-    posted.clear()
+    calls.clear()
+    thread.held = False
     frame._add_ica_bad_channels(_ICA_SCOPE, [(('R01',), ['MEG 0111'])], False)
-    assert posted == [(frame._start_refresh,)]
+    assert calls == [('refresh',)]
 
 
-def test_ica_bad_channels_report_a_failed_write(monkeypatch, tmp_path):
+def test_ica_bad_channels_report_a_failed_write(tmp_path):
     "A recording whose bad channels can not be written is reported, and the rows that were written are still queued"
-    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
-    posted, filed = [], []
+    calls, filed = [], []
     node = SimpleNamespace(_source_states=lambda ctx: [{'task': 't0'}])
     spec = SimpleNamespace(ctx=SimpleNamespace(node=node), path=tmp_path / 'ica.fif')
 
@@ -939,13 +1062,12 @@ def test_ica_bad_channels_report_a_failed_write(monkeypatch, tmp_path):
         filed.append((names, state))
 
     p = SimpleNamespace(set=lambda **state: None, _job_spec=lambda name: spec, make_bad_channels=make_bad_channels)
-    frame = _frame(_pipeline=p, _pipeline_lock=threading.Lock())
+    frame = _frame(_pipeline=p, _pipeline_thread=_FakePipelineThread(), _pipeline_lock=threading.Lock(), _closed=False, _queue_jobs=lambda *args: calls.append(('queue', *args)), _show_error=lambda *args: calls.append(('error', *args)), _start_refresh=lambda: calls.append(('refresh',)))
     frame._add_ica_bad_channels(_ICA_SCOPE, [(('R01',), ['MEG 0111']), (('R02',), ['MEG 0112']), (('R03',), ['MEG 0113'])], True)
     assert [state['subject'] for _, state in filed] == ['R01']  # the loop stops at the failure
-    assert posted[0] == (frame._queue_jobs, _ICA_SCOPE, [(('R01',), spec)])
-    assert posted[1][0] == frame._show_error
-    assert posted[2] == (frame._start_refresh,)
-    assert not frame._pipeline_lock.locked()
+    assert calls[0] == ('queue', _ICA_SCOPE, [(('R01',), spec)])
+    assert calls[1][0] == 'error' and 'no positions' in calls[1][1]
+    assert calls[2] == ('refresh',)
 
 
 def test_channel_summary_rows():

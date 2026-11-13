@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import shutil
 import subprocess
 import sys
@@ -11,16 +12,17 @@ import threading
 import time
 import traceback
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from concurrent.futures import Future
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import mne
 import wx
 
 from .. import load
-from .._data_obj import Dataset
+from .._data_obj import Dataset, Sensor
 from .._exceptions import ConfigurationError, DataError
 from .._experiment.derivative_cache import ALLOW_PROTECTED_OVERWRITE, CachePolicy, JobSpec, ProtectedArtifactError
 from .._experiment.epoch_rejection import ChannelModelRejection, ManualRejection
@@ -94,6 +96,61 @@ def _launch_browse_raw_subprocess(
 
     threading.Thread(target=wait, daemon=True).start()
     return proc
+
+
+class _PipelineThread:
+    """Thread that owns the pipeline: every use of the pipeline runs here, one call at a time, in the order submitted.
+
+    The pipeline is a single stateful object (see :meth:`Pipeline.set`), so its users
+    must not interleave, and the main thread can not wait for it: a call that stops
+    to ask the user something waits for the main thread in turn (see
+    :func:`_call_on_main_thread`). The thread is a daemon and outlives the window, so
+    that a computation that finishes after the window closed can still save its result.
+    """
+
+    def __init__(self) -> None:
+        self._calls: queue.SimpleQueue[tuple[Callable[[], Any], Future]] = queue.SimpleQueue()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self) -> None:
+        while True:
+            func, future = self._calls.get()
+            try:
+                future.set_result(func())
+            except BaseException as error:
+                future.set_exception(error)
+
+    def submit(self, func: Callable[[], Any]) -> Future:
+        """Queue ``func()`` for the pipeline thread.
+
+        Parameters
+        ----------
+        func
+            Called in the pipeline thread.
+
+        Returns
+        -------
+        future
+            Holds what ``func`` returned or raised. Another worker thread can wait
+            for it with ``result()``; the main thread must not (see :meth:`PipelineFrame._use_pipeline`).
+        """
+        future = Future()
+        self._calls.put((func, future))
+        return future
+
+
+def _call_on_main_thread(func: Callable[[], Any]) -> Any:
+    """Call ``func()`` on the main thread from another thread, and wait for what it returns or raises."""
+    future = Future()
+
+    def call() -> None:
+        try:
+            future.set_result(func())
+        except BaseException as error:
+            future.set_exception(error)
+
+    wx.CallAfter(call)
+    return future.result()
 
 
 class _AbortRequested(Exception):
@@ -653,15 +710,12 @@ class PipelineFrame(EelbrainFrame):
         super().__init__(parent=None, title=f"Pipeline: {pipeline.root}")
         self._pipeline = pipeline
         self._refresh_token = None  # replaced each refresh; threads compare identity
-        # Serializes the two background threads' use of the pipeline: the refresh walk,
-        # and the worker's data loading and saving. Deliberately not held across job(),
-        # which is the long part and needs no pipeline access, so a refresh never waits
-        # for a fit -- only for a load or a save. A refresh that stops to ask about a
-        # stale ICA does hold it until the user answers, which stalls the worker between
-        # jobs. Never taken on the main thread: that would freeze the window while the
-        # worker loads, and since the worker waits on the main thread for its own
-        # stale-ICA dialog, a main-thread waiter could deadlock. Main-thread pipeline
-        # use (opening a sub-GUI, writing bad channels) is therefore still unguarded.
+        # Everything that uses the pipeline on behalf of the main thread runs here (see :meth:`_use_pipeline`)
+        self._pipeline_thread = _PipelineThread()
+        # Serializes the background threads' use of the pipeline (the refresh walk, and
+        # the worker's data loading and saving) with the pipeline thread. Deliberately
+        # not held across job(), which is the long part and needs no pipeline access.
+        # Never taken on the main thread.
         self._pipeline_lock = threading.Lock()
         self._compute_token = None  # replaced each compute run; threads compare identity
         # Whether a worker thread is alive. Distinct from _compute_token, which Stop
@@ -679,7 +733,6 @@ class PipelineFrame(EelbrainFrame):
         self._subprocesses: list[tuple[str, subprocess.Popen]] = []
         self._browse_raw_tmp_dirs: list[tuple[subprocess.Popen, Path]] = []  # (raw browser, its temporary directory), removed when the browser closes, or with this window
         self._closed = False
-        self._deferred_row_action: tuple[tuple, tuple, str] | None = None  # (scope, combo, label) of the row action waiting for the pipeline
         self._n_done = self._n_total = 0  # progress of the current run
         self._n_loading = 0  # rows of the displayed table whose status is still to be filled in
         # Job specs for the rows currently displayed, keyed by (scope, combo). Minted
@@ -1017,19 +1070,36 @@ class PipelineFrame(EelbrainFrame):
         pipeline = self._pipeline
         raw_name = self._raw_name()
         state = dict(zip(self._layout.key_fields, self._row_combo(idx)))
-        wx.BeginBusyCursor()
-        try:
+        with wx.BusyCursor():
             pipeline.set(raw=raw_name, **state)
             source_name = pipeline._raw.root_source_name(raw_name)
             source_pipe = pipeline._raw.root_source_pipe(raw_name)
             raw = pipeline._load_derivative(raw_input_name(source_name), options={'noise': False})
             sensor = load.mne.sensor_dim(raw.info, adjacency=source_pipe.adjacency)
             current_bads = pipeline.load_bad_channels()
-        except _USER_ERROR_TYPES as error:
-            self._show_error(*_error_dialog_args(error))
-            return
-        finally:
-            wx.EndBusyCursor()
+        # after this turn: the pipeline must not wait for the user
+        wx.CallAfter(self._edit_bad_channels, raw_name, state, sensor, current_bads)
+
+    def _edit_bad_channels(
+            self,
+            raw_name: str,
+            state: dict[str, str],
+            sensor: Sensor,
+            current_bads: list[str],
+    ) -> None:
+        """Show the bad channels dialog for a recording, and save the channels it is closed with.
+
+        Parameters
+        ----------
+        raw_name
+            Raw pipe the table is for.
+        state
+            Key-field values identifying the recording.
+        sensor
+            Sensors of the recording, to validate the channel names against.
+        current_bads
+            Bad channels to start with.
+        """
         dlg = BadChannelsDialog(self, sensor, current_bads)
         try:
             if dlg.ShowModal() != wx.ID_OK:
@@ -1037,12 +1107,68 @@ class PipelineFrame(EelbrainFrame):
             bad_chs = dlg.get_bad_channels()
         finally:
             dlg.Destroy()
-        try:
-            pipeline.make_bad_channels(bad_chs, redo=True, raw=raw_name, **state)
-        except _USER_ERROR_TYPES as error:
-            self._show_error(*_error_dialog_args(error))
-            return
-        self._start_refresh()
+        self._save_bad_channels(raw_name, state, bad_chs)
+
+    def _save_bad_channels(
+            self,
+            raw_name: str,
+            state: dict[str, str],
+            bad_chs: list[str],
+    ) -> None:
+        """Replace a recording's bad channels, then refresh the table.
+
+        Parameters
+        ----------
+        raw_name
+            Raw pipe the table is for.
+        state
+            Key-field values identifying the recording.
+        bad_chs
+            The new bad channels.
+        """
+        def done(future: Future) -> None:
+            try:
+                future.result()
+            except Exception as error:
+                self._show_error(*_error_dialog_args(error))
+            else:
+                self._start_refresh()
+
+        self._use_pipeline(partial(self._pipeline.make_bad_channels, bad_chs, redo=True, raw=raw_name, **state), done)
+
+    def _use_pipeline(
+            self,
+            func: Callable[[], Any],
+            then: Callable[[Future], None],
+            main_thread: bool = False,
+    ) -> None:
+        """Use the pipeline without making the main thread wait for it.
+
+        Parameters
+        ----------
+        func
+            Called in the pipeline thread, once the pipeline is free.
+        then
+            Called on the main thread with the finished future, whose ``result()``
+            returns what ``func`` returned or raises what it raised; any dialog
+            belongs here, where the pipeline is not kept waiting for the user.
+            Dropped if the window closed meanwhile.
+        main_thread
+            Call ``func`` on the main thread instead, as its turn to use the pipeline
+            (the pipeline thread waits until it returns); for what has to create windows.
+        """
+        if main_thread:
+            func = partial(_call_on_main_thread, func)
+
+        def use() -> Any:
+            with self._pipeline_lock:
+                return func()
+
+        def deliver(future: Future) -> None:
+            if not self._closed:
+                then(future)
+
+        self._pipeline_thread.submit(use).add_done_callback(partial(wx.CallAfter, deliver))
 
     # ------------------------------------------------------------------
     # Row actions
@@ -1081,78 +1207,56 @@ class PipelineFrame(EelbrainFrame):
             self._run_row_action(idx, action)
 
     def _run_row_action(self, idx: int, action: RowAction) -> None:
-        """Run a row action while holding the pipeline lock, turning the errors it can raise into dialogs.
+        """Run a row action as the main thread's turn to use the pipeline, turning the errors it can raise into dialogs.
 
-        While the compute worker is using the pipeline, the action waits (see
-        :meth:`_run_deferred_row_action`): waiting for the lock here would deadlock a
-        worker that needs the main thread for a dialog.
+        The action waits for whatever the pipeline thread is doing, and is dropped
+        if its row is not where it was by then (the table was refreshed or
+        switched) or the window closed. Errors are shown after the turn.
         """
-        if not self._pipeline_lock.acquire(blocking=False):
-            if self._deferred_row_action is None:
-                wx.CallLater(100, self._run_deferred_row_action)
-            # replaces an action that is still waiting, so that repeating a request does not run it more than once
-            self._deferred_row_action = (self._table_scope(), self._row_combo(idx), action.label)
-            self.SetStatusText(f"Waiting for the pipeline: {action.label.rstrip('…')}", 1)
-            return
+        scope, combo = self._table_scope(), self._row_combo(idx)
         subject = self._list.GetItemText(idx, 0)
-        try:
-            try:
+
+        def run() -> None:
+            if not self._closed and self._displayed_row(scope, combo) == idx:
                 action.run()
-            finally:
-                self._pipeline_lock.release()  # before any of the dialogs below
-        except ICAMissingError:
-            dlg = wx.MessageDialog(self, f"The ICA for {subject} has not been computed yet, so raw data at the ICA stage cannot be displayed. Compute the ICA first (Make ICA in the ICA task).", "ICA Not Computed", wx.OK | wx.ICON_INFORMATION)
-            dlg.ShowModal()
-            dlg.Destroy()
-        except _USER_ERROR_TYPES as error:
-            self._show_error(*_error_dialog_args(error))
-        except ICAChannelsChangedError as error:
-            if self._ask_ica_channels_changed(error):
-                Path(error.path).unlink()
-                self._start_refresh()
-            else:
-                wx.CallAfter(wx.GetApp().ExitMainLoop)
-        except ProtectedArtifactError as error:
-            # A stale ICA dependency surfaced while building the requested
-            # artifact (e.g. make_epoch_rejection); route it through the
-            # same dialog used during refresh. A single row is involved, so
-            # "Apply to all" is not offered here.
-            choice, _ = self._ask_stale_ica(subject, error)
-            if choice == StaleICADialog.INCORPORATE:
-                def incorporate() -> None:
-                    self._pipeline.load_ica(raw=self._raw_name(), accept_stale=True)  # the manifest then matches
-                    action.run()
 
-                self._run_row_action(idx, RowAction(action.label, incorporate))
-            elif choice == StaleICADialog.ABORT:
-                wx.CallAfter(wx.GetApp().ExitMainLoop)
-            else:  # DELETE / IGNORE / dismissed: the action can not proceed
-                if choice == StaleICADialog.DELETE:
+        def done(future: Future) -> None:
+            try:
+                future.result()
+            except ICAMissingError:
+                dlg = wx.MessageDialog(self, f"The ICA for {subject} has not been computed yet, so raw data at the ICA stage cannot be displayed. Compute the ICA first (Make ICA in the ICA task).", "ICA Not Computed", wx.OK | wx.ICON_INFORMATION)
+                dlg.ShowModal()
+                dlg.Destroy()
+            except _USER_ERROR_TYPES as error:
+                self._show_error(*_error_dialog_args(error))
+            except ICAChannelsChangedError as error:
+                if self._ask_ica_channels_changed(error):
                     Path(error.path).unlink()
-                self._start_refresh()
-        except Exception as error:
-            self._show_error(*_error_dialog_args(error))
+                    self._start_refresh()
+                else:
+                    wx.CallAfter(wx.GetApp().ExitMainLoop)
+            except ProtectedArtifactError as error:
+                # A stale ICA dependency surfaced while building the requested
+                # artifact (e.g. make_epoch_rejection); route it through the
+                # same dialog used during refresh. A single row is involved, so
+                # "Apply to all" is not offered here.
+                choice, _ = self._ask_stale_ica(subject, error)
+                if choice == StaleICADialog.INCORPORATE:
+                    def incorporate() -> None:
+                        self._pipeline.load_ica(raw=self._raw_name(), accept_stale=True)  # the manifest then matches
+                        action.run()
 
-    def _run_deferred_row_action(self) -> None:
-        """Run the row action that found the pipeline in use, once the pipeline is free and the table has loaded.
+                    self._run_row_action(idx, RowAction(action.label, incorporate))
+                elif choice == StaleICADialog.ABORT:
+                    wx.CallAfter(wx.GetApp().ExitMainLoop)
+                else:  # DELETE / IGNORE / dismissed: the action can not proceed
+                    if choice == StaleICADialog.DELETE:
+                        Path(error.path).unlink()
+                    self._start_refresh()
+            except Exception as error:
+                self._show_error(*_error_dialog_args(error))
 
-        The action is minted afresh for the row, and dropped if the table changed
-        meanwhile or the row no longer offers it.
-        """
-        if self._closed:
-            return
-        elif self._pipeline_lock.locked() or self._n_loading:
-            wx.CallLater(100, self._run_deferred_row_action)
-            return
-        scope, combo, label = self._deferred_row_action
-        self._deferred_row_action = None
-        self._update_row_hint()
-        row = self._displayed_row(scope, combo)
-        if row == -1:
-            return
-        for action in self._row_actions(row):
-            if action.label == label and action.run is not None:
-                self._run_row_action(row, action)
+        self._use_pipeline(run, done, main_thread=True)
 
     def _open_bad_channels_gui(self, idx: int) -> None:
         raw_name = self._raw_name()
@@ -1215,9 +1319,6 @@ class PipelineFrame(EelbrainFrame):
     ) -> None:
         """Save the bad channels the MNE raw browser was closed with, after confirmation.
 
-        Like :meth:`_add_ica_bad_channels`, this can arrive while a refresh pass or the
-        compute worker is using the pipeline, and is then retried once they are done.
-
         Parameters
         ----------
         raw_name
@@ -1239,70 +1340,32 @@ class PipelineFrame(EelbrainFrame):
             return
         elif sorted(new_bads) == sorted(bads):
             return
-        if not self._pipeline_lock.acquire(blocking=False):
-            wx.CallLater(100, self._on_browse_raw_closed, raw_name, state, bads, new_bads, stderr)
-            return
-        error = None
-        try:
-            current_bads = self._pipeline.load_bad_channels(raw=raw_name, **state)  # may have been changed while the browser was open
-        except Exception as exc:  # not run through _run_row_action, so every error has to be shown here
-            error = exc
-        finally:
-            self._pipeline_lock.release()  # before any dialog, which would keep the compute worker waiting for the user
-        if error is not None:
-            self._show_error(*_error_dialog_args(error))
-            return
-        elif sorted(new_bads) == sorted(current_bads):
-            return
-        added = [ch for ch in new_bads if ch not in current_bads]
-        removed = [ch for ch in current_bads if ch not in new_bads]
-        changes = []
-        if added:
-            changes.append(f"Added: {', '.join(added)}")
-        if removed:
-            changes.append(f"Removed: {', '.join(removed)}")
-        message = f"Save the bad channels set in the raw browser for {subject}?\n\n" + '\n'.join(changes)
-        if sorted(current_bads) != sorted(bads):
-            message += "\n\nThe bad channels were changed elsewhere while the raw browser was open; saving replaces them with the ones set in the browser."
-        dlg = wx.MessageDialog(self, message, "Save Bad Channels", wx.YES_NO | wx.ICON_QUESTION)
-        answer = dlg.ShowModal()
-        dlg.Destroy()
-        if answer == wx.ID_YES:
-            self._save_browse_raw_bads(raw_name, state, new_bads)
 
-    def _save_browse_raw_bads(
-            self,
-            raw_name: str,
-            state: dict[str, str],
-            new_bads: list[str],
-    ) -> None:
-        """Replace a recording's bad channels with the ones set in the raw browser, once the pipeline is free.
+        def confirm(future: Future) -> None:
+            try:
+                current_bads = future.result()  # may have been changed while the browser was open
+            except Exception as error:  # not run through _run_row_action, so every error has to be shown here
+                self._show_error(*_error_dialog_args(error))
+                return
+            if sorted(new_bads) == sorted(current_bads):
+                return
+            added = [ch for ch in new_bads if ch not in current_bads]
+            removed = [ch for ch in current_bads if ch not in new_bads]
+            changes = []
+            if added:
+                changes.append(f"Added: {', '.join(added)}")
+            if removed:
+                changes.append(f"Removed: {', '.join(removed)}")
+            message = f"Save the bad channels set in the raw browser for {subject}?\n\n" + '\n'.join(changes)
+            if sorted(current_bads) != sorted(bads):
+                message += "\n\nThe bad channels were changed elsewhere while the raw browser was open; saving replaces them with the ones set in the browser."
+            dlg = wx.MessageDialog(self, message, "Save Bad Channels", wx.YES_NO | wx.ICON_QUESTION)
+            answer = dlg.ShowModal()
+            dlg.Destroy()
+            if answer == wx.ID_YES:
+                self._save_bad_channels(raw_name, state, new_bads)
 
-        Parameters
-        ----------
-        raw_name
-            Raw pipe that was shown.
-        state
-            Key-field values identifying the recording.
-        new_bads
-            Bad channels the browser was closed with.
-        """
-        if self._closed:
-            return
-        if not self._pipeline_lock.acquire(blocking=False):
-            wx.CallLater(100, self._save_browse_raw_bads, raw_name, state, new_bads)
-            return
-        error = None
-        try:
-            self._pipeline.make_bad_channels(new_bads, redo=True, raw=raw_name, **state)
-        except Exception as exc:
-            error = exc
-        finally:
-            self._pipeline_lock.release()
-        if error is None:
-            self._start_refresh()
-        else:
-            self._show_error(*_error_dialog_args(error))
+        self._use_pipeline(partial(self._pipeline.load_bad_channels, raw=raw_name, **state), confirm)
 
     def _open_ica_gui(self, idx: int) -> None:
         raw_name = self._raw_name()
@@ -1357,44 +1420,38 @@ class PipelineFrame(EelbrainFrame):
             ``(combo, names)``: channels to add to the bad channels, per row.
         recompute
             Whether to queue the new ICA decompositions right away.
-
-        Notes
-        -----
-        Runs on the main thread, like a double-click, but is triggered from another
-        window, so it can arrive while a refresh pass or the compute worker is
-        setting the pipeline's state (see :meth:`_iter_rows`). It is then retried
-        once they are done: waiting for the lock here would deadlock a pass that
-        needs the main thread for a dialog.
         """
-        if not self._pipeline_lock.acquire(blocking=False):
-            wx.CallLater(100, self._add_ica_bad_channels, scope, additions, recompute)
-            return
         raw_name, layout = scope[3], scope[4]
-        jobs = []  # [(combo, spec), ...] whose ICA was deleted
-        error = None
-        try:
-            for combo, names in additions:
-                state = dict(zip(layout.key_fields, combo))
-                self._pipeline.set(raw=raw_name, **state)
-                spec = self._pipeline._job_spec(ica_input_name(raw_name))
-                # the ICA combines bad channels across the tasks/runs it is estimated from
-                for source_state in spec.ctx.node._source_states(spec.ctx):
-                    self._pipeline.make_bad_channels(names, raw=raw_name, **{**state, **source_state})
-                spec.path.unlink(missing_ok=True)
-                jobs.append((combo, spec))
-        except Exception as exc:  # any error: the ICAs deleted so far still need to be queued or shown as missing
-            error = exc
-        finally:
-            self._pipeline_lock.release()
-        if recompute:
-            wx.CallAfter(self._queue_jobs, scope, jobs)
-        if error is not None:
-            # the recording whose bad channels could not be written may be half updated, so re-read every row;
-            # _error_dialog_args presents an unexpected error as a bug report
-            wx.CallAfter(self._show_error, *_error_dialog_args(error))
-            wx.CallAfter(self._start_refresh)
-        elif not recompute:
-            wx.CallAfter(self._start_refresh)
+
+        def add() -> tuple[list[tuple[tuple[str, ...], JobSpec]], Exception | None]:
+            jobs = []  # [(combo, spec), ...] whose ICA was deleted
+            try:
+                for combo, names in additions:
+                    state = dict(zip(layout.key_fields, combo))
+                    self._pipeline.set(raw=raw_name, **state)
+                    spec = self._pipeline._job_spec(ica_input_name(raw_name))
+                    # the ICA combines bad channels across the tasks/runs it is estimated from
+                    for source_state in spec.ctx.node._source_states(spec.ctx):
+                        self._pipeline.make_bad_channels(names, raw=raw_name, **{**state, **source_state})
+                    spec.path.unlink(missing_ok=True)
+                    jobs.append((combo, spec))
+            except Exception as error:  # any error: the ICAs deleted so far still need to be queued or shown as missing
+                return jobs, error
+            return jobs, None
+
+        def done(future: Future) -> None:
+            jobs, error = future.result()
+            if recompute:
+                self._queue_jobs(scope, jobs)
+            if error is not None:
+                # the recording whose bad channels could not be written may be half updated, so re-read every row;
+                # _error_dialog_args presents an unexpected error as a bug report
+                self._show_error(*_error_dialog_args(error))
+                self._start_refresh()
+            elif not recompute:
+                self._start_refresh()
+
+        self._use_pipeline(add, done)
 
     def _on_find_bad_channels(self, event) -> None:
         """Bad-Chs button: find flat channels and channels dominated by a single ICA component in every recording with a selected ICA."""
@@ -2166,9 +2223,8 @@ class PipelineFrame(EelbrainFrame):
     def _ask_stale_ica(self, subject: str, error: ProtectedArtifactError, allow_apply_to_all: bool = False) -> tuple[str | None, bool]:
         """Show StaleICADialog and return ``(choice, apply_to_all)``.
 
-        Safe to call from any thread: when called off the main thread the
-        dialog is shown via ``CallAfter`` and this blocks until the user
-        decides.
+        Safe to call from any thread: off the main thread, this blocks until the
+        user decides.
         """
         def show() -> tuple[str | None, bool]:
             dlg = StaleICADialog(
@@ -2184,16 +2240,7 @@ class PipelineFrame(EelbrainFrame):
 
         if wx.IsMainThread():
             return show()
-        result = [None]
-        ready = threading.Event()
-
-        def run():
-            result[0] = show()
-            ready.set()
-
-        wx.CallAfter(run)
-        ready.wait()
-        return result[0]
+        return _call_on_main_thread(show)
 
     def _ask_ica_channels_changed(self, error: ICAChannelsChangedError) -> bool:
         """Prompt when bad channels changed since the ICA was created.
