@@ -679,6 +679,7 @@ class PipelineFrame(EelbrainFrame):
         self._subprocesses: list[tuple[str, subprocess.Popen]] = []
         self._browse_raw_tmp_dirs: list[Path] = []  # removed when their raw browser closes, or with this window
         self._closed = False
+        self._deferred_row_action: tuple[tuple, tuple, str] | None = None  # (scope, combo, label) of the row action waiting for the pipeline
         self._n_done = self._n_total = 0  # progress of the current run
         self._n_loading = 0  # rows of the displayed table whose status is still to be filled in
         # Job specs for the rows currently displayed, keyed by (scope, combo). Minted
@@ -1080,44 +1081,78 @@ class PipelineFrame(EelbrainFrame):
             self._run_row_action(idx, action)
 
     def _run_row_action(self, idx: int, action: RowAction) -> None:
-        """Run a row action, turning the errors it can raise into dialogs."""
+        """Run a row action while holding the pipeline lock, turning the errors it can raise into dialogs.
+
+        While the compute worker is using the pipeline, the action waits (see
+        :meth:`_run_deferred_row_action`): waiting for the lock here would deadlock a
+        worker that needs the main thread for a dialog.
+        """
+        if not self._pipeline_lock.acquire(blocking=False):
+            if self._deferred_row_action is None:
+                wx.CallLater(100, self._run_deferred_row_action)
+            # replaces an action that is still waiting, so that repeating a request does not run it more than once
+            self._deferred_row_action = (self._table_scope(), self._row_combo(idx), action.label)
+            self.SetStatusText(f"Waiting for the pipeline: {action.label.rstrip('…')}", 1)
+            return
         subject = self._list.GetItemText(idx, 0)
-        # Loop so that after the user incorporates a stale ICA we can retry the
-        # action through the same try, keeping the _USER_ERROR_TYPES handler
-        # around the retry; every other path falls through to the return.
-        while True:
+        try:
             try:
                 action.run()
-            except ICAMissingError:
-                dlg = wx.MessageDialog(self, f"The ICA for {subject} has not been computed yet, so raw data at the ICA stage cannot be displayed. Compute the ICA first (Make ICA in the ICA task).", "ICA Not Computed", wx.OK | wx.ICON_INFORMATION)
-                dlg.ShowModal()
-                dlg.Destroy()
-            except _USER_ERROR_TYPES as error:
-                self._show_error(*_error_dialog_args(error))
-            except ICAChannelsChangedError as error:
-                if self._ask_ica_channels_changed(error):
+            finally:
+                self._pipeline_lock.release()  # before any of the dialogs below
+        except ICAMissingError:
+            dlg = wx.MessageDialog(self, f"The ICA for {subject} has not been computed yet, so raw data at the ICA stage cannot be displayed. Compute the ICA first (Make ICA in the ICA task).", "ICA Not Computed", wx.OK | wx.ICON_INFORMATION)
+            dlg.ShowModal()
+            dlg.Destroy()
+        except _USER_ERROR_TYPES as error:
+            self._show_error(*_error_dialog_args(error))
+        except ICAChannelsChangedError as error:
+            if self._ask_ica_channels_changed(error):
+                Path(error.path).unlink()
+                self._start_refresh()
+            else:
+                wx.CallAfter(wx.GetApp().ExitMainLoop)
+        except ProtectedArtifactError as error:
+            # A stale ICA dependency surfaced while building the requested
+            # artifact (e.g. make_epoch_rejection); route it through the
+            # same dialog used during refresh. A single row is involved, so
+            # "Apply to all" is not offered here.
+            choice, _ = self._ask_stale_ica(subject, error)
+            if choice == StaleICADialog.INCORPORATE:
+                def incorporate() -> None:
+                    self._pipeline.load_ica(raw=self._raw_name(), accept_stale=True)  # the manifest then matches
+                    action.run()
+
+                self._run_row_action(idx, RowAction(action.label, incorporate))
+            elif choice == StaleICADialog.ABORT:
+                wx.CallAfter(wx.GetApp().ExitMainLoop)
+            else:  # DELETE / IGNORE / dismissed: the action can not proceed
+                if choice == StaleICADialog.DELETE:
                     Path(error.path).unlink()
-                    self._start_refresh()
-                else:
-                    wx.CallAfter(wx.GetApp().ExitMainLoop)
-            except ProtectedArtifactError as error:
-                # A stale ICA dependency surfaced while building the requested
-                # artifact (e.g. make_epoch_rejection); route it through the
-                # same dialog used during refresh. A single row is involved, so
-                # "Apply to all" is not offered here.
-                choice, _ = self._ask_stale_ica(subject, error)
-                if choice == StaleICADialog.INCORPORATE:
-                    self._pipeline.load_ica(raw=self._raw_name(), accept_stale=True)
-                    continue  # manifest now matches; retry the action
-                elif choice == StaleICADialog.ABORT:
-                    wx.CallAfter(wx.GetApp().ExitMainLoop)
-                else:  # DELETE / IGNORE / dismissed: the action can not proceed
-                    if choice == StaleICADialog.DELETE:
-                        Path(error.path).unlink()
-                    self._start_refresh()
-            except Exception as error:
-                self._show_error(*_error_dialog_args(error))
+                self._start_refresh()
+        except Exception as error:
+            self._show_error(*_error_dialog_args(error))
+
+    def _run_deferred_row_action(self) -> None:
+        """Run the row action that found the pipeline in use, once the pipeline is free and the table has loaded.
+
+        The action is minted afresh for the row, and dropped if the table changed
+        meanwhile or the row no longer offers it.
+        """
+        if self._closed:
             return
+        elif self._pipeline_lock.locked() or self._n_loading:
+            wx.CallLater(100, self._run_deferred_row_action)
+            return
+        scope, combo, label = self._deferred_row_action
+        self._deferred_row_action = None
+        self._update_row_hint()
+        row = self._displayed_row(scope, combo)
+        if row == -1:
+            return
+        for action in self._row_actions(row):
+            if action.label == label and action.run is not None:
+                self._run_row_action(row, action)
 
     def _open_bad_channels_gui(self, idx: int) -> None:
         raw_name = self._raw_name()
@@ -1133,45 +1168,28 @@ class PipelineFrame(EelbrainFrame):
         The browser reads a file: the source recording's own, a raw pipe's cache file
         (built here if needed), or, for a raw pipe that does not cache, a temporary
         file written here (and removed when the browser closes).
-
-        While the compute worker is using the pipeline (it may be building the same
-        cache file), this is tried again later, unless the table changed meanwhile.
         """
         pipeline = self._pipeline
         raw_name = self._raw_name()
-        combo = self._row_combo(idx)
-        state = dict(zip(self._layout.key_fields, combo))
-        if not self._pipeline_lock.acquire(blocking=False):
-            scope = self._table_scope()
-
-            def retry() -> None:
-                row = self._displayed_row(scope, combo)
-                if row >= 0:
-                    self._run_row_action(row, RowAction("Open in mne browse_raw…", partial(self._open_mne_browse_raw, row)))
-
-            wx.CallLater(100, retry)
-            return
+        state = dict(zip(self._layout.key_fields, self._row_combo(idx)))
         tmp_dir = None
         try:
-            try:
-                with pipeline._temporary_state, wx.BusyCursor():
-                    pipeline.set(raw=raw_name, **state)
-                    bads = pipeline.load_bad_channels()
-                    if isinstance(pipeline._raw[raw_name], RawSource):
-                        raw_ctx = pipeline._resolve_derivative(raw_input_name(raw_name))
-                        path = raw_ctx.node.path(raw_ctx)
+            with pipeline._temporary_state, wx.BusyCursor():
+                pipeline.set(raw=raw_name, **state)
+                bads = pipeline.load_bad_channels()
+                if isinstance(pipeline._raw[raw_name], RawSource):
+                    raw_ctx = pipeline._resolve_derivative(raw_input_name(raw_name))
+                    path = raw_ctx.node.path(raw_ctx)
+                else:
+                    raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
+                    if raw_ctx.node.cache_policy is CachePolicy.NEVER:
+                        tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
+                        self._browse_raw_tmp_dirs.append(tmp_dir)
+                        path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
+                        raw_ctx.load().save(path)
                     else:
-                        raw_ctx = pipeline._resolve_derivative(raw_node_name(raw_name))
-                        if raw_ctx.node.cache_policy is CachePolicy.NEVER:
-                            tmp_dir = Path(tempfile.mkdtemp(prefix='eelbrain-browse-raw-'))
-                            self._browse_raw_tmp_dirs.append(tmp_dir)
-                            path = tmp_dir / f"{'_'.join(state.values())}_{raw_name}-raw.fif"
-                            raw_ctx.load().save(path)
-                        else:
-                            raw_ctx.ensure()  # builds the cache file if needed, without reading it
-                            path = raw_ctx.artifact_path
-            finally:
-                self._pipeline_lock.release()
+                        raw_ctx.ensure()  # builds the cache file if needed, without reading it
+                        path = raw_ctx.artifact_path
 
             def on_close(new_bads: list[str] | None, stderr: str) -> None:
                 if tmp_dir is not None:

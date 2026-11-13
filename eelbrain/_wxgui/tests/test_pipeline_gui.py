@@ -292,7 +292,7 @@ def _table_frame(name: str, rows: list[tuple] = (), **kwargs) -> PipelineFrame:
         idx = fake.InsertItem(len(fake.rows), row[0])
         for col, value in enumerate(row[1:], 1):
             fake.SetItem(idx, col, value)
-    return _frame(_list=fake, _layout=layout, _current_task=lambda: task)
+    return _frame(_list=fake, _layout=layout, _current_task=lambda: task, _pipeline_lock=threading.Lock(), _deferred_row_action=None, _closed=False)
 
 
 # see PipelineFrame._table_scope
@@ -514,7 +514,7 @@ def _browse_raw_frame(monkeypatch, tmp_path, caches: bool):
     launched = []
     monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', lambda *args: launched.append(args) or 'proc')
     monkeypatch.setattr(pipeline_gui.wx, 'BusyCursor', contextlib.nullcontext)
-    frame.__dict__.update(_pipeline=pipeline, _pipeline_lock=threading.Lock(), _n_loading=0, _subprocesses=[], _browse_raw_tmp_dirs=[], _closed=False)
+    frame.__dict__.update(_pipeline=pipeline, _n_loading=0, _subprocesses=[], _browse_raw_tmp_dirs=[])
     return frame, launched, loaded, saved
 
 
@@ -559,24 +559,38 @@ def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
     assert not tmp_file.parent.exists()
 
 
-def test_open_mne_browse_raw_busy(monkeypatch, tmp_path):
-    "While the pipeline is in use the browser is not opened; it is opened later, unless the table changed meanwhile"
+def test_row_action_waits_for_the_pipeline(monkeypatch, tmp_path):
+    "While the pipeline is in use a row action is not run; it is run once, later, unless the table changed or the window closed meanwhile"
     frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=True)
     frame._raw_name = lambda: 'filt'
     scope = ['bad_chs table']
     frame._table_scope = lambda: scope[0]
-    later = []
+    status, later = [], []
+    frame.SetStatusText = lambda *args: status.append(args)
     monkeypatch.setattr(pipeline_gui.wx, 'CallLater', lambda *args: later.append(args))
     with frame._pipeline_lock:
         frame._run_row_action(0, frame._row_actions(0)[2])
-    (delay, retry), = later
-    assert delay == 100 and launched == [] and loaded == []
-    retry()
-    assert launched[-1][0] == str(tmp_path / 'cache-raw.fif') and not frame._pipeline_lock.locked()
-    # the table changed before the retry
+        frame._run_row_action(0, frame._row_actions(0)[2])  # asked for again: still a single action waiting
+        assert later == [(100, frame._run_deferred_row_action)]
+        assert status[-1] == ("Waiting for the pipeline: Open in mne browse_raw", 1)
+        frame._run_deferred_row_action()  # still in use
+    assert len(later) == 2 and launched == [] and loaded == []
+    frame._run_deferred_row_action()
+    assert [args[0] for args in launched] == [str(tmp_path / 'cache-raw.fif')]
+    assert frame._deferred_row_action is None and not frame._pipeline_lock.locked()
+    # the table changed while the action was waiting
+    with frame._pipeline_lock:
+        frame._run_row_action(0, frame._row_actions(0)[2])
     scope[0] = 'ica table'
-    retry()
-    assert len(launched) == 1
+    frame._run_deferred_row_action()
+    assert len(launched) == 1 and frame._deferred_row_action is None
+    # the window closed while the action was waiting
+    scope[0] = 'bad_chs table'
+    with frame._pipeline_lock:
+        frame._run_row_action(0, frame._row_actions(0)[2])
+    frame._closed = True
+    frame._run_deferred_row_action()
+    assert len(launched) == 1 and len(later) == 4
 
 
 def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
