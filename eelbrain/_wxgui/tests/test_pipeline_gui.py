@@ -343,7 +343,7 @@ def _table_frame(name: str, rows: list[tuple] = (), **kwargs) -> PipelineFrame:
         idx = fake.InsertItem(len(fake.rows), row[0])
         for col, value in enumerate(row[1:], 1):
             fake.SetItem(idx, col, value)
-    return _frame(_list=fake, _layout=layout, _current_task=lambda: task, _table_scope=lambda: (task, None, None, None, layout), _pipeline_thread=_FakePipelineThread(), _pipeline_lock=threading.Lock(), _closed=False)
+    return _frame(_list=fake, _layout=layout, _current_task=lambda: task, _table_scope=lambda: (task, None, None, None, layout), _pipeline_thread=_FakePipelineThread(), _closed=False)
 
 
 # see PipelineFrame._table_scope
@@ -461,7 +461,7 @@ def test_compute_button_waits_for_the_table_but_stop_does_not():
 
 
 def test_row_actions_wait_for_the_table_to_load():
-    "While the refresh thread is still filling rows in, a row offers no action, even one that is in"
+    "While the refresh is still filling rows in, a row offers no action, even one that is in"
     layout = _layout('coreg')
     frame = _table_frame('coreg', [TASKS_BY_NAME['coreg'].missing_row(('R01', 's1'), layout, pipeline_gui.LOADING), ('R02', 's1', 'R02', 'missing')])
     activated = []
@@ -639,7 +639,7 @@ def test_pipeline_thread():
 def test_use_pipeline(monkeypatch):
     "The main thread gets the outcome of a call in the pipeline thread as an event, unless the window closed; with main_thread the call itself is an event, for which the pipeline thread waits"
     loop = _MainLoop(monkeypatch)
-    frame = _frame(_pipeline_thread=pipeline_gui._PipelineThread(), _pipeline_lock=threading.Lock(), _closed=False)
+    frame = _frame(_pipeline_thread=pipeline_gui._PipelineThread(), _closed=False)
     main = threading.current_thread()
     outcomes = []
 
@@ -875,7 +875,7 @@ def test_on_browse_raw_closed(monkeypatch):
     current = ['MEG 0111']
     pipeline = SimpleNamespace(load_bad_channels=lambda raw, **state: current, make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state)))
     thread = _FakePipelineThread()
-    frame = _frame(_pipeline=pipeline, _pipeline_thread=thread, _pipeline_lock=threading.Lock(), _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
+    frame = _frame(_pipeline=pipeline, _pipeline_thread=thread, _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0112', 'MEG 0113'], '')
     assert saved == [(['MEG 0112', 'MEG 0113'], True, 'raw', {'subject': 'R01'})]
     assert refreshed == [True]
@@ -997,29 +997,29 @@ def test_queue_jobs_dedupes_within_one_scope_only():
     assert started == [True]
 
 
-def test_compute_job_holds_the_pipeline_lock_except_for_the_fit():
-    "Loading and saving are serialized against the refresh walk; the computation is not"
-    held = {}
+def test_compute_job_uses_the_pipeline_thread_except_for_the_fit():
+    "Loading and saving run in the pipeline thread, serialized with the refresh walk; the computation does not"
+    in_pipeline_thread = {}
+    thread = _FakePipelineThread()
 
     class _Job:
         def __call__(self):
-            held['fit'] = frame._pipeline_lock.locked()
+            in_pipeline_thread['fit'] = thread.running
             return 'RESULT'
 
     class _Spec:
         def make_job(self):
-            held['make_job'] = frame._pipeline_lock.locked()
+            in_pipeline_thread['make_job'] = thread.running
             return _Job()
 
         def save_result(self, job, result):
-            held['save_result'] = frame._pipeline_lock.locked()
+            in_pipeline_thread['save_result'] = thread.running
             return result
 
-    frame = _frame(_pipeline_lock=threading.Lock())
+    frame = _frame(_pipeline_thread=thread)
     assert frame._compute_job(TASKS_BY_NAME['ica'], _Spec(), ('R0000',)) == 'RESULT'
-    # an hour-long fit must not keep the refresh thread out
-    assert held == {'make_job': True, 'fit': False, 'save_result': True}
-    assert not frame._pipeline_lock.locked()
+    # an hour-long fit must not keep a refresh out
+    assert in_pipeline_thread == {'make_job': True, 'fit': False, 'save_result': True}
 
 
 def test_ica_bad_channels_wait_for_the_pipeline(tmp_path):
@@ -1031,7 +1031,7 @@ def test_ica_bad_channels_wait_for_the_pipeline(tmp_path):
     spec = SimpleNamespace(ctx=SimpleNamespace(node=node), path=ica_path)
     p = SimpleNamespace(set=lambda **state: None, _job_spec=lambda name: spec, make_bad_channels=lambda names, **state: filed.append((names, state)))
     thread = _FakePipelineThread(held=True)
-    frame = _frame(_pipeline=p, _pipeline_thread=thread, _pipeline_lock=threading.Lock(), _closed=False, _queue_jobs=lambda *args: calls.append(('queue', *args)), _start_refresh=lambda: calls.append(('refresh',)))
+    frame = _frame(_pipeline=p, _pipeline_thread=thread, _closed=False, _queue_jobs=lambda *args: calls.append(('queue', *args)), _start_refresh=lambda: calls.append(('refresh',)))
 
     # while a refresh pass is using the pipeline, nothing is filed
     frame._add_ica_bad_channels(_ICA_SCOPE, [(('R01',), ['MEG 0111'])], True)
@@ -1062,7 +1062,7 @@ def test_ica_bad_channels_report_a_failed_write(tmp_path):
         filed.append((names, state))
 
     p = SimpleNamespace(set=lambda **state: None, _job_spec=lambda name: spec, make_bad_channels=make_bad_channels)
-    frame = _frame(_pipeline=p, _pipeline_thread=_FakePipelineThread(), _pipeline_lock=threading.Lock(), _closed=False, _queue_jobs=lambda *args: calls.append(('queue', *args)), _show_error=lambda *args: calls.append(('error', *args)), _start_refresh=lambda: calls.append(('refresh',)))
+    frame = _frame(_pipeline=p, _pipeline_thread=_FakePipelineThread(), _closed=False, _queue_jobs=lambda *args: calls.append(('queue', *args)), _show_error=lambda *args: calls.append(('error', *args)), _start_refresh=lambda: calls.append(('refresh',)))
     frame._add_ica_bad_channels(_ICA_SCOPE, [(('R01',), ['MEG 0111']), (('R02',), ['MEG 0112']), (('R03',), ['MEG 0113'])], True)
     assert [state['subject'] for _, state in filed] == ['R01']  # the loop stops at the failure
     assert calls[0] == ('queue', _ICA_SCOPE, [(('R01',), spec)])
@@ -1099,27 +1099,24 @@ def test_channel_summary_rows():
     assert bad_channel_summary._flat_in_every_recording([]) == []
 
 
-def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
-    "Every recording is analyzed under the pipeline lock; a failing one is reported, the rest are summarized"
-    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda func, *args: func(*args))
-    locked, updates = [], []
+def test_find_bad_channels(monkeypatch):
+    "Every recording is analyzed; a failing one is reported, the rest are summarized"
+    analyzed, updates = [], []
     progress = SimpleNamespace(Update=lambda i, msg: updates.append((i, msg)) or (True, False), WasCancelled=lambda: False, Destroy=lambda: None)
 
     def candidates(raw_name, spec):
-        locked.append(frame._pipeline_lock.locked())
+        analyzed.append(spec)
         if spec == 'bad':
             raise DataError("no positions")
         return [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)], [('EEG 001', 'eeg')]
 
     frame = _frame(
-        _pipeline_lock=threading.Lock(),
         _ica_bad_channel_candidates=candidates,
         _show_bad_channel_summary=lambda *args: summary.append(args),
     )
     summary = []
-    frame._find_bad_channels_thread(_ICA_SCOPE, [(('R01',), 'ok'), (('R02',), 'bad')], progress)
-    assert locked == [True, True]
-    assert not frame._pipeline_lock.locked()
+    frame._find_bad_channels(_ICA_SCOPE, [(('R01',), 'ok'), (('R02',), 'bad')], progress)
+    assert analyzed == ['ok', 'bad']
     assert [i for i, _ in updates] == [0, 1]
     (scope, results, errors, progress_), = summary
     assert scope is _ICA_SCOPE and progress_ is progress
@@ -1129,9 +1126,9 @@ def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
     # Abort in the progress dialog while a recording loads stops the search before the next one
     progress.Update = lambda i, msg: (i == 0, False)
     summary.clear()
-    locked.clear()
-    frame._find_bad_channels_thread(_ICA_SCOPE, [(('R01',), 'ok'), (('R02',), 'ok'), (('R03',), 'ok')], progress)
-    assert locked == [True]
+    analyzed.clear()
+    frame._find_bad_channels(_ICA_SCOPE, [(('R01',), 'ok'), (('R02',), 'ok'), (('R03',), 'ok')], progress)
+    assert analyzed == ['ok']
     assert summary[0][1] == [(('R01',), [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)], [('EEG 001', 'eeg')])]
 
     # the summary asks the dialog whether Abort was clicked, which also covers the last recording (the frame's own method is mocked above)
@@ -1145,25 +1142,6 @@ def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
     assert len(opened) == 1 and opened[0][1] == summary[0][1]
 
 
-def test_refresh_holds_the_pipeline_lock(monkeypatch):
-    "Neither refresh pass ever runs while the worker is loading or saving"
-    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
-    posted = []
-    locked = []
-    token = object()
-    frame = _frame(
-        _pipeline=pipeline(),
-        _pipeline_lock=threading.Lock(),
-        _refresh_token=token,
-        _iter_combos=lambda scope: locked.append(frame._pipeline_lock.locked()) or iter([('R01',)]),
-        _iter_rows=lambda token_, scope, combos: locked.append(frame._pipeline_lock.locked()) or iter([(('R01',), ('R01', 'selected', '30', '2'), 'SPEC', None)]),
-    )
-    frame._refresh_thread(token, _ICA_SCOPE)
-    assert locked == [True, True]
-    assert not frame._pipeline_lock.locked()  # released before the table update is posted
-    assert posted
-
-
 def test_refresh_shows_the_rows_before_their_status(monkeypatch):
     "The table is posted from the first pass, then filled in row by row"
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
@@ -1173,13 +1151,12 @@ def test_refresh_shows_the_rows_before_their_status(monkeypatch):
     rows = [(('R01',), ('R01', 'selected', '30', '2'), 'SPEC-1', None), (('R02',), ('R02', 'no ICA', PLACEHOLDER, PLACEHOLDER), 'SPEC-2', None)]
     frame = _frame(
         _pipeline=pipeline(),
-        _pipeline_lock=threading.Lock(),
         _refresh_token=token,
         _iter_combos=lambda scope: iter([('R01',), ('R02',)]),
         _iter_rows=lambda token_, scope, combos: walked.append(combos) or iter(rows),
     )
     walked = []
-    frame._refresh_thread(token, _ICA_SCOPE)
+    frame._refresh(token, _ICA_SCOPE, 0.)
     # the table goes up first, with every row still loading
     assert posted[0] == (frame._populate_table, [task.missing_row(combo, _ICA_LAYOUT, pipeline_gui.LOADING) for combo, *_ in rows], token)
     # the second pass resolves the rows the first pass found, rather than walking them again
@@ -1191,22 +1168,29 @@ def test_refresh_shows_the_rows_before_their_status(monkeypatch):
 
     # a task switch between the two passes drops the table rather than paying for its rows
     posted.clear()
-    frame._refresh_token = object()
-    frame._refresh_thread(token, _ICA_SCOPE)
-    assert posted == []
+    walked.clear()
+    iter_combos = frame._iter_combos
+    frame._iter_combos = lambda scope: frame.__dict__.update(_refresh_token=object()) or iter_combos(scope)
+    frame._refresh(token, _ICA_SCOPE, 0.)
+    assert posted == [] and walked == []
+    # a refresh that was superseded while it waited for the pipeline does not even look for its rows
+    frame._iter_combos = lambda scope: walked.append('combos')
+    frame._refresh(token, _ICA_SCOPE, 0.)
+    assert posted == [] and walked == []
+    frame._iter_combos = iter_combos
 
     # rows that failed are still filled in, and the first failure is reported once, at the end
     frame._refresh_token = token
     errors = [RuntimeError("first"), RuntimeError("second")]
     rows[:] = [(('R01',), ('R01', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER), None, errors[0]), (('R02',), ('R02', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER), None, errors[1])]
-    frame._refresh_thread(token, _ICA_SCOPE)
+    frame._refresh(token, _ICA_SCOPE, 0.)
     assert [args[0] for args in posted] == [frame._populate_table, frame._fill_row, frame._fill_row, frame._show_error, frame._end_refresh]
     assert 'RuntimeError: first' in posted[-2][1]
 
     # a second pass that fails outright is reported, and the table is settled afterwards
     posted.clear()
     frame._iter_rows = lambda token_, scope, combos: (_ for _ in ()).throw(RuntimeError("no rows"))
-    frame._refresh_thread(token, _ICA_SCOPE)
+    frame._refresh(token, _ICA_SCOPE, 0.)
     assert [args[0] for args in posted] == [frame._populate_table, frame._show_error, frame._end_refresh]
     assert posted[-1] == (frame._end_refresh, token)
 

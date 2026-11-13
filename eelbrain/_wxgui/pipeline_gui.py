@@ -274,7 +274,7 @@ COMMON_BRAIN_MISSING = 'missing'
 # is not there yet, so they count as missing in the status bar
 TRANSIENT_STATUS = ('queued', '⟳')
 # Status of a row whose artifact has not been looked at yet: the first pass of a
-# refresh lays out the table, the second fills these in (see PipelineFrame._refresh_thread)
+# refresh lays out the table, the second fills these in (see PipelineFrame._refresh)
 LOADING = '…'
 # Status of a row whose artifact could not be inspected or computed; always shown red
 ERROR = 'error'
@@ -466,7 +466,7 @@ class Task:
         """Row for a key combination with no artifact to show: status plus placeholders.
 
         Also the row of the first refresh pass, whose status is not known yet
-        (``status=LOADING``; see :meth:`PipelineFrame._refresh_thread`).
+        (``status=LOADING``; see :meth:`PipelineFrame._refresh`).
 
         Parameters
         ----------
@@ -710,20 +710,17 @@ class PipelineFrame(EelbrainFrame):
         super().__init__(parent=None, title=f"Pipeline: {pipeline.root}")
         self._pipeline = pipeline
         self._refresh_token = None  # replaced each refresh; threads compare identity
-        # Everything that uses the pipeline on behalf of the main thread runs here (see :meth:`_use_pipeline`)
+        # Every use of the pipeline runs here: the refresh walk, the worker's data loading
+        # and saving (but not its job(), the long part, which needs no pipeline access),
+        # and what the main thread needs from it (see :meth:`_use_pipeline`)
         self._pipeline_thread = _PipelineThread()
-        # Serializes the background threads' use of the pipeline (the refresh walk, and
-        # the worker's data loading and saving) with the pipeline thread. Deliberately
-        # not held across job(), which is the long part and needs no pipeline access.
-        # Never taken on the main thread.
-        self._pipeline_lock = threading.Lock()
         self._compute_token = None  # replaced each compute run; threads compare identity
         # Whether a worker thread is alive. Distinct from _compute_token, which Stop
         # clears at once for the UI while the worker keeps going until its current job
         # returns: during that window no second worker may start.
         self._worker_active = False
         # One job queue for every computable task: jobs are computed sequentially by a
-        # single worker thread, so that only one thread at a time uses the pipeline.
+        # single worker thread.
         # Entries carry their own scope, because the user can switch tasks and queue more
         # rows while a batch is running.
         self._job_queue = []  # [(scope, combo, spec), ...] waiting to be computed
@@ -1160,15 +1157,11 @@ class PipelineFrame(EelbrainFrame):
         if main_thread:
             func = partial(_call_on_main_thread, func)
 
-        def use() -> Any:
-            with self._pipeline_lock:
-                return func()
-
         def deliver(future: Future) -> None:
             if not self._closed:
                 then(future)
 
-        self._pipeline_thread.submit(use).add_done_callback(partial(wx.CallAfter, deliver))
+        self._pipeline_thread.submit(func).add_done_callback(partial(wx.CallAfter, deliver))
 
     # ------------------------------------------------------------------
     # Row actions
@@ -1180,8 +1173,7 @@ class PipelineFrame(EelbrainFrame):
         hint), so that it reflects the row's current status.
         """
         if self._n_loading:
-            # The refresh thread is still setting the pipeline's state row by row (see
-            # _iter_rows), which an action on the main thread would interleave with
+            # The statuses the actions depend on are not all in yet
             return [RowAction("Wait for the table to load")]
         task = self._current_task()
         if task.name == 'bad_chs':
@@ -1468,18 +1460,18 @@ class PipelineFrame(EelbrainFrame):
             dlg.Destroy()
             return
         progress = wx.ProgressDialog("Find Bad Channels", f"Loading {' '.join(rows[0][0])}…  (1 / {len(rows)})", len(rows), self, style=wx.PD_CAN_ABORT | wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_ELAPSED_TIME | wx.PD_REMAINING_TIME)
-        threading.Thread(target=self._find_bad_channels_thread, args=(scope, rows, progress), daemon=True).start()
+        self._pipeline_thread.submit(partial(self._find_bad_channels, scope, rows, progress))
 
-    def _find_bad_channels_thread(
+    def _find_bad_channels(
             self,
             scope: tuple,  # see :meth:`_table_scope`
             rows: Sequence[tuple[tuple[str, ...], JobSpec]],
             progress: wx.ProgressDialog,
     ) -> None:
-        """Compute the bad channel candidates of every row, then show the summary.
+        """Compute the bad channel candidates of every row, then show the summary (pipeline thread).
 
-        Holds the pipeline lock throughout, like a refresh pass: loading a recording's
-        raw data goes through the derivative cache. The progress dialog is updated on the
+        Loading a recording's raw data goes through the derivative cache, so this
+        is a single call in the pipeline thread, like a refresh. The progress dialog is updated on the
         main thread, which is also where it reports a click on Abort; the update is awaited
         before a row is loaded, so that the row being loaded when Abort is clicked is the
         last one. An Abort during the last row is seen by :meth:`_show_bad_channel_summary`.
@@ -1496,17 +1488,16 @@ class PipelineFrame(EelbrainFrame):
 
         results = []  # [(combo, candidates, gaps, flat), ...]
         errors = []  # [(combo, error), ...]
-        with self._pipeline_lock:
-            for i, (combo, spec) in enumerate(rows):
-                updated.clear()
-                wx.CallAfter(update, i, combo)
-                updated.wait(_PROGRESS_UPDATE_TIMEOUT)
-                if cancelled.is_set():
-                    break
-                try:
-                    results.append((combo, *self._ica_bad_channel_candidates(raw_name, spec)))
-                except Exception as error:
-                    errors.append((combo, error))
+        for i, (combo, spec) in enumerate(rows):
+            updated.clear()
+            wx.CallAfter(update, i, combo)
+            updated.wait(_PROGRESS_UPDATE_TIMEOUT)
+            if cancelled.is_set():
+                break
+            try:
+                results.append((combo, *self._ica_bad_channel_candidates(raw_name, spec)))
+            except Exception as error:
+                errors.append((combo, error))
         wx.CallAfter(self._show_bad_channel_summary, scope, results, errors, progress)
 
     def _ica_bad_channel_candidates(
@@ -1814,56 +1805,59 @@ class PipelineFrame(EelbrainFrame):
                 self.SetStatusText("No epochs defined")
                 return
 
-        threading.Thread(
-            target=self._refresh_thread,
-            args=(token, scope),
-            daemon=True,
-        ).start()
+        self._pipeline_thread.submit(partial(self._refresh, token, scope, time.time()))
 
-    def _refresh_thread(
+    def _refresh(
             self,
             token: object,
             scope: tuple,  # see :meth:`_table_scope`
+            t_submitted: float,
     ) -> None:
-        """Fill the table in two passes: which rows it has, then what is in them.
+        """Fill the table in two passes: which rows it has, then what is in them (pipeline thread).
 
         The first pass reads only the pipeline's state model and the BIDS dataset, so
         the table is on screen before any artifact is opened; the second pass posts
         every row as soon as its status resolves, which for the ICA task takes a raw
-        file read per recording. Both passes hold the pipeline lock, so neither ever
-        walks the pipeline while the compute worker is using it.
+        file read per recording.
+
+        Parameters
+        ----------
+        token
+            Refresh this is; one that was superseded while it waited is skipped.
+        scope
+            Table to fill.
+        t_submitted
+            When the refresh was requested, to log how long it waited for the pipeline.
         """
+        if token is not self._refresh_token:
+            return
         task, _, _, _, layout, _ = scope
         log = self._pipeline._log
         n_filled = 0
         first_error = None  # shown once the pass is over, so that it does not stall the rest
         t_start = time.time()
         try:
-            with self._pipeline_lock:
-                t_locked = time.time()
-                combos = list(self._iter_combos(scope))
-            # A refresh that is queued behind a running computation waits for the lock,
+            combos = list(self._iter_combos(scope))
+            # A refresh that is queued behind a running computation waits for the pipeline,
             # so the two intervals are logged separately (see eelbrain --debug)
-            log.debug(f"Pipeline GUI {task.name}: {len(combos)} rows in {time.time() - t_locked:.3f} s, after waiting {t_locked - t_start:.3f} s for the pipeline")
+            log.debug(f"Pipeline GUI {task.name}: {len(combos)} rows in {time.time() - t_start:.3f} s, after waiting {t_start - t_submitted:.3f} s for the pipeline")
             if token is not self._refresh_token:
                 return  # the table was replaced while the rows were being determined
             wx.CallAfter(self._populate_table, [task.missing_row(combo, layout, LOADING) for combo in combos], token)
 
             t_start = time.time()
-            with self._pipeline_lock:
-                t_locked = time.time()
-                for index, (combo, row, spec, error) in enumerate(self._iter_rows(token, scope, combos)):
-                    wx.CallAfter(self._fill_row, token, scope, index, combo, row, spec)
-                    n_filled += 1
-                    if error is not None and first_error is None:
-                        first_error = error
+            for index, (combo, row, spec, error) in enumerate(self._iter_rows(token, scope, combos)):
+                wx.CallAfter(self._fill_row, token, scope, index, combo, row, spec)
+                n_filled += 1
+                if error is not None and first_error is None:
+                    first_error = error
         except _AbortRequested:
             return  # app exit already scheduled
         except Exception as error:
             wx.CallAfter(self._show_error, *_error_dialog_args(error))
             wx.CallAfter(self._end_refresh, token)
             return
-        log.debug(f"Pipeline GUI {task.name}: {n_filled} row details in {time.time() - t_locked:.3f} s, after waiting {t_locked - t_start:.3f} s for the pipeline")
+        log.debug(f"Pipeline GUI {task.name}: {n_filled} row details in {time.time() - t_start:.3f} s")
         if first_error is not None:
             wx.CallAfter(self._show_error, *_error_dialog_args(first_error))
             wx.CallAfter(self._end_refresh, token)
@@ -1961,7 +1955,7 @@ class PipelineFrame(EelbrainFrame):
 
         Jobs are computed sequentially by a single worker thread. When a computation is
         already running the jobs are appended to the queue instead of starting a second
-        thread, so that only one thread at a time uses the pipeline.
+        thread.
 
         Parameters
         ----------
@@ -2110,10 +2104,10 @@ class PipelineFrame(EelbrainFrame):
         reported as a plain error instead.
 
         Everything that reaches the pipeline -- loading the job's data, and saving its
-        result -- runs under :attr:`_pipeline_lock`, so it never overlaps a refresh
-        walk. The computation itself does not: a :class:`Job` carries its own data, so
-        the hour a fit takes is time the refresh thread can use. The lock is also
-        dropped for the stale-ICA dialog, which waits on the main thread.
+        result -- runs in the pipeline thread, so it never overlaps a refresh walk.
+        The computation itself runs here: a :class:`Job` carries its own data, so the
+        hour a fit takes is time the pipeline is free for a refresh. So it is while
+        the stale-ICA dialog waits on the main thread.
 
         Parameters
         ----------
@@ -2124,9 +2118,9 @@ class PipelineFrame(EelbrainFrame):
         combo
             Row combo, used to name the recording in the stale-ICA dialog.
         """
+        in_pipeline_thread = self._pipeline_thread.submit
         try:
-            with self._pipeline_lock:
-                job = spec.make_job()
+            job = in_pipeline_thread(spec.make_job).result()
         except ProtectedArtifactError as error:
             if task.name != 'ica':
                 raise
@@ -2135,17 +2129,14 @@ class PipelineFrame(EelbrainFrame):
                 wx.CallAfter(wx.GetApp().ExitMainLoop)
                 raise _AbortRequested()
             elif choice == StaleICADialog.INCORPORATE:
-                with self._pipeline_lock:
-                    return spec.with_controls(REINDEX_ICA).ctx.load()
+                return in_pipeline_thread(spec.with_controls(REINDEX_ICA).ctx.load).result()
             elif choice != StaleICADialog.DELETE:
                 return None  # IGNORE, or dialog dismissed: leave the file alone
             Path(error.path).unlink()
             spec = spec.with_controls(ALLOW_PROTECTED_OVERWRITE)
-            with self._pipeline_lock:
-                job = spec.make_job()
+            job = in_pipeline_thread(spec.make_job).result()
         result = job()
-        with self._pipeline_lock:
-            return spec.save_result(job, result)
+        return in_pipeline_thread(partial(spec.save_result, job, result)).result()
 
     def _displayed_row(self, scope: tuple, combo: tuple) -> int:
         """Row index for a job, or -1 when its table is not the one on display.
