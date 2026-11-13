@@ -1179,8 +1179,7 @@ class Pipeline(StateModel):
             space only; ``True`` to use the epoch's baseline specification).
         morph
             Morph source estimates to the common brain (source space only;
-            default ``False``, except when loading multiple subjects with
-            ``ndvar=True``).
+            default ``False``).
         keep_mne
             Also include the underlying :class:`mne.Epochs` (sensor space) or
             sensor-space data (source space) in the returned :class:`Dataset`.
@@ -1202,6 +1201,8 @@ class Pipeline(StateModel):
             if isinstance(ndvar, str):
                 raise ValueError(f"{ndvar=}: a data-kind ndvar is only valid for sensor-space epochs; in source space use ndvar=True or ndvar=False")
             self._current_source_parc()
+            if morph is None:
+                morph = False
             options = {
                 'baseline': baseline,
                 'src_baseline': src_baseline,
@@ -1716,7 +1717,7 @@ class Pipeline(StateModel):
             space only; ``True`` to use the epoch's baseline specification).
         morph
             Morph source estimates to the common brain (source space only;
-            default ``False``, except when loading multiple subjects with
+            default ``False``, except when loading a group of subjects with
             ``ndvar=True``).
         keep_mne
             Also include the underlying :class:`mne.Evoked` (sensor space) or
@@ -1752,6 +1753,8 @@ class Pipeline(StateModel):
             if isinstance(ndvar, str):
                 raise ValueError(f"{ndvar=} with {inv=}: a data-kind ndvar is only valid for sensor-space evoked; in source space use ndvar=True or ndvar=False")
             self._current_source_parc()
+            if morph is None:
+                morph = group is not None and ndvar is True
             options = {
                 'model': model,
                 'baseline': baseline,

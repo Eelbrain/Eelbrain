@@ -859,6 +859,15 @@ def test_sample_source(samples_experiment):
     assert set(ds_all['side'].cells) == {'left', 'right'}
     assert set(ds_left['side'].cells) == {'left'}
     assert ds_left.n_cases < ds_all.n_cases
+    # morph defaults to False for a single subject, and to True for a group with ndvar=True
+    ds_subject = e.load_evoked('R0000', model='side')
+    assert ds_subject['src'].source.subject == 'sub-R0000'
+    ds_group = e.load_evoked('all', model='side')
+    assert isinstance(ds_group['src'], NDVar)
+    assert ds_group['src'].source.subject == 'fsaverage'
+    ds_group_unmorphed = e.load_evoked('all', model='side', morph=False)
+    assert isinstance(ds_group_unmorphed['src'], list)
+    assert ds_group_unmorphed['src'][0].source.subject == 'sub-R0000'
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source')) as fid:
         source_manifest_data = json.load(fid)
     with open(_test_result_manifest_path(e, 'left=right', 0.05, 0.2, 0.05, samples=8, data='source', disconnect_labels=True)) as fid:
