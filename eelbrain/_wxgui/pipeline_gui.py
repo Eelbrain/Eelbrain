@@ -65,10 +65,10 @@ _BROWSE_RAW_RESULT = 'eelbrain-bad-channels: '
 # Bad channels that the displayed raw does not contain (dropped by a raw pipe) are kept as they are.
 _BROWSE_RAW_SCRIPT = f'''
 import json, sys
-from pathlib import Path
-from eelbrain._experiment.preprocessing.nodes import RawSourceInput
+import mne
 path, bads = sys.argv[1], json.loads(sys.argv[2])
-raw = RawSourceInput._read_raw(Path(path), preload=False)  # the reader the pipeline uses
+kwargs = {{'allow_maxshield': True}} if path.endswith('.fif') else {{}}  # as the pipeline reads it (RawSourceInput._read_raw), without the time it takes to import eelbrain
+raw = mne.io.read_raw(path, **kwargs)
 raw.info['bads'] = [ch for ch in bads if ch in raw.ch_names]
 raw.plot(block=True)
 print({_BROWSE_RAW_RESULT!r} + json.dumps(raw.info['bads'] + [ch for ch in bads if ch not in raw.ch_names]))

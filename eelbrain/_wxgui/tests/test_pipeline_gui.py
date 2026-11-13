@@ -2,9 +2,9 @@ import contextlib
 import logging
 import sys
 import threading
-from pathlib import Path
 from types import SimpleNamespace
 
+import mne
 import numpy as np
 import wx
 
@@ -15,7 +15,6 @@ from eelbrain._experiment.epoch_rejection import ChannelModelRejection, ManualRe
 from eelbrain._experiment.exceptions import FileMissingError
 from eelbrain._experiment.pathing import MRI_SDIR
 from eelbrain._experiment.preprocessing import RawICA
-from eelbrain._experiment.preprocessing.nodes import RawSourceInput
 from eelbrain._wxgui import bad_channel_summary, pipeline_gui
 from eelbrain._wxgui.pipeline_gui import COMMON_BRAIN_ROW, GREY, PLACEHOLDER, TASKS, TASKS_BY_NAME, Layout, PipelineFrame, RowAction, _format_user_error
 
@@ -676,20 +675,22 @@ def test_close_vetoed_keeps_computation(monkeypatch):
 
 
 def test_browse_raw_script(monkeypatch, capsys):
-    "The browser script reads the file with the pipeline's reader, seeds the raw with the bad channels it contains, and reports the bad channels it was closed with plus those it could not show"
+    "The browser script reads the file the way the pipeline does, seeds the raw with the bad channels it contains, and reports the bad channels it was closed with plus those it could not show"
     calls = []
 
-    def read_raw(path, preload):
-        calls.append((path, preload))
+    def read_raw(path: str, **kwargs) -> SimpleNamespace:
+        calls.append((path, kwargs))
         raw = SimpleNamespace(info={'bads': []}, ch_names=['MEG 0111', 'MEG 0112'])
         raw.plot = lambda block: raw.info['bads'].append('MEG 0112')
         return raw
 
-    monkeypatch.setattr(RawSourceInput, '_read_raw', staticmethod(read_raw))
+    monkeypatch.setattr(mne.io, 'read_raw', read_raw)
     monkeypatch.setattr(sys, 'argv', ['-c', '/data/raw.fif', '["MEG 0111", "EEG 001"]'])
     exec(pipeline_gui._BROWSE_RAW_SCRIPT, {})
     assert capsys.readouterr().out == 'eelbrain-bad-channels: ["MEG 0111", "MEG 0112", "EEG 001"]\n'
-    assert calls == [(Path('/data/raw.fif'), False)]
+    monkeypatch.setattr(sys, 'argv', ['-c', '/data/raw.vhdr', '[]'])  # only the FIFF reader has allow_maxshield
+    exec(pipeline_gui._BROWSE_RAW_SCRIPT, {})
+    assert calls == [('/data/raw.fif', {'allow_maxshield': True}), ('/data/raw.vhdr', {})]
 
 
 def test_launch_browse_raw_subprocess(monkeypatch):
