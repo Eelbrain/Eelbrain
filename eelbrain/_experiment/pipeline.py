@@ -45,7 +45,7 @@ from .events import EpochEventsDerivative, EventsDerivative, EventsInput, Labele
 from .exceptions import FileMissingError, ICAChannelsChangedError
 from .logging import CACHE_EVENT_COLUMNS, StructuredFormatter
 from .state_model import StateModel
-from .statistics.nodes import ROITestResult
+from .statistics.nodes import TEST_DATA_OPTION_NAMES, ROITestResult
 from .groups import assemble_groups
 from .pathing import (
     LOG_DIR, MRI_SDIR, bids_path, join_stem_parts, mri_dir, raw_basename,
@@ -2319,7 +2319,7 @@ class Pipeline(StateModel):
             return result
         elif isinstance(test_obj, TwoStageTest):
             raise NotImplementedError("Data for two-stage test")
-        data_options = {key: value for key, value in options.items() if key != 'disconnect_labels'}
+        data_options = {key: options[key] for key in TEST_DATA_OPTION_NAMES}
         data = self._load_derivative('evoked-test-data', options=data_options)
         return data, result
 

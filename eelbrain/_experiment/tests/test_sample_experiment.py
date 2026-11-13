@@ -283,6 +283,11 @@ def test_sample(samples_experiment):
     res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False)
     assert res.p.min() == pytest.approx(.143, abs=.001)
     assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
+    # return_data: the data underlying the (cached) test
+    ds, res_with_data = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False, return_data=True)
+    assert isinstance(ds, Dataset)
+    assert ds.n_cases == 2 * len(megs)
+    assert_dataobj_equal(res_with_data.difference, res.difference)
     # post_baseline_trigger_shift
     # use multiple of tstep to shift by even number of samples
     tstep = 0.008324800548266162
