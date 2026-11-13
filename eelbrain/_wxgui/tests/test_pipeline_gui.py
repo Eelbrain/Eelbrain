@@ -2,6 +2,7 @@ import contextlib
 import logging
 import sys
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import mne
@@ -494,11 +495,11 @@ def _browse_raw_frame(monkeypatch, tmp_path, caches: bool):
     cache_policy = pipeline_gui.CachePolicy.REQUIRED if caches else pipeline_gui.CachePolicy.NEVER
     loaded, saved = [], []  # loaded: how the pipe's request was used ('load' reads the data, 'ensure' only builds the cache file)
 
-    def save(path):
+    def save(path: Path) -> None:
         path.touch()
         saved.append(path)
 
-    def load():
+    def load() -> SimpleNamespace:
         loaded.append('load')
         return SimpleNamespace(save=save)
 
@@ -601,7 +602,7 @@ def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
     frame._show_error = lambda *args: errors.append(args)
     tmp_dir = tmp_path / 'browse'
 
-    def mkdtemp(prefix):
+    def mkdtemp(prefix: str) -> str:
         tmp_dir.mkdir()
         return str(tmp_dir)
 
@@ -610,7 +611,7 @@ def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
     cache = frame._pipeline._resolve_derivative(pipeline_gui.raw_node_name('filt'))
     load = cache.load
 
-    def save(path):
+    def save(path: Path) -> None:
         raise OSError("disk full")
 
     cache.load = lambda: SimpleNamespace(save=save)
@@ -620,7 +621,7 @@ def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
     # starting the browser fails
     cache.load = load
 
-    def launch(*args):
+    def launch(*args) -> None:
         raise OSError("no python")
 
     monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', launch)
@@ -635,7 +636,7 @@ def test_close_terminates_subprocesses(monkeypatch, tmp_path):
     answer = wx.ID_NO
 
     def dialog(parent, message, title, style):
-        def show_modal():
+        def show_modal() -> int:
             messages.append(message)
             return answer
         return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
@@ -728,7 +729,7 @@ def test_on_browse_raw_closed(monkeypatch):
     busy_after_dialog = False  # the compute worker takes the pipeline while the dialog is open
 
     def dialog(parent, message, title, style):
-        def show_modal():
+        def show_modal() -> int:
             messages.append(message)
             locked.append(frame._pipeline_lock.locked())
             if busy_after_dialog:
@@ -763,7 +764,7 @@ def test_on_browse_raw_closed(monkeypatch):
     assert len(messages) == 3 and len(saved) == 1
     # a save that fails for a reason that is not a user error
 
-    def fail(bads, redo, raw, **state):
+    def fail(bads: list[str], redo: bool, raw: str, **state: str) -> None:
         raise ValueError("MEG 0112 not in raw")
 
     pipeline.make_bad_channels = fail
