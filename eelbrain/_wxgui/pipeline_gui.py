@@ -1223,32 +1223,67 @@ class PipelineFrame(EelbrainFrame):
         if not self._pipeline_lock.acquire(blocking=False):
             wx.CallLater(100, self._on_browse_raw_closed, raw_name, state, bads, new_bads, stderr)
             return
+        error = None
         try:
             current_bads = self._pipeline.load_bad_channels(raw=raw_name, **state)  # may have been changed while the browser was open
-            if sorted(new_bads) == sorted(current_bads):
-                return
-            added = [ch for ch in new_bads if ch not in current_bads]
-            removed = [ch for ch in current_bads if ch not in new_bads]
-            changes = []
-            if added:
-                changes.append(f"Added: {', '.join(added)}")
-            if removed:
-                changes.append(f"Removed: {', '.join(removed)}")
-            message = f"Save the bad channels set in the raw browser for {subject}?\n\n" + '\n'.join(changes)
-            if sorted(current_bads) != sorted(bads):
-                message += "\n\nThe bad channels were changed elsewhere while the raw browser was open; saving replaces them with the ones set in the browser."
-            dlg = wx.MessageDialog(self, message, "Save Bad Channels", wx.YES_NO | wx.ICON_QUESTION)
-            answer = dlg.ShowModal()
-            dlg.Destroy()
-            if answer != wx.ID_YES:
-                return
-            self._pipeline.make_bad_channels(new_bads, redo=True, raw=raw_name, **state)
-        except Exception as error:  # not run through _run_row_action, so every error has to be shown here
+        except Exception as exc:  # not run through _run_row_action, so every error has to be shown here
+            error = exc
+        finally:
+            self._pipeline_lock.release()  # before any dialog, which would keep the compute worker waiting for the user
+        if error is not None:
             self._show_error(*_error_dialog_args(error))
             return
+        elif sorted(new_bads) == sorted(current_bads):
+            return
+        added = [ch for ch in new_bads if ch not in current_bads]
+        removed = [ch for ch in current_bads if ch not in new_bads]
+        changes = []
+        if added:
+            changes.append(f"Added: {', '.join(added)}")
+        if removed:
+            changes.append(f"Removed: {', '.join(removed)}")
+        message = f"Save the bad channels set in the raw browser for {subject}?\n\n" + '\n'.join(changes)
+        if sorted(current_bads) != sorted(bads):
+            message += "\n\nThe bad channels were changed elsewhere while the raw browser was open; saving replaces them with the ones set in the browser."
+        dlg = wx.MessageDialog(self, message, "Save Bad Channels", wx.YES_NO | wx.ICON_QUESTION)
+        answer = dlg.ShowModal()
+        dlg.Destroy()
+        if answer == wx.ID_YES:
+            self._save_browse_raw_bads(raw_name, state, new_bads)
+
+    def _save_browse_raw_bads(
+            self,
+            raw_name: str,
+            state: dict[str, str],
+            new_bads: list[str],
+    ) -> None:
+        """Replace a recording's bad channels with the ones set in the raw browser, once the pipeline is free.
+
+        Parameters
+        ----------
+        raw_name
+            Raw pipe that was shown.
+        state
+            Key-field values identifying the recording.
+        new_bads
+            Bad channels the browser was closed with.
+        """
+        if self._closed:
+            return
+        if not self._pipeline_lock.acquire(blocking=False):
+            wx.CallLater(100, self._save_browse_raw_bads, raw_name, state, new_bads)
+            return
+        error = None
+        try:
+            self._pipeline.make_bad_channels(new_bads, redo=True, raw=raw_name, **state)
+        except Exception as exc:
+            error = exc
         finally:
             self._pipeline_lock.release()
-        self._start_refresh()
+        if error is None:
+            self._start_refresh()
+        else:
+            self._show_error(*_error_dialog_args(error))
 
     def _open_ica_gui(self, idx: int) -> None:
         raw_name = self._raw_name()

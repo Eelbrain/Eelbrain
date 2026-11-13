@@ -706,12 +706,16 @@ def test_launch_browse_raw_subprocess(monkeypatch):
 
 def test_on_browse_raw_closed(monkeypatch):
     "Changed bad channels are saved after confirmation, once the pipeline is free, with a warning if they were also changed elsewhere; unchanged ones and a declined dialog save nothing; a failed browser, or save, shows the error"
-    saved, refreshed, errors, messages = [], [], [], []
+    saved, refreshed, errors, messages, locked = [], [], [], [], []
     answer = wx.ID_YES
+    busy_after_dialog = False  # the compute worker takes the pipeline while the dialog is open
 
     def dialog(parent, message, title, style):
         def show_modal():
             messages.append(message)
+            locked.append(frame._pipeline_lock.locked())
+            if busy_after_dialog:
+                frame._pipeline_lock.acquire()
             return answer
         return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
@@ -761,10 +765,20 @@ def test_on_browse_raw_closed(monkeypatch):
     assert len(messages) == 4 and len(saved) == 1
     frame._on_browse_raw_closed(*args)
     assert len(messages) == 5 and len(saved) == 2 and not frame._pipeline_lock.locked()
+    # the pipeline is free while the dialog is open, and the save waits if it is taken meanwhile
+    assert locked == [False] * 5
+    later.clear()
+    busy_after_dialog = True
+    frame._on_browse_raw_closed(*args)
+    assert later == [(100, frame._save_browse_raw_bads, 'raw', {'subject': 'R01'}, ['MEG 0112'])] and len(saved) == 2
+    frame._pipeline_lock.release()
+    frame._save_browse_raw_bads(*later[0][2:])
+    assert len(saved) == 3 and not frame._pipeline_lock.locked()
+    busy_after_dialog = False
     # posted while the GUI was closing
     frame._closed = True
     frame._on_browse_raw_closed(*args)
-    assert len(messages) == 5 and len(errors) == 2
+    assert len(messages) == 6 and len(errors) == 2
 
 
 def test_callbacks_after_close():
