@@ -706,6 +706,27 @@ def test_row_action_takes_its_turn(monkeypatch, tmp_path):
     assert len(launched) == 1
 
 
+def test_row_action_incorporates_a_stale_ica():
+    "When an action meets a stale ICA and the user incorporates it, the ICA is re-indexed and the action run again, both in a turn of their own; the dialog is asked between the turns"
+    frame = _table_frame('ica', [('R01', 'selected', '30', '2')])
+    thread = frame._pipeline_thread
+    events = []
+
+    def run() -> None:
+        events.append(('run', thread.running))
+        if 'load_ica' not in [event[0] for event in events]:
+            raise ProtectedArtifactError('ica', 'path')
+
+    def ask(subject: str, error: ProtectedArtifactError) -> tuple[str, bool]:
+        events.append(('ask', thread.running))
+        return pipeline_gui.StaleICADialog.INCORPORATE, False
+
+    pipeline = SimpleNamespace(load_ica=lambda raw, accept_stale: events.append(('load_ica', thread.running, raw, accept_stale)))
+    frame.__dict__.update(_pipeline=pipeline, _raw_name=lambda: '1-40', _ask_stale_ica=ask)
+    frame._run_row_action(0, RowAction("Open ICA selection…", run))
+    assert events == [('run', True), ('ask', False), ('load_ica', True, '1-40', True), ('run', True)]
+
+
 def test_set_bad_channels_dialog(monkeypatch):
     "The bad channels dialog opens after the row action's turn, so the pipeline is free while it is open; the channels it is closed with are saved in the pipeline thread"
     loop = _MainLoop(monkeypatch)
