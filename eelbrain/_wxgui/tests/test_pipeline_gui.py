@@ -643,6 +643,22 @@ def test_close_terminates_subprocesses(monkeypatch, tmp_path):
     assert not tmp_dir.exists()
 
 
+def test_close_vetoed_keeps_computation(monkeypatch):
+    "A close that is declined because of open subprocess windows leaves the running computation alone, although cancelling it was confirmed first"
+    answers = [wx.ID_YES, wx.ID_NO]
+
+    def dialog(parent: object, message: str, title: str, style: int) -> SimpleNamespace:
+        return SimpleNamespace(ShowModal=lambda: answers.pop(0), Destroy=lambda: None)
+
+    monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
+    token = object()
+    frame = _frame(_compute_token=token, _closed=False, _subprocesses=[('coregistration', SimpleNamespace(poll=lambda: None))])
+    vetoed = []
+    frame._on_close(SimpleNamespace(Veto=lambda: vetoed.append(True)))
+    assert vetoed == [True] and answers == []
+    assert frame._compute_token is token and not frame._closed
+
+
 def test_browse_raw_script(monkeypatch, capsys):
     "The browser script reads the file with the pipeline's reader, seeds the raw with the bad channels it contains, and reports the bad channels it was closed with plus those it could not show"
     calls = []

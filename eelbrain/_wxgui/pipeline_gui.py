@@ -1800,7 +1800,6 @@ class PipelineFrame(EelbrainFrame):
             if not confirmed:
                 event.Veto()
                 return
-            self._compute_token = None  # let the thread wind down
         running = [(kind, proc) for kind, proc in self._subprocesses if proc.poll() is None]
         if running:
             kinds = ', '.join(sorted({kind for kind, _ in running}))
@@ -1811,6 +1810,7 @@ class PipelineFrame(EelbrainFrame):
                 event.Veto()
                 return
         self._closed = True
+        self._compute_token = None  # let the thread wind down (only now: the close can be vetoed up to here)
         self._refresh_token = None  # drops the rows a refresh pass still posts
         for _, proc in running:
             proc.terminate()
