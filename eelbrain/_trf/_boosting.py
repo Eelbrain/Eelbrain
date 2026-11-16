@@ -964,7 +964,7 @@ class Boosting:
     def _get_h_failed(self, split_results: list[SplitResult]) -> np.ndarray:
         out = np.all([split.h_failed for split in split_results], 0)
         if self.data.y.vector_dim:
-            out = np.all(out.reshape((len(self.data.y.vector_dim), -1)), 0)
+            out = np.all(out.reshape((-1, len(self.data.y.vector_dim))), 1)  # the components of a vector are adjacent rows
         return out
 
     def _evaluate(
