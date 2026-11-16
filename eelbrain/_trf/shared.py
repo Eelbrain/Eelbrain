@@ -981,10 +981,14 @@ class SegmentedArray:
             # estimate the scale from the centered data without modifying it, so that the data is intact if the check below fails
             total = 0
             for seg in self.segments:
-                centered = seg - mean[:, newaxis] if center else seg
+                values = seg - mean[:, newaxis] if center else seg
                 if self.n_vector:
-                    centered = norm(centered.reshape((-1, self.n_vector, seg.shape[-1])), axis=1)
-                total = total + (np.abs(centered).sum(-1) if scale == 'l1' else (centered ** 2).sum(-1))
+                    values = norm(values.reshape((-1, self.n_vector, seg.shape[-1])), axis=1)
+                out = None if values is seg else values  # reuse the temporary array, but do not modify the data
+                if scale == 'l1':
+                    total = total + np.abs(values, out=out).sum(-1)
+                else:
+                    total = total + np.square(values, out=out).sum(-1)
             scale = total / n if scale == 'l1' else (total / n) ** 0.5
             # dividing by a scale of 0 would turn flat rows into NaN
             self._check_values(scale, bool(self.n_vector))
