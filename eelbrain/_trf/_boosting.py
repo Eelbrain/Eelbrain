@@ -1167,9 +1167,9 @@ def boosting(
         basis_window: str = 'hamming',
         partitions: int = None,  # Number of partitionings for cross-validation
         model: CategorialArg = None,
-        validate: int = 1,  # Number of segments in validation set
+        validate: float = 1,  # Number of segments in validation set
         test: int = 1,  # Number of segments in test set
-        split: Literal['cases', 'time', 'within_cases'] = None,
+        split: Literal['cases', 'time', 'within_cases', 'walk-forward'] = None,
         data: Dataset = None,
         selective_stopping: int = 0,
         partition_results: bool = False,
@@ -1250,7 +1250,9 @@ def boosting(
         ``ds``.
     validate
         Number of partitions held out for validation (early stopping) in each
-        boosting run (currently has to be 1).
+        boosting run (currently has to be 1). With ``split='walk-forward'``, a
+        value between 0 and 1 sets the length of each validation window as
+        proportion of the case (the default, 1, corresponds to 0.05).
     test
         By default (``test=1``), the boosting algorithm performs *k*-fold
         cross-validation (with *k* = ``partitions``): Each partition is used as
@@ -1289,6 +1291,11 @@ def boosting(
         - ``'within_cases'``: cut each case into ``partitions`` pieces of
           equal length, and form each partition from one piece of every case
           (default 5 partitions), so that each partition samples every case.
+        - ``'walk-forward'``: hold out the last ``partitions`` windows of every
+          case (default 3) one at a time as validation set, each with only the
+          data preceding it as training set. The length of the windows is set
+          with ``validate`` (they have to be at least as long as the kernel).
+          Requires ``test=0`` and cases of equal length (or continuous data).
     selective_stopping
         By default, the boosting algorithm stops when the validation error
         stops decreasing. With ``selective_stopping=True``, boosting continues but

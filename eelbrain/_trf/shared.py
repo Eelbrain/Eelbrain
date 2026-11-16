@@ -1325,9 +1325,9 @@ class DeconvolutionData:
             partitions: int | None = None,
             model: CategorialArg | None = None,
             data: Dataset = None,
-            validate: int = 1,
+            validate: float = 1,
             test: int = 1,
-            split: Literal['cases', 'time', 'within_cases'] = None,
+            split: Literal['cases', 'time', 'within_cases', 'walk-forward'] = None,
     ):
         """Initialize the cross-validation scheme (:attr:`splits`)
 
@@ -1342,13 +1342,17 @@ class DeconvolutionData:
         data
             Dataset in which to evaluate ``model`` if it is a string.
         validate
-            Number of partitions in each validation set (0 or 1).
+            Number of partitions in each validation set (0 or 1). With
+            ``split='walk-forward'``, a value between 0 and 1 sets the length
+            of each validation window as proportion of the segment (the
+            default, 1, corresponds to 0.05).
         test
             Number of partitions in each test set (0 or 1).
         split
             How to form partitions: ``'cases'`` (whole segments), ``'time'``
-            (contiguous spans of time) or ``'within_cases'`` (one piece of
-            every segment).
+            (contiguous spans of time), ``'within_cases'`` (one piece of
+            every segment) or ``'walk-forward'`` (windows at the end of every
+            segment, each trained on the data preceding it).
 
         Notes
         -----
