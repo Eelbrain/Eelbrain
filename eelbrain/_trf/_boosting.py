@@ -353,7 +353,9 @@ class BoostingResult(PickleableDataClass):
             elif name == 'test':
                 value = None if self.splits is None else self.splits.n_test
             elif name == 'split':
-                if self.splits is None or self.splits.split == ('cases' if len(self.splits.segments) > 1 else 'time'):
+                if self.splits is None or self.splits.split is None:  # split is None for results from before the parameter was added
+                    continue
+                elif self.splits.split == ('cases' if len(self.splits.segments) > 1 else 'time'):
                     continue
                 value = repr(self.splits.split)
             else:

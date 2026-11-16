@@ -577,3 +577,8 @@ def test_boosting_arguments():
     assert res.tstart == 0
     assert res.tstop == 0.1
     assert repr(res) == '<BoostingResult y ~ x1, 0 - 0.1, partitions=3>'
+    # results from before the split parameter (without segments before version 13)
+    res.splits = replace(res.splits, split=None)
+    assert repr(res) == '<BoostingResult y ~ x1, 0 - 0.1, partitions=3>'
+    res.splits = replace(res.splits, segments=None, split_segments=None)
+    assert repr(res) == '<BoostingResult y ~ x1, 0 - 0.1, partitions=3>'
