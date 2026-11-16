@@ -155,7 +155,8 @@ def preview_partitions(
         when a trial is cut (see :func:`split_data`). The default is the
         :func:`~eelbrain.boosting` default of 15 s. Only applies when the
         duration of trials is known (:class:`NDVar` data or trial durations);
-        trials specified by their number are never cut.
+        trials specified by their number have no duration and are cut at every
+        span boundary.
     ...
         For a description of the splitting parameters see :func:`~eelbrain.boosting`.
         For plotting parameters see :class:`DataSplit`.
