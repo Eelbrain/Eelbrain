@@ -472,7 +472,7 @@ def split_data(
             n_times = np.unique(np.diff(segments, axis=1))
             if len(n_times) > 1:
                 raise NotImplementedError(f"{split=} with segments of different lengths ({', '.join(map(str, n_times))} samples): the walk-forward scheme needs a single segment or segments of equal length")
-            n_window = ceil(validate_proportion * n_times[0])
+            n_window = _ceil_samples(validate_proportion * n_times[0])
             n_train = n_times[0] - partitions * n_window
             if n_train < 1:
                 raise ValueError(f"{partitions=} with {split=}: segments of {n_times[0]} samples are too short for {partitions} windows of {n_window} samples and training data before them; use fewer partitions")

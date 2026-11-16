@@ -412,6 +412,9 @@ def test_split_data_walk_forward():
     # NCRF's r=0.05: windows of ceil(0.05 / 1.05 * 1000) = 48 samples
     splits = split_data(np.array([[0, 1000]]), 2, validate=0.05 / 1.05, test=0, split='walk-forward')
     assert_array_equal(splits.split_segments, [[0, 904], [904, 952], [952, 1000]])
+    # floating point error does not add a sample (0.07 * 100 = 7.000000000000001)
+    splits = split_data(np.array([[0, 100]]), 2, validate=0.07, test=0, split='walk-forward')
+    assert_array_equal(splits.split_segments, [[0, 86], [86, 93], [93, 100]])
     with pytest.raises(TypeError, match="only available with split='walk-forward'"):
         split_data(segments, 2, validate=0.25, test=0, split='within_cases')
     with pytest.raises(ValueError, match="too short for 2 windows of 80 samples"):
