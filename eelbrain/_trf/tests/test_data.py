@@ -373,7 +373,7 @@ def test_trf_module():
 
 def test_split_data_walk_forward():
     "split='walk-forward': windows at the end of every segment, trained on the data before them"
-    # windows of ceil(0.05 / 1.05 * 160) = 8 samples
+    # windows of 0.05 * 160 = 8 samples
     segments = np.array([[0, 160]])
     splits = split_data(segments, 2, validate=1, test=0, split='walk-forward')
     assert splits.split == 'walk-forward'
@@ -401,6 +401,17 @@ def test_split_data_walk_forward():
     assert len(splits.splits) == 3
     assert_array_equal(splits.split_segments, [[0, 85], [85, 90], [90, 95], [95, 100]])
     assert len(split_data(np.array([[0, 100]]), 1, test=0, split='walk-forward').splits) == 1
+    # validate as proportion of the segment: windows of 0.25 * 160 = 40 samples
+    splits = split_data(segments, 2, validate=0.25, test=0, split='walk-forward')
+    assert splits.n_validate == 1
+    assert_array_equal(splits.split_segments, [[0, 80], [80, 120], [120, 160], [160, 240], [240, 280], [280, 320]])
+    # NCRF's r=0.05: windows of ceil(0.05 / 1.05 * 1000) = 48 samples
+    splits = split_data(np.array([[0, 1000]]), 2, validate=0.05 / 1.05, test=0, split='walk-forward')
+    assert_array_equal(splits.split_segments, [[0, 904], [904, 952], [952, 1000]])
+    with pytest.raises(TypeError, match="only available with split='walk-forward'"):
+        split_data(segments, 2, validate=0.25, test=0, split='within_cases')
+    with pytest.raises(ValueError, match="too short for 2 windows of 80 samples"):
+        split_data(segments, 2, validate=0.5, test=0, split='walk-forward')
     with pytest.raises(NotImplementedError, match="segments of equal length"):
         split_data(np.array([[0, 100], [100, 160]]), 2, validate=1, test=0, split='walk-forward')
     with pytest.raises(NotImplementedError, match="only implements validation splits"):

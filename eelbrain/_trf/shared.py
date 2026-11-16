@@ -262,7 +262,7 @@ def split_data(
         partitions: int | None = None,
         model: CategorialArg | None = None,
         data: Dataset | None = None,
-        validate: int = 1,
+        validate: float = 1,
         test: int = 1,
         split: Literal['cases', 'time', 'within_cases', 'walk-forward'] = None,
         min_section: int = 0,
@@ -283,7 +283,10 @@ def split_data(
     data
         Dataset in which to evaluate ``model`` if it is a string.
     validate
-        Number of partitions in each validation set (0 or 1).
+        Number of partitions in each validation set (0 or 1). With
+        ``split='walk-forward'``, a value between 0 and 1 sets the length of
+        each validation window as proportion of the segment (the default, 1,
+        corresponds to 0.05).
     test
         Number of partitions in each test set (0 or 1).
     split
@@ -374,15 +377,17 @@ def split_data(
     **Walk-forward** (``split='walk-forward'``): the training data always
     precedes the held-out data. This is the scheme the NCRF package uses to
     select its regularization parameter, for a single segment or segments of
-    equal length. The last ``partitions`` windows of every segment, each
-    ``ceil(0.05 / 1.05 * n)`` samples long for segments of ``n`` samples
-    (NCRF's ``r=0.05``), are held out one at a time as validation set, each
-    with the data preceding it as training set; the data following the window
-    is not used in that split. ``partitions`` thus is the number of splits
-    (default 3; NCRF's ``n_splits``) and :attr:`Splits.n_partitions` is
-    ``partitions + 1``. Steps 3 and 4 above do not apply, and the scheme
-    requires ``validate=1`` and ``test=0``. Note that the training sets of the
-    splits differ by one window only.
+    equal length. The last ``partitions`` windows of every segment are held
+    out one at a time as validation set, each with the data preceding it as
+    training set; the data following the window is not used in that split.
+    ``partitions`` thus is the number of splits (default 3; NCRF's
+    ``n_splits``) and :attr:`Splits.n_partitions` is ``partitions + 1``. For
+    segments of ``n`` samples, each window is ``ceil(validate * n)`` samples
+    long, with ``validate`` the proportion of the segment (default 0.05).
+    NCRF's ``r`` specifies the window relative to the rest of the segment and
+    corresponds to ``validate = r / (1 + r)``. Steps 3 and 4 above do not
+    apply, and the scheme requires a validation set and ``test=0``. Note that
+    the training sets of the splits differ by one window only.
 
     See :ref:`exa-data_split` for illustrations of these schemes, and use
     :meth:`Splits.plot` (or :func:`plot.preview_partitions`) to inspect a
@@ -390,8 +395,12 @@ def split_data(
     """
     if partitions and int(partitions) != partitions:
         raise TypeError(f"{partitions=}")
-    if int(validate) != validate:
-        raise TypeError(f"{validate=}")
+    validate_proportion = 0.05  # split='walk-forward': length of each validation window relative to the segment
+    if split == 'walk-forward' and 0 < validate < 1:
+        validate_proportion = validate
+        validate = 1
+    elif int(validate) != validate:
+        raise TypeError(f"{validate=} with {split=}: needs to be 0 or 1 (a proportion is only available with split='walk-forward')")
     if int(test) != test:
         raise TypeError(f"{test=}")
     partitions_arg = partitions
@@ -448,14 +457,13 @@ def split_data(
         elif split == 'walk-forward':
             # partition 0 is the beginning of every segment, the remaining partitions are windows at its end
             if test or not validate:
-                raise NotImplementedError(f"{split=} with {validate=}, {test=}: the walk-forward scheme only implements validation splits (validate=1, test=0)")
+                raise NotImplementedError(f"{split=} with {validate=}, {test=}: the walk-forward scheme only implements validation splits (test=0, and validate=1 or a proportion)")
             elif partitions < 1:
                 raise ValueError(f"{partitions=} with {split=}: need at least one window")
             n_times = np.unique(np.diff(segments, axis=1))
             if len(n_times) > 1:
                 raise NotImplementedError(f"{split=} with segments of different lengths ({', '.join(map(str, n_times))} samples): the walk-forward scheme needs a single segment or segments of equal length")
-            # window length of NCRF's TimeSeriesSplit(r=0.05)
-            n_window = ceil(0.05 / 1.05 * n_times[0])
+            n_window = ceil(validate_proportion * n_times[0])
             n_train = n_times[0] - partitions * n_window
             if n_train < 1:
                 raise ValueError(f"{partitions=} with {split=}: segments of {n_times[0]} samples are too short for {partitions} windows of {n_window} samples and training data before them; use fewer partitions")

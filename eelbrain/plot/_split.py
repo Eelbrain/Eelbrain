@@ -133,7 +133,7 @@ def preview_partitions(
     cases: int | Sequence[float] | NDVarArg = 0,
     partitions: int = None,
     model: CategorialArg = None,
-    validate: int = 1,
+    validate: float = 1,
     test: int = 1,
     split: Literal['cases', 'time', 'within_cases', 'walk-forward'] = None,
     min_section: float = None,
