@@ -460,9 +460,8 @@ def split_data(
         if partitions is None:
             partitions = 3 if split == 'walk-forward' else 5
         if split == 'within_cases':
-            # the i-th piece of every segment forms partition i
-            split_segments, soft_splits = cut_segments(segments, partitions)
-            piece_partition = np.tile(np.arange(partitions), len(segments))
+            # cut every segment into pieces of equal length
+            segment_cuts = np.vstack([np.round(np.linspace(start, stop, partitions + 1)) for start, stop in segments]).astype(np.int64)
         elif split == 'walk-forward':
             # partition 0 is the beginning of every segment, the remaining partitions are windows at its end
             if test or not validate:
@@ -476,16 +475,8 @@ def split_data(
             n_train = n_times[0] - partitions * n_window
             if n_train < 1:
                 raise ValueError(f"{partitions=} with {split=}: segments of {n_times[0]} samples are too short for {partitions} windows of {n_window} samples and training data before them; use fewer partitions")
-            split_segments = []
-            soft_splits = []
-            for start, stop in segments:
-                split_points = np.concatenate([[start], start + n_train + n_window * np.arange(partitions + 1)])
-                soft_splits.append(split_points[1:-1])
-                split_segments.extend(split_points[i: i + 2] for i in range(partitions + 1))
-            soft_splits = np.concatenate(soft_splits)
-            split_segments = np.vstack(split_segments)
+            segment_cuts = segments[:, :1] + np.concatenate([[0], n_train + n_window * np.arange(partitions + 1)])
             partitions += 1
-            piece_partition = np.tile(np.arange(partitions), len(segments))
         else:
             # partitions with equal numbers of samples, cut additionally at segment boundaries
             split_points = np.round(np.linspace(segments[0, 0], segments[-1, 1], partitions + 1)).astype(np.int64)
@@ -510,6 +501,11 @@ def split_data(
                 if len(np.unique(split_points)) <= partitions or np.any(np.diff(cuts)[is_piece] < min_section):
                     raise ValueError(f"{partitions=} with {split=}: the segments are too short to form {partitions} partitions without cutting a segment into pieces shorter than {min_section} samples; use fewer partitions")
             piece_partition = np.searchsorted(split_points, split_segments[:, 0], side='right') - 1
+        if split != 'time':
+            # segment_cuts: (n_segments, partitions + 1) cuts of each segment; the i-th piece of every segment forms partition i
+            split_segments = np.stack([segment_cuts[:, :-1].ravel(), segment_cuts[:, 1:].ravel()], 1)
+            soft_splits = segment_cuts[:, 1:-1].ravel()
+            piece_partition = np.tile(np.arange(partitions), len(segments))
     # with more partitions than samples, some partitions are empty
     partition_n_samples = np.bincount(piece_partition, np.diff(split_segments, axis=1)[:, 0], partitions)
     if np.any(partition_n_samples == 0):
@@ -541,28 +537,6 @@ def split_data(
     else:
         splits = [make_split(all_partitions, None, False)]
     return Splits(splits, partitions_arg, partitions, validate, test, model, segments, split_segments, split, validate_proportion)
-
-
-def cut_segments(
-        segments: np.ndarray,
-        n_parts: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Cut each segment into ``n_parts`` pieces of equal length
-
-    Returns
-    -------
-    split_segments
-        ``(n_segments * n_parts, 2)`` array of the pieces, in order.
-    soft_splits
-        Indices of the cuts within segments (boundaries that can be merged).
-    """
-    split_segments = []
-    soft_splits = []
-    for start, stop in segments:
-        split_points = np.round(np.linspace(start, stop, n_parts + 1)).astype(np.int64)
-        soft_splits.append(split_points[1:-1])
-        split_segments.extend(split_points[i: i + 2] for i in range(n_parts))
-    return np.vstack(split_segments), np.concatenate(soft_splits)
 
 
 def _segment_views(
