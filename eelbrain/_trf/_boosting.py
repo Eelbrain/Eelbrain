@@ -344,7 +344,12 @@ class BoostingResult(PickleableDataClass):
                     continue
                 value = dataobj_repr(self.splits.model)
             elif name == 'validate':
-                value = None if self.splits is None else self.splits.n_validate
+                if self.splits is None:
+                    value = None
+                elif self.splits.validate_proportion is None:
+                    value = self.splits.n_validate
+                else:
+                    value = self.splits.validate_proportion
             elif name == 'test':
                 value = None if self.splits is None else self.splits.n_test
             elif name == 'split':

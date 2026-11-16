@@ -194,6 +194,9 @@ class Splits(PickleableDataClass, EQMixIn):
         The partitioning scheme, ``'cases'``, ``'time'``, ``'within_cases'``
         or ``'walk-forward'`` (see :func:`split_data`; ``None`` for splits
         created before this attribute was added).
+    validate_proportion
+        With ``split='walk-forward'``, the length of each validation window as
+        proportion of the segment (``None`` for the other schemes).
     """
     splits: list[Split]
     partitions_arg: int | None
@@ -204,6 +207,7 @@ class Splits(PickleableDataClass, EQMixIn):
     segments: np.ndarray = None
     split_segments: np.ndarray = None
     split: Literal['cases', 'time', 'within_cases', 'walk-forward'] = None
+    validate_proportion: float = None
 
     def __setstate__(self, state: dict):
         # Backwards compatibility for BoostingResult version < 18
@@ -239,6 +243,8 @@ class Splits(PickleableDataClass, EQMixIn):
             items.append(f'model={dataobj_repr(self.model)}')
         if self.split:
             items.append(f'split={self.split!r}')
+        if self.validate_proportion is not None:
+            items.append(f'validate_proportion={self.validate_proportion:g}')
         items = ', '.join(items)
         return f"<Splits: {desc} split into {len(self.split_segments)} sections{items}>"
 
@@ -395,11 +401,14 @@ def split_data(
     """
     if partitions and int(partitions) != partitions:
         raise TypeError(f"{partitions=}")
-    validate_proportion = 0.05  # split='walk-forward': length of each validation window relative to the segment
-    if split == 'walk-forward' and 0 < validate < 1:
-        validate_proportion = validate
-        validate = 1
-    elif int(validate) != validate:
+    validate_proportion = None  # split='walk-forward': length of each validation window relative to the segment
+    if split == 'walk-forward':
+        if 0 < validate < 1:
+            validate_proportion = validate
+            validate = 1
+        else:
+            validate_proportion = 0.05
+    if int(validate) != validate:
         raise TypeError(f"{validate=} with {split=}: needs to be 0 or 1 (a proportion is only available with split='walk-forward')")
     if int(test) != test:
         raise TypeError(f"{test=}")
@@ -528,7 +537,7 @@ def split_data(
         splits = [make_split([p for p in all_partitions if p != i], i, False) for i in all_partitions]
     else:
         splits = [make_split(all_partitions, None, False)]
-    return Splits(splits, partitions_arg, partitions, validate, test, model, segments, split_segments, split)
+    return Splits(splits, partitions_arg, partitions, validate, test, model, segments, split_segments, split, validate_proportion)
 
 
 def cut_segments(

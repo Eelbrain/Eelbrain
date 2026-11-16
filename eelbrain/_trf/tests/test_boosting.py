@@ -242,6 +242,7 @@ def test_boosting_epochs():
     # walk-forward: validation windows at the end of every case, trained on the data before them
     res = boosting('uts', [p0, p1], 0, 0.1, data=ds, partitions=2, validate=0.2, test=0, split='walk-forward', partition_results=True)
     assert res.splits.split == 'walk-forward'
+    assert repr(res) == "<BoostingResult uts ~ a0 + a1, 0 - 0.1, partitions=2, validate=0.2, test=0, split='walk-forward', partition_results=True>"
     assert_array_equal(res.splits.split_segments[:3], [[0, 60], [60, 80], [80, 100]])
     assert len(res.partition_results) == 2
     assert res.r is None

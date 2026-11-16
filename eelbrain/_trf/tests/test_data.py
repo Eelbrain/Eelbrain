@@ -386,7 +386,8 @@ def test_split_data_walk_forward():
     assert_array_equal(splits.splits[1].reserved, [[152, 160]])
     assert_array_equal(splits.splits[1].train, [[0, 152]])
     assert not any(split.is_test for split in splits.splits)
-    assert "split='walk-forward'" in repr(splits)
+    assert splits.validate_proportion == 0.05
+    assert "split='walk-forward', validate_proportion=0.05" in repr(splits)
     assert splits == pickle.loads(pickle.dumps(splits))
     # the same windows in every segment
     segments = np.array([[0, 160], [160, 320]])
@@ -404,6 +405,9 @@ def test_split_data_walk_forward():
     # validate as proportion of the segment: windows of 0.25 * 160 = 40 samples
     splits = split_data(segments, 2, validate=0.25, test=0, split='walk-forward')
     assert splits.n_validate == 1
+    assert splits.validate_proportion == 0.25
+    assert splits == pickle.loads(pickle.dumps(splits))
+    assert split_data(segments, 2, validate=1, test=0, split='within_cases').validate_proportion is None
     assert_array_equal(splits.split_segments, [[0, 80], [80, 120], [120, 160], [160, 240], [240, 280], [280, 320]])
     # NCRF's r=0.05: windows of ceil(0.05 / 1.05 * 1000) = 48 samples
     splits = split_data(np.array([[0, 1000]]), 2, validate=0.05 / 1.05, test=0, split='walk-forward')
