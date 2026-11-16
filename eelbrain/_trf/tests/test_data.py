@@ -475,6 +475,11 @@ def test_split_data_time():
     assert_array_equal(splits.split_segments, [[0, 10], [10, 33], [33, 67], [67, 100]])
     with pytest.raises(ValueError, match="too short to form 5 partitions"):
         split_data(segments[:3], 5, test=0, split='time', min_section=15)
+    # a span boundary that can not be moved (the edges of the data are not boundaries to move to) must not leave a short piece
+    with pytest.raises(ValueError, match="too short to form 3 partitions"):  # last segment would be cut into pieces of 1467 and 1333
+        split_data(np.array([[0, 1200], [1200, 4000]]), 3, test=0, split='time', min_section=1500)
+    with pytest.raises(ValueError, match="too short to form 4 partitions"):  # first piece of 1250
+        split_data(np.array([[0, 4500], [4500, 5000]]), 4, test=0, split='time', min_section=1500)
     # more partitions than samples
     with pytest.raises(ValueError, match="not enough samples"):
         split_data(np.array([[0, 2], [2, 4]]), 5, validate=1, test=0, split='time')

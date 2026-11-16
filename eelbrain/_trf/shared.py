@@ -501,11 +501,14 @@ def split_data(
                         split_points[i] = start
                     elif to_stop < min_section and i_segment < len(segments) - 1:
                         split_points[i] = stop
-                if len(np.unique(split_points)) <= partitions:
-                    raise ValueError(f"{partitions=} with {split=}: the segments are too short to form {partitions} partitions without cutting a segment into pieces shorter than {min_section} samples; use fewer partitions")
             cuts = np.union1d(split_points, boundaries)
             split_segments = np.vstack([cuts[:-1], cuts[1:]]).T
             soft_splits = np.setdiff1d(split_points[1:-1], boundaries)
+            if min_section and len(segments) > 1:
+                # pieces of a cut segment: sections that start or end at a soft split
+                is_piece = np.isin(cuts[:-1], soft_splits) | np.isin(cuts[1:], soft_splits)
+                if len(np.unique(split_points)) <= partitions or np.any(np.diff(cuts)[is_piece] < min_section):
+                    raise ValueError(f"{partitions=} with {split=}: the segments are too short to form {partitions} partitions without cutting a segment into pieces shorter than {min_section} samples; use fewer partitions")
             piece_partition = np.searchsorted(split_points, split_segments[:, 0], side='right') - 1
     # with more partitions than samples, some partitions are empty
     partition_n_samples = np.bincount(piece_partition, np.diff(split_segments, axis=1)[:, 0], partitions)
