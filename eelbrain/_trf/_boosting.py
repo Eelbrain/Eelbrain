@@ -885,6 +885,10 @@ class Boosting:
         data.flatten()
         self.data = data
 
+    def __setstate__(self, state: dict):
+        self.__dict__.update(state)
+        self.data.flatten()  # pickling drops the concatenated arrays
+
     def fit(
             self,
             tstart: float | Sequence[float],
