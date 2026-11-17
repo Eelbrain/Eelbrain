@@ -920,7 +920,7 @@ class Boosting:
         n_xs = [block.n_rows for block in self.data.x.blocks]
         tstep = self.data.time.tstep
         i_start_by_predictor, i_stop_by_predictor = lag_window(tstart, tstop, tstep, len(n_xs))
-        sequence_types = (tuple, list, np.ndarray)
+        sequence_types = (Sequence, np.ndarray)  # as in lag_window()
         if isinstance(tstart, sequence_types) or isinstance(tstop, sequence_types):
             # one value per predictor (also when only one of them was specified per predictor)
             self.tstart = tuple(tstart) if isinstance(tstart, sequence_types) else (tstart,) * len(n_xs)
