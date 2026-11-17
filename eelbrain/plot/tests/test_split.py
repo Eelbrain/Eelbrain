@@ -87,3 +87,9 @@ def test_preview_partitions():
     assert_array_equal([line[:, 0] for line in lines_b.get_segments()], [[2, 3], [3, 4], [6, 7], [7, 8], [10, 11], [11, 12]])
     assert [text.get_text() for text in p.legend.get_texts()] == ['Training', 'Validation', 'a', 'b']
     p.close()
+    # cells that share names with the plot's roles
+    p = plot.preview_partitions(12, partitions=3, test=0, model=Factor(['train', 'test'], tile=6))
+    assert [text.get_text() for text in p.legend.get_texts()] == ['Training', 'Validation', 'train', 'test']
+    ax = p.figure.axes[0]
+    assert ax.patches[0].get_facecolor() != tuple(ax.collections[0].get_colors()[0])
+    p.close()

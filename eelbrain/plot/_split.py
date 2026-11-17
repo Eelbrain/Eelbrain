@@ -30,7 +30,8 @@ class DataSplit(EelFigure, LegendMixin):
         or 'fig' to plot the legend in a separate figure.
     colors
         Customize colors (uses the following keys: ``'train', 'validate',
-        'test', 'unused'``, as well as the cells of :attr:`Splits.model`).
+        'test', 'unused'``, as well as the cells of :attr:`Splits.model`; a
+        cell with one of those names uses the same entry).
     xlabel
         X-axis label (default ``'Time [s]'`` with ``tstep``, otherwise
         ``'Sample'``).
@@ -76,7 +77,9 @@ class DataSplit(EelFigure, LegendMixin):
             cell_colors = colors_for_oneway(cells, unambiguous=[7, 4, 8, 2][:len(cells)])
         else:
             cell_colors = colors_for_oneway(cells)
-        colors = {**colors_for_oneway(roles, unambiguous=[6, 3, 5]), 'unused': '0.85', **cell_colors, **(colors or {})}
+        # cells are kept apart from the roles, with which they can share names
+        cell_colors.update(colors or {})
+        colors = {**colors_for_oneway(roles, unambiguous=[6, 3, 5]), 'unused': '0.85', **(colors or {})}
         if tstep is None:
             tstep = splits.tstep
         if tstep is None:
@@ -123,8 +126,8 @@ class DataSplit(EelFigure, LegendMixin):
         cell_transform = ax.get_xaxis_transform() + ScaledTranslation(0, 4 / 72, self.figure.dpi_scale_trans)
         for cell in cells:
             lines = [[(x0 * scale, 1), (x1 * scale, 1)] for x0, x1 in splits.segments[splits.model == cell]]
-            handles[cell] = ax.add_collection(LineCollection(lines, colors=[colors[cell]], linewidths=4, capstyle='butt', transform=cell_transform, clip_on=False), autolim=False)
-            labels[cell] = cellname(cell)
+            handles['cell', cell] = ax.add_collection(LineCollection(lines, colors=[cell_colors[cell]], linewidths=4, capstyle='butt', transform=cell_transform, clip_on=False), autolim=False)
+            labels['cell', cell] = cellname(cell)
         ax.set_ylim(-0.5, len(rows) - 0.5)
         if is_nested:
             # label groups by top-level split
