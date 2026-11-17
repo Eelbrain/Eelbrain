@@ -168,7 +168,7 @@ def preview_partitions(
         (the default assumes continuous data), or as a sequence of numbers
         describing the duration (in seconds) of each trial, which allows
         trials of different lengths. Trials specified by their number have no
-        duration, so ``min_section`` does not apply to them.
+        duration, so ``min_section`` can not be used with them.
     partitions
         Number of partitions to divide the data into.
     split

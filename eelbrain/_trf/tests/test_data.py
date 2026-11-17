@@ -480,6 +480,15 @@ def test_split_data_time():
     assert_array_equal(split_data(segments, partitions=3, test=0, split='time', tstep=1).split_segments, [[0, 95], [95, 200], [200, 300]])
     with pytest.raises(ValueError, match="requires tstep"):
         split_data(segments, partitions=3, test=0, split='time', min_section=15)
+    with pytest.raises(ValueError, match="min_section=-1"):
+        split_data(segments, partitions=3, test=0, split='time', min_section=-1, tstep=1)
+    # min_section only applies to split='time'
+    for split in ['cases', 'within-cases', 'walk-forward']:
+        with pytest.raises(TypeError, match="min_section can only be used with split='time'"):
+            split_data(segments, partitions=2, test=0, split=split, min_section=15, tstep=1)
+    with pytest.raises(TypeError, match="min_section can only be used"):  # default for data with more than one segment
+        split_data(segments, partitions=2, test=0, min_section=15, tstep=1)
+    assert split_data(segments, partitions=2, test=0, tstep=1).min_section_arg is None
     assert_array_equal(splits.splits[0].reserved, [[0, 95]])
     assert_array_equal(splits.splits[1].reserved, [[95, 200]])
     assert_array_equal(splits.splits[1].train, [[0, 95], [200, 300]])

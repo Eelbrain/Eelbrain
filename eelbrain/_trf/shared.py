@@ -361,7 +361,7 @@ def split_data(
         is moved to the closest segment boundary instead, so that segments
         shorter than ``2 * min_section`` are never cut. The default is 15 s.
         Requires ``tstep``; for data without time axis, segments are always
-        cut at the span boundaries.
+        cut at the span boundaries. Only available with ``split='time'``.
     data
         Dataset in which to evaluate ``model`` if it is a string.
 
@@ -490,14 +490,14 @@ def split_data(
         raise ValueError(f"{partitions=}: need at least {n_validate + test + 1} partitions with {validate=} and {test=}")
     if model is not None and split != 'cases':
         raise TypeError(f"model={dataobj_repr(model)!r} with {split=}: model can only be used with split='cases'")
-    if tstep is None:
-        if min_section is not None:
-            raise ValueError(f"{min_section=}: a duration in seconds requires tstep")
-        n_min_section = 0
-    elif min_section is None:
-        n_min_section = int(round(15 / tstep))
-    else:
-        n_min_section = int(round(min_section / tstep))
+    if min_section is None:
+        min_section = 15
+    elif split != 'time':
+        raise TypeError(f"{min_section=} with {split=}: min_section can only be used with split='time'")
+    elif tstep is None:
+        raise ValueError(f"{min_section=}: a duration in seconds requires tstep")
+    elif min_section < 0:
+        raise ValueError(f"{min_section=}: needs to be a duration in seconds (0 or more)")
     if split == 'cases':
         n_segments = len(segments)
         # determine model cells
@@ -549,6 +549,7 @@ def split_data(
             segment_cuts = segments[:, :1] + np.concatenate([[0], n_train + n_window * np.arange(partitions)])
         else:
             # partitions with equal numbers of samples, cut additionally at segment boundaries
+            n_min_section = 0 if tstep is None else int(round(min_section / tstep))
             split_points = np.round(np.linspace(segments[0, 0], segments[-1, 1], partitions + 1)).astype(np.int64)
             boundaries = segments[1:, 0]
             if n_min_section and len(segments) > 1:
