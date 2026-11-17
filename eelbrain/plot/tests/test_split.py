@@ -1,4 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
+import numpy as np
 from numpy.testing import assert_array_equal
 
 from eelbrain import Factor, datasets, boosting, epoch_impulse_predictor, plot
@@ -36,6 +37,9 @@ def test_preview_partitions():
     p.close()
     # trials specified by number: no time information
     p = plot.preview_partitions(20, partitions=5, test=0)
+    assert p.figure.axes[0].get_xlabel() == 'Case'
+    p.close()
+    p = plot.preview_partitions(np.int64(20), partitions=5, test=0)  # numpy integer
     assert p.figure.axes[0].get_xlabel() == 'Case'
     p.close()
     # default partitions: one per trial

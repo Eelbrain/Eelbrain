@@ -2,6 +2,7 @@
 """Plot data split for cross-validation"""
 
 from collections.abc import Sequence
+from numbers import Integral
 from typing import Literal
 
 from matplotlib.collections import LineCollection
@@ -200,8 +201,8 @@ def preview_partitions(
     """
     tstep = None  # trials specified by number: no time information
     center_xticks = False  # each sample stands for one partition or trial
-    if isinstance(cases, int):
-        n_cases = max(cases, 1)  # a single trial is continuous data
+    if isinstance(cases, Integral):
+        n_cases = max(int(cases), 1)  # a single trial is continuous data
         if split == 'walk-forward':
             # trials need enough samples for the windows
             ns = [100] * n_cases
