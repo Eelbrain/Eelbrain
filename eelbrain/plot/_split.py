@@ -216,8 +216,6 @@ def preview_partitions(
             ns = [partitions or 5] * cases
             xlabel = 'Sample'
         else:
-            if partitions is None:
-                raise NotImplementedError('Automatic partitions with trials')
             ns = [1] * cases
             xlabel = 'Case'
             center_xticks = True

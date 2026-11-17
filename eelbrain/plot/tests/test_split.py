@@ -38,6 +38,11 @@ def test_preview_partitions():
     p = plot.preview_partitions(20, partitions=5, test=0)
     assert p.figure.axes[0].get_xlabel() == 'Case'
     p.close()
+    # default partitions: one per trial
+    p = plot.preview_partitions(6, test=0)
+    assert p.splits.n_partitions == 6
+    assert p.splits.partitions_arg is None
+    p.close()
     # NDVar data
     ds = datasets.get_uts()
     p = plot.preview_partitions('uts', data=ds, partitions=4)
