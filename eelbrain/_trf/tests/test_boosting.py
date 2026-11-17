@@ -248,6 +248,9 @@ def test_boosting_epochs():
     assert len(res.partition_results) == 2
     assert res.r is None
     assert res.h[0].shape == (10,)
+    assert res.partitions == 2
+    res = boosting('uts', [p0, p1], 0, 0.02, data=ds, partitions=2, test=0, split='walk-forward')
+    assert repr(res) == "<BoostingResult uts ~ a0 + a1, 0 - 0.02, partitions=2, test=0, split='walk-forward'>"
     with pytest.raises(TypeError, match="only available with split='walk-forward'"):
         boosting('uts', [p0, p1], 0, 0.1, data=ds, validate=0.2)
     with pytest.raises(ValueError, match="extends beyond the shortest cross-validation data segment"):

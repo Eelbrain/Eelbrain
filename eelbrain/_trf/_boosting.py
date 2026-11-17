@@ -271,6 +271,8 @@ class BoostingResult(PickleableDataClass):
     def __post_init__(self):
         if self.splits is None:
             self.partitions = None
+        elif self.splits.split == 'walk-forward':
+            self.partitions = self.splits.n_partitions - 1  # number of windows (see split_data)
         else:
             self.partitions = self.splits.n_partitions
 
@@ -347,7 +349,7 @@ class BoostingResult(PickleableDataClass):
             elif name == 'validate':
                 if self.splits is None:
                     value = None
-                elif self.splits.validate_proportion is None:
+                elif self.splits.validate_proportion in (None, 0.05):  # 0.05 is the default for split='walk-forward'
                     value = self.splits.n_validate
                 else:
                     value = self.splits.validate_proportion
