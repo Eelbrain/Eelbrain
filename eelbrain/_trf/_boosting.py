@@ -192,7 +192,7 @@ class BoostingResult(PickleableDataClass):
           - 1: Numba implementation
           - 2: Cython multiprocessing implementation (Eelbrain 0.38)
           - 3: Cython based convolution (Eelbrain 0.40)
-          - 4: Delta-halving steps compare against the current training error; kernel time axis on the sample grid (Eelbrain 0.43)
+          - 5: Delta-halving steps compare against the current training error; kernel time axis on the sample grid (Eelbrain 0.43; version 4 was only used during development)
           - 6: ``basis`` applied to each case separately (Eelbrain 0.43)
 
     execution_context
