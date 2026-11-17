@@ -34,6 +34,12 @@ else:
 mpc = multiprocessing.get_context(method)
 
 
+def init_worker() -> None:
+    "Apply Eelbrain's configuration to a worker process (the scheduling priority, see :func:`eelbrain.configure`); call from the worker"
+    if CONFIG['nice']:
+        os.nice(CONFIG['nice'])
+
+
 def configure(
         n_workers: bool | int = None,
         frame: bool = None,

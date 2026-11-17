@@ -27,7 +27,6 @@ from math import ceil
 from multiprocessing.shared_memory import SharedMemory
 import logging
 import operator
-import os
 import re
 import socket
 from threading import Thread
@@ -42,7 +41,7 @@ from scipy import ndimage
 from .. import fmtxt, _info, _text
 from ..fmtxt import FMText, FMTextLike
 from .._celltable import Celltable
-from .._config import CONFIG, mpc, tqdm_disable
+from .._config import CONFIG, init_worker, mpc, tqdm_disable
 from .._data_obj import (
     CategorialArg, CellArg, IndexArg, ModelArg, NDVarArg, VarArg,
     Dataset, Var, Factor, Interaction, NestedEffect,
@@ -3835,8 +3834,7 @@ def distribution_worker(dist, in_queue, kill_beacon):
 
 def permutation_worker(in_queue, out_queue, memory_name, y_flat_shape, stat_map_shape, test_func, args, map_args, kill_beacon):
     "Worker function for permutation test"
-    if CONFIG['nice']:
-        os.nice(CONFIG['nice'])
+    init_worker()
 
     shared_memory = SharedMemory(memory_name)
     y = np.ndarray(y_flat_shape, np.float64, buffer=shared_memory.buf)
@@ -4001,8 +3999,7 @@ def setup_workers_me(test_func, dists, thresholds):
 
 
 def permutation_worker_me(in_queue, out_queue, memory_name, y_flat_shape, stat_map_shape, test, map_args, thresholds, kill_beacon):
-    if CONFIG['nice']:
-        os.nice(CONFIG['nice'])
+    init_worker()
 
     shared_memory = SharedMemory(memory_name)
     y = np.ndarray(y_flat_shape, np.float64, buffer=shared_memory.buf)
