@@ -103,7 +103,7 @@ p = plot.preview_partitions(20, partitions=5, legend=False)
 ###############################################################################
 # Walk-forward validation
 # -----------------------
-# In all the splits above, the validation data is surrounded by training data. With ``split='walk-forward'``, each split instead trains only on the data preceding its validation set; the data after it is not used and is grayed out in the plot. This is the scheme with which the `NCRF <https://proloyd.github.io/neuro-currentRF>`_ package selects its regularization parameter: each trial is divided into ``partitions`` partitions, of which all but the first are short windows at the end of the trial (by default each 5% of the trial). These windows are held out one at a time, resulting in ``partitions - 1`` splits.
+# In all the splits above, the validation data is surrounded by training data. With ``split='walk-forward'``, each split instead trains only on the data preceding its validation set. Each trial is divided into ``partitions`` partitions, of which all but the first are short windows at the end of the trial (by default each 5% of the trial). These windows are held out one at a time, resulting in ``partitions - 1`` splits.
 
 p = plot.preview_partitions(1, partitions=4, test=0, split='walk-forward', legend='upper center')
 p = plot.preview_partitions(2, partitions=4, test=0, split='walk-forward', legend=False)
@@ -111,4 +111,4 @@ p = plot.preview_partitions(2, partitions=4, test=0, split='walk-forward', legen
 ###############################################################################
 # With this scheme, a ``validate`` value between 0 and 1 sets the length of each validation window as proportion of the trial:
 
-p = plot.preview_partitions(1, partitions=4, validate=0.1, test=0, split='walk-forward', legend=False)
+p = plot.preview_partitions(1, partitions=4, validate=0.1, test=0, split='walk-forward', legend='fig')
