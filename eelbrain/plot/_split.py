@@ -4,17 +4,59 @@
 from collections.abc import Sequence
 from typing import Literal
 
+from matplotlib.collections import LineCollection
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator
+from matplotlib.transforms import ScaledTranslation
 import numpy as np
 
 from .._trf.shared import Splits, split_data
-from .._data_obj import Dataset, CategorialArg, NDVar, NDVarArg, asndvar
+from .._data_obj import Dataset, CategorialArg, NDVar, NDVarArg, asndvar, cellname
 from ._base import EelFigure, Layout, LegendMixin, LegendArg
 from ._styles import colors_for_oneway
 
 
 class DataSplit(EelFigure, LegendMixin):
+    """Plot data splits
+
+    Parameters
+    ----------
+    splits
+        The data splits.
+    legend
+        Matplotlib figure legend location argument
+        (see ``loc`` argument to :class:`matplotlib.legend.Legend`)
+        or 'fig' to plot the legend in a separate figure.
+    colors
+        Customize colors (uses the following keys: ``'train', 'validate',
+        'test', 'unused'``, as well as the cells of :attr:`Splits.model`).
+    xlabel
+        X-axis label (default ``'Time [s]'`` with ``tstep``, otherwise
+        ``'Sample'``).
+    tstep
+        Time step between samples (default :attr:`Splits.tstep`); with a
+        time step, the x-axis shows time in seconds instead of sample
+        indices.
+    center_xticks
+        Label each sample at its center instead of placing ticks at sample
+        boundaries (for previews in which each sample stands for one
+        partition or trial).
+    ...
+        Also accepts :ref:`general-layout-parameters`.
+
+    Notes
+    -----
+    Each row corresponds to one boosting run (a leaf :class:`Split`). For
+    cross-validation with a test set, rows are grouped by test partition
+    (separated by black lines), and the y-axis labels the test partition.
+    Data that a run uses neither for training nor as held-out set is
+    grayed out. If the partitions were sampled from the cells of a
+    ``model``, a line above the plot indicates the cell of each data
+    segment.
+
+    This plot can also be generated from a :class:`BoostingResult` object
+    through :meth:`BoostingResult.splits.plot` method.
+    """
 
     def __init__(
             self,
@@ -26,48 +68,14 @@ class DataSplit(EelFigure, LegendMixin):
             center_xticks: bool = False,
             **kwargs,
     ):
-        """Plot data splits
-
-        Parameters
-        ----------
-        splits
-            The data splits.
-        legend
-            Matplotlib figure legend location argument
-            (see ``loc`` argument to :class:`matplotlib.legend.Legend`)
-            or 'fig' to plot the legend in a separate figure.
-        colors
-            Customize colors (uses the following keys: ``'train', 'validate',
-            'test', 'unused'``).
-        xlabel
-            X-axis label (default ``'Time [s]'`` with ``tstep``, otherwise
-            ``'Sample'``).
-        tstep
-            Time step between samples (default :attr:`Splits.tstep`); with a
-            time step, the x-axis shows time in seconds instead of sample
-            indices.
-        center_xticks
-            Label each sample at its center instead of placing ticks at sample
-            boundaries (for previews in which each sample stands for one
-            partition or trial).
-        ...
-            Also accepts :ref:`general-layout-parameters`.
-
-        Notes
-        -----
-        Each row corresponds to one boosting run (a leaf :class:`Split`). For
-        cross-validation with a test set, rows are grouped by test partition
-        (separated by black lines), and the y-axis labels the test partition.
-        Data that a run uses neither for training nor as held-out set is
-        grayed out.
-
-        This plot can also be generated from a :class:`BoostingResult` object
-        through :meth:`BoostingResult.splits.plot` method.
-        """
         roles = ['train', 'validate', 'test']
         labels = {'train': 'Training', 'validate': 'Validation', 'test': 'Testing', 'unused': 'Unused'}
-        if colors is None:
-            colors = {**colors_for_oneway(roles, unambiguous=[6, 3, 5]), 'unused': '0.85'}
+        cells = [] if splits.model is None else splits.model.cells
+        if len(cells) <= 4:
+            cell_colors = colors_for_oneway(cells, unambiguous=[7, 4, 8, 2][:len(cells)])
+        else:
+            cell_colors = colors_for_oneway(cells)
+        colors = {**colors_for_oneway(roles, unambiguous=[6, 3, 5]), 'unused': '0.85', **cell_colors, **(colors or {})}
         if tstep is None:
             tstep = splits.tstep
         if tstep is None:
@@ -110,6 +118,12 @@ class DataSplit(EelFigure, LegendMixin):
             if y:
                 ax.axhline(y - 0.5, color='k' if is_nested and top_split is not rows[y - 1][0] else 'white')
         labels = {key: labels[key] for key in handles}
+        # line above the plot indicating the model cell of each data segment
+        cell_transform = ax.get_xaxis_transform() + ScaledTranslation(0, 4 / 72, self.figure.dpi_scale_trans)
+        for cell in cells:
+            lines = [[(x0 * scale, 1), (x1 * scale, 1)] for x0, x1 in splits.segments[splits.model == cell]]
+            handles[cell] = ax.add_collection(LineCollection(lines, colors=[colors[cell]], linewidths=4, capstyle='butt', transform=cell_transform, clip_on=False), autolim=False)
+            labels[cell] = cellname(cell)
         ax.set_ylim(-0.5, len(rows) - 0.5)
         if is_nested:
             # label groups by top-level split
@@ -164,7 +178,8 @@ def preview_partitions(
     test
         Number of partitions in each test set (0 or 1).
     model
-        Sample partitions evenly from the cells of this model.
+        Sample partitions evenly from the cells of this model (one entry per
+        trial). A line above the plot indicates the cell of each trial.
     min_section
         Minimum duration (in seconds) of the pieces left when a trial is cut.
     data

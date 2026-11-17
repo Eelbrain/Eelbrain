@@ -1,7 +1,7 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
 from numpy.testing import assert_array_equal
 
-from eelbrain import datasets, boosting, epoch_impulse_predictor, plot
+from eelbrain import Factor, datasets, boosting, epoch_impulse_predictor, plot
 from eelbrain.testing import hide_plots
 
 
@@ -60,4 +60,11 @@ def test_preview_partitions():
     p = plot.preview_partitions(2, partitions=4, test=0, split='walk-forward')
     assert p.figure.axes[0].get_xlabel() == 'Sample'
     assert len(p.splits.split_segments) == 8
+    p.close()
+    # model: a line above the plot indicates the cell of each trial
+    p = plot.preview_partitions(12, partitions=3, test=0, model=Factor('aabb', tile=3))
+    lines_a, lines_b = p.figure.axes[0].collections
+    assert_array_equal([line[:, 0] for line in lines_a.get_segments()], [[0, 1], [1, 2], [4, 5], [5, 6], [8, 9], [9, 10]])
+    assert_array_equal([line[:, 0] for line in lines_b.get_segments()], [[2, 3], [3, 4], [6, 7], [7, 8], [10, 11], [11, 12]])
+    assert [text.get_text() for text in p.legend.get_texts()] == ['Training', 'Validation', 'a', 'b']
     p.close()
