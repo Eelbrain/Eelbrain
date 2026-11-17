@@ -253,6 +253,20 @@ def test_boosting_epochs():
         boosting('uts', [p0, p1], 0, 0.1, data=ds, test=0, split='walk-forward')
 
 
+def test_boosting_dtype():
+    "Data that is not float64 is converted"
+    rng = np.random.default_rng(0)
+    y = [NDVar(rng.normal(size=n), UTS(0, 0.01, n), 'y') for n in (300, 400, 350)]
+    x = [NDVar((rng.normal(size=n) > 0).astype(int), UTS(0, 0.01, n), 'x') for n in (300, 400, 350)]
+    res = boosting(y, [x], 0, 0.1, partitions=3)
+    res_32 = boosting([yi.astype(np.float32) for yi in y], [[xi.astype(np.float32) for xi in x]], 0, 0.1, partitions=3)
+    assert_allclose(res_32.h[0].x, res.h[0].x, atol=1e-5)
+    assert x[0].x.dtype == int
+    # continuous data
+    res_32 = boosting(y[1].astype(np.float32), x[1].astype(np.float32), 0, 0.1)
+    assert_allclose(res_32.h.x, boosting(y[1], x[1], 0, 0.1).h.x, atol=1e-5)
+
+
 def test_boosting_object():
     "Test Boosting object"
     ds = datasets._get_continuous(ynd=True)
