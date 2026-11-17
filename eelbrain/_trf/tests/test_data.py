@@ -495,13 +495,17 @@ def test_split_data_time():
     # the data edges are not segment boundaries to snap to
     splits = split_data(np.array([[0, 10], [10, 100]]), partitions=3, test=0, split='time', min_section=15, tstep=1)
     assert_array_equal(splits.split_segments, [[0, 10], [10, 33], [33, 67], [67, 100]])
-    with pytest.raises(ValueError, match="too short to form 5 partitions"):
+    with pytest.raises(ValueError, match="can not form 5 partitions"):
         split_data(segments[:3], partitions=5, test=0, split='time', min_section=15, tstep=1)
     # a span boundary that can not be moved (the edges of the data are not boundaries to move to) must not leave a short piece
-    with pytest.raises(ValueError, match="too short to form 3 partitions"):  # last segment would be cut into pieces of 1467 and 1333
+    with pytest.raises(ValueError, match="can not form 3 partitions"):  # last segment would be cut into pieces of 1467 and 1333
         split_data(np.array([[0, 1200], [1200, 4000]]), partitions=3, test=0, split='time', min_section=1500, tstep=1)
-    with pytest.raises(ValueError, match="too short to form 4 partitions"):  # first piece of 1250
+    with pytest.raises(ValueError, match="can not form 4 partitions"):  # first piece of 1250
         split_data(np.array([[0, 4500], [4500, 5000]]), partitions=4, test=0, split='time', min_section=1500, tstep=1)
+    # two span boundaries (48 and 72 s) within min_section of the same segment boundary: the error names the cause
+    with pytest.raises(ValueError, match=r"can not form 5 partitions of 24 s .* min_section \(15 s\); use fewer partitions or a smaller min_section"):
+        split_data(np.array([[0, 6000], [6000, 12000]]), partitions=5, test=0, split='time', tstep=0.01)
+    assert len(split_data(np.array([[0, 6000], [6000, 12000]]), partitions=5, test=0, split='time', tstep=0.01, min_section=12).split_segments) == 6
     # more partitions than samples
     with pytest.raises(ValueError, match="not enough samples"):
         split_data(np.array([[0, 2], [2, 4]]), partitions=5, validate=1, test=0, split='time')
@@ -511,7 +515,7 @@ def test_split_data_time():
 
 def test_split_data_time_too_many_partitions():
     "A span boundary at the end of the data (more partitions than samples)"
-    with pytest.raises(ValueError, match="too short"):
+    with pytest.raises(ValueError, match="can not form 50 partitions"):
         split_data(np.array([[0, 10], [10, 20]]), partitions=50, test=0, split='time', min_section=2, tstep=1)
 
 

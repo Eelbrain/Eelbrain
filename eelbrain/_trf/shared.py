@@ -426,8 +426,11 @@ def split_data(
     within reach), so that cutting a segment never leaves a piece shorter than
     ``min_section``. Segments shorter than ``2 * min_section`` are thus never
     cut, and partitions are formed from whole segments wherever that is
-    possible within this tolerance; if the segments are too short to form
-    ``partitions`` distinct partitions this way, an error is raised.
+    possible within this tolerance. This always works when the spans are at
+    least ``2 * min_section`` long; with shorter spans, an error is raised if
+    two span boundaries would be moved to the same segment boundary, or if a
+    span boundary that can not be moved leaves a shorter piece (use fewer
+    partitions or a smaller ``min_section``).
 
     **Within cases** (``split='within-cases'``): each segment is cut into
     ``partitions`` pieces of equal length (default 5), and partition *i*
@@ -563,7 +566,8 @@ def split_data(
                 # pieces of a cut segment: sections that start or end at a soft split
                 is_piece = np.isin(cuts[:-1], soft_splits) | np.isin(cuts[1:], soft_splits)
                 if len(np.unique(split_points)) <= partitions or np.any(np.diff(cuts)[is_piece] < n_min_section):
-                    raise ValueError(f"{partitions=} with {split=}: the segments are too short to form {partitions} partitions without cutting a segment into pieces shorter than {n_min_section} samples (see min_section); use fewer partitions")
+                    span = (segments[-1, 1] - segments[0, 0]) / partitions * tstep
+                    raise ValueError(f"{partitions=} with {split=}: can not form {partitions} partitions of {span:g} s without cutting a segment into pieces shorter than min_section ({n_min_section * tstep:g} s); use fewer partitions or a smaller min_section")
             piece_partition = np.searchsorted(split_points, split_segments[:, 0], side='right') - 1
         if split != 'time':
             # segment_cuts: (n_segments, partitions + 1) cuts of each segment; the i-th piece of every segment forms partition i
