@@ -56,6 +56,16 @@ def test_preview_partitions():
     assert [label.get_text() for label in ax.get_xticklabels()] == ['0', '1', '2', '3']
     assert_array_equal(p.splits.split_segments, [[0, 1], [1, 2], [2, 3], [3, 4]])
     p.close()
+    # a single trial is continuous data
+    p = plot.preview_partitions(1, partitions=4, test=0)
+    assert p.figure.axes[0].get_xlabel() == 'Partition'
+    assert_array_equal(p.splits.split_segments, [[0, 1], [1, 2], [2, 3], [3, 4]])
+    p.close()
+    p = plot.preview_partitions(3, test=0, split='within-cases')
+    assert p.figure.axes[0].get_xlabel() == 'Sample'
+    assert p.splits.partitions_arg is None
+    assert len(p.splits.split_segments) == 15
+    p.close()
     # walk-forward: windows at the end of every trial; unused data is grayed out
     p = plot.preview_partitions(ds['uts'][0], partitions=4, test=0, split='walk-forward')
     assert_array_equal(p.splits.split_segments[:, 1], [85, 90, 95, 100])

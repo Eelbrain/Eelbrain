@@ -201,24 +201,24 @@ def preview_partitions(
     tstep = None  # trials specified by number: no time information
     center_xticks = False  # each sample stands for one partition or trial
     if isinstance(cases, int):
+        n_cases = max(cases, 1)  # a single trial is continuous data
         if split == 'walk-forward':
             # trials need enough samples for the windows
-            ns = [100] * max(cases, 1)
+            ns = [100] * n_cases
             xlabel = 'Sample'
-        elif cases == 0:
-            if partitions is None:
-                partitions = 5
-            ns = [partitions]
-            xlabel = 'Partition'
-            center_xticks = True
-        elif split in ('time', 'within-cases'):
-            # cases need enough samples to be cut into partitions
-            ns = [partitions or 5] * cases
-            xlabel = 'Sample'
-        else:
-            ns = [1] * cases
+        elif split == 'cases' or (split is None and n_cases > 1):
+            # whole trials: one sample per trial
+            ns = [1] * n_cases
             xlabel = 'Case'
             center_xticks = True
+        else:
+            # trials need enough samples to be cut into partitions
+            ns = [partitions or 5] * n_cases
+            if n_cases == 1:
+                xlabel = 'Partition'
+                center_xticks = True
+            else:
+                xlabel = 'Sample'
         kwargs.setdefault('xlabel', xlabel)
     elif isinstance(cases, (str, NDVar)):
         y = asndvar(cases, data=data)
