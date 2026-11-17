@@ -29,7 +29,7 @@ from eelbrain._experiment.pathing import BIDS_ENTITY_KEYS, LOG_DIR, ica_file_pat
 from eelbrain._experiment.preprocessing import RawFilterElliptic, ica_input_name, raw_node_name
 from eelbrain._experiment.data import DataSpec
 from eelbrain._experiment.variable_def import EvalVar, LabelVar, Variables
-from eelbrain.testing import assert_dataobj_equal, requires_mne_sample_data
+from eelbrain.testing import assert_dataobj_equal, hide_plots, requires_mne_sample_data
 
 
 def _test_result_manifest_path(
@@ -2733,6 +2733,27 @@ def test_load_trf(samples_trf_experiment):
 
 
 @requires_mne_sample_data
+@hide_plots
+def test_preview_partitions(samples_trf_experiment):
+    "preview_partitions derives the cases that enter the fit from the events"
+    e = samples_trf_experiment()
+    y = e.load_trf_job('imp', 0, 0.1).y
+    p = e.preview_partitions()
+    splits = p.splits
+    assert (splits.split, splits.n_partitions, splits.n_test) == ('time', 5, 1)
+    assert len(splits.segments) == len(y)
+    assert (splits.segments[0, 1] - splits.segments[0, 0]) * splits.tstep == pytest.approx(y.time.tstep * y.time.nsamples, abs=splits.tstep)
+    p.close()
+    # variable-length cases
+    y = e.load_trf_job('imp', 0, 0.1, epoch='cont').y
+    p = e.preview_partitions(epoch='cont')
+    splits = p.splits
+    durations = (splits.segments[:, 1] - splits.segments[:, 0]) * splits.tstep
+    assert durations == pytest.approx([yi.time.tstep * yi.time.nsamples for yi in y], abs=splits.tstep)
+    p.close()
+
+
+@requires_mne_sample_data
 def test_trf_ncrf_dependencies(samples_trf_experiment):
     "NCRF reads sensor-space epochs, whose output depends on the EEG 'reference' state; like source localization, it pins reference=''"
     from eelbrain._experiment.tests.sample_experiment import SampleTRF
@@ -2776,7 +2797,7 @@ def test_trf_ncrf_job(samples_experiment):
     from eelbrain._experiment.tests.sample_experiment import SampleTRF
 
     class Experiment(SampleTRF):
-        estimators = {**SampleTRF.estimators, 'ncrf': NCRF()}
+        estimators = {**SampleTRF.estimators, 'ncrf': NCRF(n_iter=2, n_iterc=2, n_iterf=5)}
 
     root = samples_experiment(n_subjects=1, n_segments=4, mris=True)
     e = Experiment(root)
@@ -2788,6 +2809,10 @@ def test_trf_ncrf_job(samples_experiment):
     assert job.fwd.source.parc.name == 'ac'
     assert not job.fwd.source.parc.startswith('unknown').any()
     assert set(job.y.sensor.names) >= set(job.fwd.sensor.names)
+    # the fit selects mu through cross-validation with the estimator's partitions
+    fit = job()
+    assert fit.cv_info() is not None
+    assert fit.solver.mu > 0
 
 
 @requires_mne_sample_data

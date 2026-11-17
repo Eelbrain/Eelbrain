@@ -355,6 +355,11 @@ These definitions can then be invoked like::
 
     trfs = e.load_trfs(..., estimator='forward')
 
+Both estimators use cross-validation, and share the parameters that determine how the data is partitioned for it (``partitions``, ``split``, ``validate`` and ``min_section``; see :func:`eelbrain.split_data`).
+:meth:`Pipeline.preview_partitions` plots the partitions that result for the current epoch and subject::
+
+    e.preview_partitions('forward', epoch='story')
+
 For :class:`Boosting`, the analysis *space* is determined by the :ref:`state-inv` state, as for evoked analysis:
 with ``inv=''`` the TRF is fit to sensor data, with a non-empty inverse solution it is fit to source-localized data (in source space, the :ref:`state-parc` state masks the source space: sources labeled ``"unknown"`` are excluded).
 The :class:`NCRF` estimator fits source currents directly from sensor data and requires ``inv=''``.
@@ -381,7 +386,7 @@ The ``metric`` parameter selects the fit metric to test (by default ``'ev'``, th
 Subjects are selected through the :ref:`state-group` state.
 
 Model tests should be based on cross-validated fit metrics, which :class:`Boosting` computes by default.
-With ``Boosting(cv=False)``, fit metrics are not available, because they would be computed from the same data that were used to estimate the TRFs, and overestimate predictive power.
+With ``Boosting(test=0)``, fit metrics are not available, because they would be computed from the same data that were used to estimate the TRFs, and overestimate predictive power.
 
 
 Batch estimation and distributed fitting

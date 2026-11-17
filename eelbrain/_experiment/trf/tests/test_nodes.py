@@ -9,7 +9,7 @@ from eelbrain._experiment.trf.nodes import TRFDatasetDerivative, TRFModelTestDer
 
 def test_trf_dataset_without_metrics():
     "trfs=False is an empty dataset for an estimator without fit metrics"
-    node = TRFDatasetDerivative('.', {'cv': Boosting(), 'no-cv': Boosting(cv=False)}, {})
+    node = TRFDatasetDerivative('.', {'cv': Boosting(), 'no-cv': Boosting(test=0)}, {})
     options = {'x': None, 'smooth': None, 'trfs': False}
     node.validate_options(SimpleNamespace(state={'inv': ''}, options={**options, 'estimator': 'cv'}))
     node.validate_options(SimpleNamespace(state={'inv': ''}, options={**options, 'estimator': 'no-cv', 'trfs': True}))

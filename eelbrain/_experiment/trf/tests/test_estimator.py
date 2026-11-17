@@ -2,8 +2,9 @@ import pickle
 
 import pytest
 
-from eelbrain import NDVar, datasets, boosting
+from eelbrain import NDVar, concatenate, datasets, boosting
 from eelbrain._experiment.trf.estimator import Boosting, Estimator, NCRF
+from eelbrain._experiment.trf.nodes import TRFDerivative
 
 
 def test_boosting():
@@ -14,23 +15,38 @@ def test_boosting():
     # _as_dict covers every DICT_ATTRS entry
     d = est._as_dict()
     assert d['type'] == 'Boosting'
-    assert set(d) == {'type', *Boosting.DICT_ATTRS}
+    assert set(d) == {'type', *Boosting.DICT_ATTRS}.difference(('validate', 'min_section'))
     # equality / repr
     assert est == Boosting()
     assert est != Boosting(basis=0.1)
-    # partitions
+    # cross-validation
+    assert est._split_args == {'partitions': 5, 'split': 'time', 'validate': None, 'test': 1, 'min_section': None}
     with pytest.raises(ValueError):
         Boosting(partitions=-1)
     with pytest.raises(ValueError):
         Boosting(partitions=2)
-    assert Boosting(partitions=2, cv=False).partitions == 2
-    assert (est.partitions, est.split) == (5, 'time')
-    # legacy: negative partitions concatenated the cases
-    assert Boosting(partitions=-5) == est
-    # whole cases were the only scheme for positive partitions before the split parameter
-    assert 'split' not in Boosting(split='cases')._as_dict()
-    # no fit metrics without cross-validation
-    assert Boosting(cv=False).metric_keys == ()
+    assert Boosting(partitions=2, test=0).partitions == 2
+    with pytest.raises(ValueError, match='validation set'):
+        Boosting(validate=0)
+    with pytest.raises(ValueError, match='test=0'):
+        Boosting(split='walk-forward')
+    assert Boosting(split='walk-forward', validate=0.1, test=0)._split_args == {'partitions': 5, 'split': 'walk-forward', 'validate': 0.1, 'test': 0, 'min_section': None}
+    # results cached up to 0.43.0b4: no split parameter, cv instead of test, and negative partitions to concatenate the cases
+    stored = {key: value for key, value in d.items() if key not in ('split', 'test')}
+    stored['cv'] = True
+    TRFDerivative.normalize_stored_fingerprint(None, fingerprint := {'estimator': {**stored, 'partitions': -5}})
+    legacy = Boosting(partitions=-5)
+    assert legacy == fingerprint['estimator']
+    assert legacy._concatenate_cases
+    assert legacy._split_args['partitions'] == 5
+    assert not est._concatenate_cases
+    TRFDerivative.normalize_stored_fingerprint(None, fingerprint := {'estimator': {**stored, 'partitions': 4, 'cv': False}})
+    assert Boosting(partitions=4, split=None, test=0) == fingerprint['estimator']
+    assert Boosting(partitions=4, test=0) != fingerprint['estimator']
+    with pytest.raises(ValueError):
+        Boosting(partitions=-5, split='cases')
+    # no fit metrics without test set
+    assert Boosting(test=0).metric_keys == ()
     assert repr(Boosting(basis=0.1, backward=True)) == "Boosting(basis=0.1, backward=True)"
     # picklable
     assert pickle.loads(pickle.dumps(est)) == est
@@ -45,7 +61,25 @@ def test_ncrf():
     assert d['type'] == 'NCRF'
     assert set(d) == {'type', *NCRF.DICT_ATTRS}
     assert NCRF() != NCRF(mu=0.5)
+    # cross-validation without test set
+    assert est._split_args == {'partitions': None, 'split': 'walk-forward', 'validate': None, 'test': 0, 'min_section': None}
     assert pickle.loads(pickle.dumps(est)) == est
+
+
+def test_boosting_fit():
+    "Boosting._fit applies the estimator's cross-validation parameters"
+    ds = datasets.get_uts()
+    y, x = ds['uts'][:6], ds['uts'][6:12]
+    x.name = 'x'
+    res = Boosting(partitions=3, split='cases', test=0)._fit(y.copy(), [x.copy()], 0, 0.1)
+    assert (res.splits.split, res.splits.n_partitions, res.splits.n_test) == ('cases', 3, 0)
+    assert len(res.splits.segments) == 6
+    # legacy: negative partitions concatenate the cases
+    res = Boosting(partitions=-3, test=0)._fit(y.copy(), [x.copy()], 0, 0.1)
+    assert len(res.splits.segments) == 1
+    target = boosting(concatenate(y), concatenate(x), 0, 0.1, basis=0.05, partitions=3, test=0)
+    assert res.splits == target.splits
+    assert (res.h.x == target.h.x).all()
 
 
 def test_boosting_result_dataset():
