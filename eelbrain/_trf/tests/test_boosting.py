@@ -241,17 +241,17 @@ def test_boosting_epochs():
     res = boosting('v3d', [p0, p1], 0, 0.6, error='l1', model='A', data=ds, partitions=3)
     assert res.residual.ndim == 0
     # walk-forward: validation windows at the end of every case, trained on the data before them
-    res = boosting('uts', [p0, p1], 0, 0.1, data=ds, partitions=2, validate=0.2, test=0, split='walk-forward', partition_results=True)
+    res = boosting('uts', [p0, p1], 0, 0.1, data=ds, partitions=3, validate=0.2, test=0, split='walk-forward', partition_results=True)
     assert res.splits.split == 'walk-forward'
-    assert repr(res) == "<BoostingResult uts ~ a0 + a1, 0 - 0.1, partitions=2, validate=0.2, test=0, split='walk-forward', partition_results=True>"
+    assert repr(res) == "<BoostingResult uts ~ a0 + a1, 0 - 0.1, partitions=3, split='walk-forward', validate=0.2, test=0, partition_results=True>"
     assert_array_equal(res.splits.split_segments[:3], [[0, 60], [60, 80], [80, 100]])
     assert len(res.partition_results) == 2
     assert res.r is None
     assert res.h[0].shape == (10,)
-    assert res.partitions == 2
-    res = boosting('uts', [p0, p1], 0, 0.02, data=ds, partitions=2, test=0, split='walk-forward')
-    assert repr(res) == "<BoostingResult uts ~ a0 + a1, 0 - 0.02, partitions=2, test=0, split='walk-forward'>"
-    with pytest.raises(TypeError, match="only available with split='walk-forward'"):
+    assert res.partitions == 3
+    res = boosting('uts', [p0, p1], 0, 0.02, data=ds, partitions=3, test=0, split='walk-forward')
+    assert repr(res) == "<BoostingResult uts ~ a0 + a1, 0 - 0.02, partitions=3, split='walk-forward', test=0>"
+    with pytest.raises(ValueError, match="only available with split='walk-forward'"):
         boosting('uts', [p0, p1], 0, 0.1, data=ds, validate=0.2)
     with pytest.raises(ValueError, match="extends beyond the shortest cross-validation data segment"):
         boosting('uts', [p0, p1], 0, 0.1, data=ds, test=0, split='walk-forward')

@@ -110,8 +110,7 @@ New in 0.43
     to the variability in the evaluated data segments. Previously, it was
     computed relative to the variability in all data, which strongly
     overestimated it.
-  - New ``split`` parameter for data partitioning in :func:`boosting`
-    (see :ref:`exa-data_split`).
+  - More options for data partitioning (see :ref:`exa-data_split`).
   - The ``basis`` is now applied to each case separately, so that it no longer
     smooths across case boundaries.
 

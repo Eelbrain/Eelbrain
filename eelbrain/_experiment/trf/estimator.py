@@ -13,7 +13,6 @@ from collections.abc import Sequence
 import numpy as np
 
 from ..._data_obj import Dataset, Datalist, NDVar, Var
-from ..._ndvar import concatenate
 from ..._trf._boosting import boosting
 from ..configuration import Configuration, typed_arg
 
@@ -151,9 +150,13 @@ class Boosting(Estimator):
     scale_data
         Normalize ``y`` and ``x`` before fitting.
     partitions
-        Number of partitions for cross-validation. ``None`` to infer from the
-        number of cases; a negative value concatenates the cases and splits them
-        into ``abs(partitions)`` equal length partitions.
+        Number of partitions for cross-validation (see
+        :func:`eelbrain.split_data`).
+    split
+        How to form partitions (see :func:`eelbrain.split_data`). The default
+        (``'time'``) forms partitions from contiguous spans of time; use
+        ``'cases'`` to form partitions from whole cases (with
+        ``partitions=None`` to use each case as one partition).
     cv
         Use cross-validation (hold out a test partition; default). With
         ``cv=False``, TRFs are estimated from all data, and fit metrics (e.g.,
@@ -169,7 +172,8 @@ class Boosting(Estimator):
         Fit a backward model (predict the stimulus from the response). Only
         valid with a single-term model.
     """
-    DICT_ATTRS = ('basis', 'basis_window', 'error', 'delta', 'mindelta', 'selective_stopping', 'scale_data', 'partitions', 'cv', 'partition_results', 'backward')
+    DICT_ATTRS = ('basis', 'basis_window', 'error', 'delta', 'mindelta', 'selective_stopping', 'scale_data', 'partitions', 'split', 'cv', 'partition_results', 'backward')
+    DICT_DEFAULTS = {'split': 'cases'}  # split was added when positive partitions always meant whole cases
 
     def __init__(
             self,
@@ -180,7 +184,8 @@ class Boosting(Estimator):
             mindelta: float = None,
             selective_stopping: int = 0,
             scale_data: bool = True,
-            partitions: int | None = -5,
+            partitions: int | None = 5,
+            split: Literal['cases', 'time', 'within-cases', 'walk-forward'] = 'time',
             cv: bool = True,
             partition_results: bool = False,
             backward: bool = False,
@@ -192,9 +197,13 @@ class Boosting(Estimator):
         self.mindelta = typed_arg(mindelta, float, allow_none=True)
         self.selective_stopping = typed_arg(selective_stopping, int)
         self.scale_data = typed_arg(scale_data, bool)
-        if partitions is not None and abs(partitions) < 2 + cv:
-            raise ValueError(f"{partitions=}: need at least {2 + cv} partitions with {cv=} (negative values concatenate cases)")
+        if partitions is not None and partitions < 0:
+            # legacy: negative values concatenated the cases to form abs(partitions) partitions of equal length
+            partitions, split = -partitions, 'time'
+        if partitions is not None and partitions < 2 + cv:
+            raise ValueError(f"{partitions=}: need at least {2 + cv} partitions with {cv=}")
         self.partitions = partitions
+        self.split = split
         self.cv = cv
         self.partition_results = partition_results
         self.backward = backward
@@ -211,11 +220,6 @@ class Boosting(Estimator):
         return not self.backward
 
     def _fit(self, y, xs, tstart, tstop, *, fwd=None, cov=None):
-        partitions = self.partitions
-        if partitions is not None and partitions < 0:
-            partitions = -partitions
-            y = concatenate(y)
-            xs = [concatenate(x) for x in xs]
         if len(xs) == 1:
             x = xs[0]
             if self.backward:
@@ -228,7 +232,7 @@ class Boosting(Estimator):
                 raise ValueError(f"Multiple predictors with the same name: {', '.join(names)}")
             x = xs
         scale_data = 'inplace' if self.scale_data else False
-        return boosting(y, x, tstart, tstop, scale_data, self.delta, self.mindelta, self.error, self.basis, self.basis_window, partitions=partitions, test=int(self.cv), selective_stopping=self.selective_stopping, partition_results=self.partition_results)
+        return boosting(y, x, tstart, tstop, scale_data, self.delta, self.mindelta, self.error, self.basis, self.basis_window, partitions=self.partitions, split=self.split, test=int(self.cv), selective_stopping=self.selective_stopping, partition_results=self.partition_results)
 
     def _result_metrics(self, result) -> dict[str, NDVar | float]:
         if not self.cv:

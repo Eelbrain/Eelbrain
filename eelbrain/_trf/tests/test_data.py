@@ -103,7 +103,7 @@ def test_deconvolution_data_trials():
         assert_array_equal(split.train, data.segments[~validate_index])
 
     # continuoue model
-    data.initialize_cross_validation(3, 'A', ds, test=0)
+    data.initialize_cross_validation(3, model='A', data=ds, test=0)
     assert len(data.splits.splits) == 3
     for i, split in enumerate(data.splits.splits):
         validate_index = arange == i
@@ -112,7 +112,7 @@ def test_deconvolution_data_trials():
 
     # alternating model
     ds['C'] = Factor('abc', tile=20)
-    data.initialize_cross_validation(3, 'C', ds, test=0)
+    data.initialize_cross_validation(3, model='C', data=ds, test=0)
     assert len(data.splits.splits) == 3
     arange = np.repeat(np.arange(20), 3) % 3
     for i, split in enumerate(data.splits.splits):
@@ -375,9 +375,9 @@ def test_split_data_walk_forward():
     "split='walk-forward': windows at the end of every segment, trained on the data before them"
     # windows of 0.05 * 160 = 8 samples
     segments = np.array([[0, 160]])
-    splits = split_data(segments, 2, validate=1, test=0, split='walk-forward')
+    splits = split_data(segments, partitions=3, test=0, split='walk-forward')
     assert splits.split == 'walk-forward'
-    assert splits.partitions_arg == 2
+    assert splits.partitions_arg == 3
     assert splits.n_partitions == 3
     assert len(splits.splits) == 2
     assert_array_equal(splits.split_segments, [[0, 144], [144, 152], [152, 160]])
@@ -386,55 +386,65 @@ def test_split_data_walk_forward():
     assert_array_equal(splits.splits[1].reserved, [[152, 160]])
     assert_array_equal(splits.splits[1].train, [[0, 152]])
     assert not any(split.is_test for split in splits.splits)
-    assert splits.validate_proportion == 0.05
-    assert "split='walk-forward', validate_proportion=0.05" in repr(splits)
+    assert splits.n_validate == 1
+    assert splits.validate_arg is None
+    assert "split='walk-forward', n_validate=1" in repr(splits)
     assert splits == pickle.loads(pickle.dumps(splits))
     # the same windows in every segment
     segments = np.array([[0, 160], [160, 320]])
-    splits = split_data(segments, 2, validate=1, test=0, split='walk-forward')
+    splits = split_data(segments, partitions=3, test=0, split='walk-forward')
     assert_array_equal(splits.split_segments, [[0, 144], [144, 152], [152, 160], [160, 304], [304, 312], [312, 320]])
     assert_array_equal(splits.splits[0].reserved, [[144, 152], [304, 312]])
     assert_array_equal(splits.splits[0].train, [[0, 144], [160, 304]])
     assert_array_equal(splits.splits[1].reserved, [[152, 160], [312, 320]])
     assert_array_equal(splits.splits[1].train, [[0, 152], [160, 312]])
-    # default: 3 windows; a single window is allowed
+    # default: 4 partitions (3 windows); a single window is allowed
     splits = split_data(np.array([[0, 100]]), test=0, split='walk-forward')
+    assert splits.n_partitions == 4
     assert len(splits.splits) == 3
     assert_array_equal(splits.split_segments, [[0, 85], [85, 90], [90, 95], [95, 100]])
-    assert len(split_data(np.array([[0, 100]]), 1, test=0, split='walk-forward').splits) == 1
+    assert len(split_data(np.array([[0, 100]]), partitions=2, test=0, split='walk-forward').splits) == 1
     # validate as proportion of the segment: windows of 0.25 * 160 = 40 samples
-    splits = split_data(segments, 2, validate=0.25, test=0, split='walk-forward')
+    splits = split_data(segments, partitions=3, validate=0.25, test=0, split='walk-forward')
     assert splits.n_validate == 1
-    assert splits.validate_proportion == 0.25
+    assert splits.validate_arg == 0.25
+    assert "split='walk-forward', validate=0.25" in repr(splits)
     assert splits == pickle.loads(pickle.dumps(splits))
-    assert split_data(segments, 2, validate=1, test=0, split='within_cases').validate_proportion is None
     assert_array_equal(splits.split_segments, [[0, 80], [80, 120], [120, 160], [160, 240], [240, 280], [280, 320]])
+    # splits pickled by development versions: partitions was the number of windows, and the proportion was stored separately
+    state = {key: value for key, value in splits.__getstate__().items() if key not in ('split_arg', 'validate_arg', 'min_section_arg', 'tstep')}
+    legacy = Splits.__new__(Splits)
+    legacy.__setstate__({**state, 'partitions_arg': 2, 'validate_proportion': 0.25})
+    assert legacy.partitions_arg == 3
+    assert legacy.validate_arg == 0.25
     # NCRF's r=0.05: windows of ceil(0.05 / 1.05 * 1000) = 48 samples
-    splits = split_data(np.array([[0, 1000]]), 2, validate=0.05 / 1.05, test=0, split='walk-forward')
+    splits = split_data(np.array([[0, 1000]]), partitions=3, validate=0.05 / 1.05, test=0, split='walk-forward')
     assert_array_equal(splits.split_segments, [[0, 904], [904, 952], [952, 1000]])
     # floating point error does not add a sample (0.07 * 100 = 7.000000000000001)
-    splits = split_data(np.array([[0, 100]]), 2, validate=0.07, test=0, split='walk-forward')
+    splits = split_data(np.array([[0, 100]]), partitions=3, validate=0.07, test=0, split='walk-forward')
     assert_array_equal(splits.split_segments, [[0, 86], [86, 93], [93, 100]])
-    with pytest.raises(TypeError, match="only available with split='walk-forward'"):
-        split_data(segments, 2, validate=0.25, test=0, split='within_cases')
+    with pytest.raises(ValueError, match="only available with split='walk-forward'"):
+        split_data(segments, partitions=2, validate=0.25, test=0, split='within-cases')
+    with pytest.raises(ValueError, match="proportion of the segment"):
+        split_data(segments, partitions=3, validate=1, test=0, split='walk-forward')
+    with pytest.raises(ValueError, match="proportion of the segment"):
+        split_data(segments, partitions=3, validate=0, test=0, split='walk-forward')
     with pytest.raises(ValueError, match="too short for 2 windows of 80 samples"):
-        split_data(segments, 2, validate=0.5, test=0, split='walk-forward')
+        split_data(segments, partitions=3, validate=0.5, test=0, split='walk-forward')
     with pytest.raises(NotImplementedError, match="segments of equal length"):
-        split_data(np.array([[0, 100], [100, 160]]), 2, validate=1, test=0, split='walk-forward')
+        split_data(np.array([[0, 100], [100, 160]]), partitions=3, test=0, split='walk-forward')
     with pytest.raises(NotImplementedError, match="only implements validation splits"):
-        split_data(segments, 2, split='walk-forward')
-    with pytest.raises(NotImplementedError, match="only implements validation splits"):
-        split_data(segments, 2, validate=0, test=0, split='walk-forward')
+        split_data(segments, partitions=3, split='walk-forward')
     with pytest.raises(ValueError, match="too short for 10 windows"):
-        split_data(np.array([[0, 10]]), 10, validate=1, test=0, split='walk-forward')
-    with pytest.raises(ValueError, match="need at least one window"):
-        split_data(segments, 0, validate=1, test=0, split='walk-forward')
+        split_data(np.array([[0, 10]]), partitions=11, test=0, split='walk-forward')
+    with pytest.raises(ValueError, match="need at least 2 partitions"):
+        split_data(segments, partitions=1, test=0, split='walk-forward')
 
 
 def test_split_data_time():
     "split='time': equal sample counts, cut at segment boundaries"
     segments = np.array([[0, 100], [100, 200]])
-    splits = split_data(segments, 3, validate=1, test=0, split='time')
+    splits = split_data(segments, partitions=3, validate=1, test=0, split='time')
     assert splits.split == 'time'
     assert len(splits.splits) == 3
     assert_array_equal(splits.split_segments, [[0, 67], [67, 100], [100, 133], [133, 200]])
@@ -445,74 +455,83 @@ def test_split_data_time():
     assert_array_equal(splits.splits[2].reserved, [[133, 200]])
     assert_array_equal(splits.splits[2].train, [[0, 100], [100, 133]])
     # a split point on a segment boundary is not a soft split
-    splits = split_data(np.array([[0, 100], [100, 300]]), 3, validate=1, test=0, split='time')
+    splits = split_data(np.array([[0, 100], [100, 300]]), partitions=3, validate=1, test=0, split='time')
     assert_array_equal(splits.split_segments, [[0, 100], [100, 200], [200, 300]])
     assert_array_equal(splits.splits[1].reserved, [[100, 200]])
     assert_array_equal(splits.splits[1].train, [[0, 100], [200, 300]])
     assert_array_equal(splits.splits[0].train, [[100, 300]])
     # with more segments than partitions: contiguous blocks of segments
     segments = np.array([[i * 10, (i + 1) * 10] for i in range(6)])
-    splits = split_data(segments, 3, validate=1, test=0, split='time')
+    splits = split_data(segments, partitions=3, validate=1, test=0, split='time')
     assert_array_equal(splits.splits[0].reserved, [[0, 10], [10, 20]])
     # default for continuous data
-    assert split_data(np.array([[0, 100]]), 3).split == 'time'
+    assert split_data(np.array([[0, 100]]), partitions=3).split == 'time'
     # min_section: span boundaries close to a segment boundary snap to the segment boundary
     segments = np.array([[0, 95], [95, 300]])
-    assert_array_equal(split_data(segments, 3, test=0, split='time').split_segments, [[0, 95], [95, 100], [100, 200], [200, 300]])
-    splits = split_data(segments, 3, test=0, split='time', min_section=15)
+    assert_array_equal(split_data(segments, partitions=3, test=0, split='time').split_segments, [[0, 95], [95, 100], [100, 200], [200, 300]])
+    splits = split_data(segments, partitions=3, test=0, split='time', min_section=15, tstep=1)
     assert_array_equal(splits.split_segments, [[0, 95], [95, 200], [200, 300]])
+    assert splits.min_section_arg == 15
+    assert splits.tstep == 1
+    assert 'min_section=15' in repr(splits)
+    # min_section is in seconds, and defaults to 15 s for data with time axis
+    assert_array_equal(split_data(segments, partitions=3, test=0, split='time', min_section=0.15, tstep=0.01).split_segments, [[0, 95], [95, 200], [200, 300]])
+    assert_array_equal(split_data(segments, partitions=3, test=0, split='time', min_section=0.04, tstep=0.01).split_segments, [[0, 95], [95, 100], [100, 200], [200, 300]])
+    assert_array_equal(split_data(segments, partitions=3, test=0, split='time', tstep=1).split_segments, [[0, 95], [95, 200], [200, 300]])
+    with pytest.raises(ValueError, match="requires tstep"):
+        split_data(segments, partitions=3, test=0, split='time', min_section=15)
     assert_array_equal(splits.splits[0].reserved, [[0, 95]])
     assert_array_equal(splits.splits[1].reserved, [[95, 200]])
     assert_array_equal(splits.splits[1].train, [[0, 95], [200, 300]])
     # both pieces would be too short: snap to the closer boundary
-    splits = split_data(np.array([[0, 2050], [2050, 3550], [3550, 6550], [6550, 9450]]), 3, test=0, split='time', min_section=1500)
+    splits = split_data(np.array([[0, 2050], [2050, 3550], [3550, 6550], [6550, 9450]]), partitions=3, test=0, split='time', min_section=1500, tstep=1)
     assert_array_equal(splits.split_segments, [[0, 2050], [2050, 3550], [3550, 6550], [6550, 9450]])
     assert_array_equal(splits.splits[0].reserved, [[0, 2050], [2050, 3550]])
     # short segments are never cut
     segments = np.array([[i * 10, (i + 1) * 10] for i in range(7)])
-    splits = split_data(segments, 3, test=0, split='time', min_section=15)
+    splits = split_data(segments, partitions=3, test=0, split='time', min_section=15, tstep=1)
     assert_array_equal(splits.split_segments, segments)
     assert_array_equal(splits.splits[1].reserved, [[20, 30], [30, 40], [40, 50]])
     # the data edges are not segment boundaries to snap to
-    splits = split_data(np.array([[0, 10], [10, 100]]), 3, test=0, split='time', min_section=15)
+    splits = split_data(np.array([[0, 10], [10, 100]]), partitions=3, test=0, split='time', min_section=15, tstep=1)
     assert_array_equal(splits.split_segments, [[0, 10], [10, 33], [33, 67], [67, 100]])
     with pytest.raises(ValueError, match="too short to form 5 partitions"):
-        split_data(segments[:3], 5, test=0, split='time', min_section=15)
+        split_data(segments[:3], partitions=5, test=0, split='time', min_section=15, tstep=1)
     # a span boundary that can not be moved (the edges of the data are not boundaries to move to) must not leave a short piece
     with pytest.raises(ValueError, match="too short to form 3 partitions"):  # last segment would be cut into pieces of 1467 and 1333
-        split_data(np.array([[0, 1200], [1200, 4000]]), 3, test=0, split='time', min_section=1500)
+        split_data(np.array([[0, 1200], [1200, 4000]]), partitions=3, test=0, split='time', min_section=1500, tstep=1)
     with pytest.raises(ValueError, match="too short to form 4 partitions"):  # first piece of 1250
-        split_data(np.array([[0, 4500], [4500, 5000]]), 4, test=0, split='time', min_section=1500)
+        split_data(np.array([[0, 4500], [4500, 5000]]), partitions=4, test=0, split='time', min_section=1500, tstep=1)
     # more partitions than samples
     with pytest.raises(ValueError, match="not enough samples"):
-        split_data(np.array([[0, 2], [2, 4]]), 5, validate=1, test=0, split='time')
+        split_data(np.array([[0, 2], [2, 4]]), partitions=5, validate=1, test=0, split='time')
     with pytest.raises(ValueError, match="not enough samples"):  # continuous data
-        split_data(np.array([[0, 3]]), 5, validate=1, test=0)
+        split_data(np.array([[0, 3]]), partitions=5, validate=1, test=0)
 
 
 def test_split_data_time_too_many_partitions():
     "A span boundary at the end of the data (more partitions than samples)"
     with pytest.raises(ValueError, match="too short"):
-        split_data(np.array([[0, 10], [10, 20]]), 50, test=0, split='time', min_section=2)
+        split_data(np.array([[0, 10], [10, 20]]), partitions=50, test=0, split='time', min_section=2, tstep=1)
 
 
 def test_split_data_cases():
     "split='cases' (default with segments) never cuts segments"
     segments = np.array([[0, 100], [100, 200]])
     with pytest.raises(ValueError, match="only 2 cases"):
-        split_data(segments, 3, validate=1, test=0)
+        split_data(segments, partitions=3, validate=1, test=0)
     with pytest.raises(ValueError, match="only 2 cases"):  # a multiple of the number of segments
-        split_data(segments, 4, validate=1, test=0)
+        split_data(segments, partitions=4, validate=1, test=0)
     with pytest.raises(TypeError, match="model can only be used"):
-        split_data(segments, 2, Factor('ab'), validate=1, test=0, split='time')
+        split_data(segments, partitions=2, model=Factor('ab'), validate=1, test=0, split='time')
     with pytest.raises(ValueError, match="split='trials'"):
-        split_data(segments, 2, test=0, split='trials')
+        split_data(segments, partitions=2, test=0, split='trials')
 
 
 def test_split_data_no_validate_no_test():
     "Without validation and test set, a single split uses all data for training"
     segments = np.array([[0, 100], [100, 200]])
-    splits = split_data(segments, 3, validate=0, test=0, split='time')
+    splits = split_data(segments, partitions=3, validate=0, test=0, split='time')
     assert len(splits.splits) == 1
     split = splits.splits[0]
     assert_array_equal(split.train, [[0, 100], [100, 200]])  # the segment boundary is hard
@@ -524,8 +543,8 @@ def test_split_data_no_validate_no_test():
 def test_split_data_within_cases():
     "Each segment is cut into ``partitions`` pieces, and partition i pools the i-th piece of every segment"
     segments = np.array([[0, 100], [100, 160]])
-    splits = split_data(segments, 3, validate=1, test=0, split='within_cases')
-    assert splits.split == 'within_cases'
+    splits = split_data(segments, partitions=3, validate=1, test=0, split='within-cases')
+    assert splits.split == 'within-cases'
     assert splits.n_partitions == 3
     assert_array_equal(splits.split_segments, [[0, 33], [33, 67], [67, 100], [100, 120], [120, 140], [140, 160]])
     assert_array_equal(splits.splits[0].reserved, [[0, 33], [100, 120]])
@@ -534,19 +553,19 @@ def test_split_data_within_cases():
     assert_array_equal(splits.splits[1].train, [[0, 33], [67, 100], [100, 120], [140, 160]])
     assert_array_equal(splits.splits[2].reserved, [[67, 100], [140, 160]])
     assert_array_equal(splits.splits[2].train, [[0, 67], [100, 140]])
-    assert "split='within_cases'" in repr(splits)
-    assert splits != split_data(segments, 3, validate=1, test=0, split='time')
+    assert "split='within-cases'" in repr(splits)
+    assert splits != split_data(segments, partitions=3, validate=1, test=0, split='time')
     assert splits == pickle.loads(pickle.dumps(splits))
     # default number of partitions
-    assert split_data(segments, split='within_cases').n_partitions == 5
+    assert split_data(segments, split='within-cases').n_partitions == 5
     # continuous data is unaffected
-    assert split_data(segments[:1], 3, split='within_cases').splits == split_data(segments[:1], 3).splits
+    assert split_data(segments[:1], partitions=3, split='within-cases').splits == split_data(segments[:1], partitions=3).splits
     # also with enough segments for whole-segment partitions
     segments = np.array([[i * 10, (i + 1) * 10] for i in range(6)])
-    splits = split_data(segments, 2, validate=1, test=0, split='within_cases')
+    splits = split_data(segments, partitions=2, validate=1, test=0, split='within-cases')
     assert_array_equal(splits.splits[0].reserved, [[0, 5], [10, 15], [20, 25], [30, 35], [40, 45], [50, 55]])
     with pytest.raises(ValueError, match="not enough samples"):
-        split_data(np.array([[0, 2], [2, 4]]), 3, validate=1, test=0, split='within_cases')
+        split_data(np.array([[0, 2], [2, 4]]), partitions=3, validate=1, test=0, split='within-cases')
 
 
 def test_splits_legacy_format():
@@ -563,14 +582,14 @@ def test_splits_legacy_format():
 
     segments = np.array([[0, 100], [100, 200]])
     # with test set
-    splits = split_data(segments, 4, split='time')
+    splits = split_data(segments, partitions=4, split='time')
     states = [{'train': split.train, 'validate': split.reserved, 'test': test_split.reserved, 'i_test': test_split.i_reserved, 'i_validate': split.i_reserved} for test_split in splits.splits for split in test_split.splits]
     assert len(states) == 12
     assert legacy_splits(splits, [flat_split(state) for state in states]) == splits
     # before BoostingResult version 16, i_validate was not stored
     assert legacy_splits(splits, [flat_split({k: v for k, v in state.items() if k != 'i_validate'}) for state in states]) == splits
     # without test set
-    splits = split_data(segments, 4, test=0, split='time')
+    splits = split_data(segments, partitions=4, test=0, split='time')
     states = [{'train': split.train, 'validate': split.reserved, 'test': None, 'i_test': 0, 'i_validate': split.i_reserved} for split in splits.splits]
     assert legacy_splits(splits, [flat_split(state) for state in states]) == splits
     assert legacy_splits(splits, [flat_split({k: v for k, v in state.items() if k != 'i_validate'}) for state in states]) == splits
@@ -578,17 +597,17 @@ def test_splits_legacy_format():
 
 def test_splits_eq():
     segments = np.array([[0, 100]])
-    splits = split_data(segments, 5)
-    assert splits == split_data(segments, 5)
-    assert splits != split_data(segments, 4)
+    splits = split_data(segments, partitions=5)
+    assert splits == split_data(segments, partitions=5)
+    assert splits != split_data(segments, partitions=4)
     assert splits.splits[0] == pickle.loads(pickle.dumps(splits.splits[0]))
     assert splits.splits[0] != splits.splits[1]
     # with model
     segments = np.array([[i * 10, (i + 1) * 10] for i in range(6)])
     model = Factor('ab', repeat=3)
-    splits = split_data(segments, 3, model)
-    assert splits == split_data(segments, 3, model)
+    splits = split_data(segments, partitions=3, model=model)
+    assert splits == split_data(segments, partitions=3, model=model)
     assert splits == pickle.loads(pickle.dumps(splits))
-    assert splits != split_data(segments, 3, Factor('ab', tile=3))
-    assert splits != split_data(segments, 3)
-    assert split_data(segments, 3) != splits
+    assert splits != split_data(segments, partitions=3, model=Factor('ab', tile=3))
+    assert splits != split_data(segments, partitions=3)
+    assert split_data(segments, partitions=3) != splits

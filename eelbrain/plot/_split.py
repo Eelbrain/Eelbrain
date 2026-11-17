@@ -8,7 +8,7 @@ from matplotlib.patches import Rectangle
 from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator
 import numpy as np
 
-from .._trf.shared import TIME_SPLIT_MIN_SECTION, Splits, split_data
+from .._trf.shared import Splits, split_data
 from .._data_obj import Dataset, CategorialArg, NDVar, NDVarArg, asndvar
 from ._base import EelFigure, Layout, LegendMixin, LegendArg
 from ._styles import colors_for_oneway
@@ -43,8 +43,9 @@ class DataSplit(EelFigure, LegendMixin):
             X-axis label (default ``'Time [s]'`` with ``tstep``, otherwise
             ``'Sample'``).
         tstep
-            Time step between samples; if specified, the x-axis shows time in
-            seconds instead of sample indices.
+            Time step between samples (default :attr:`Splits.tstep`); with a
+            time step, the x-axis shows time in seconds instead of sample
+            indices.
         center_xticks
             Label each sample at its center instead of placing ticks at sample
             boundaries (for previews in which each sample stands for one
@@ -67,6 +68,8 @@ class DataSplit(EelFigure, LegendMixin):
         labels = {'train': 'Training', 'validate': 'Validation', 'test': 'Testing', 'unused': 'Unused'}
         if colors is None:
             colors = {**colors_for_oneway(roles, unambiguous=[6, 3, 5]), 'unused': '0.85'}
+        if tstep is None:
+            tstep = splits.tstep
         if tstep is None:
             scale = 1
             if xlabel is None:
@@ -131,16 +134,17 @@ class DataSplit(EelFigure, LegendMixin):
 
 def preview_partitions(
     cases: int | Sequence[float] | NDVarArg = 0,
+    *,
     partitions: int = None,
-    model: CategorialArg = None,
-    validate: float = 1,
+    split: Literal['cases', 'time', 'within-cases', 'walk-forward'] = None,
+    validate: float = None,
     test: int = 1,
-    split: Literal['cases', 'time', 'within_cases', 'walk-forward'] = None,
+    model: CategorialArg = None,
     min_section: float = None,
     data: Dataset = None,
     **kwargs,
 ) -> DataSplit:
-    """Preview how data will be partitioned for the boosting function
+    """Preview how data will be partitioned for cross-validation
 
     Parameters
     ----------
@@ -149,21 +153,35 @@ def preview_partitions(
         :class:`NDVar` data, as integer describing the number of trials
         (the default assumes continuous data), or as a sequence of numbers
         describing the duration (in seconds) of each trial, which allows
-        trials of different lengths.
+        trials of different lengths. Trials specified by their number have no
+        duration, so ``min_section`` does not apply to them.
+    partitions
+        Number of partitions to divide the data into.
+    split
+        How to form partitions.
+    validate
+        Size of each validation set.
+    test
+        Number of partitions in each test set (0 or 1).
+    model
+        Sample partitions evenly from the cells of this model.
     min_section
-        With ``split='time'``, minimum duration (in seconds) of the pieces left
-        when a trial is cut (see :func:`split_data`). The default is the
-        :func:`~eelbrain.boosting` default of 15 s. Only applies when the
-        duration of trials is known (:class:`NDVar` data or trial durations);
-        trials specified by their number have no duration and are cut at every
-        span boundary.
+        Minimum duration (in seconds) of the pieces left when a trial is cut.
+    data
+        Dataset in which to evaluate ``cases`` and ``model`` if they are
+        strings.
     ...
-        For a description of the splitting parameters see :func:`~eelbrain.boosting`.
         For plotting parameters see :class:`DataSplit`.
 
     See Also
     --------
     :ref:`exa-data_split` example
+
+    Notes
+    -----
+    See :func:`~eelbrain.split_data` for a full description of the
+    cross-validation parameters, which are the same as in
+    :func:`~eelbrain.boosting`.
     """
     tstep = None  # trials specified by number: no time information
     center_xticks = False  # each sample stands for one partition or trial
@@ -178,7 +196,7 @@ def preview_partitions(
             ns = [partitions]
             xlabel = 'Partition'
             center_xticks = True
-        elif split in ('time', 'within_cases'):
+        elif split in ('time', 'within-cases'):
             # cases need enough samples to be cut into partitions
             ns = [partitions or 5] * cases
             xlabel = 'Sample'
@@ -188,6 +206,7 @@ def preview_partitions(
             ns = [1] * cases
             xlabel = 'Case'
             center_xticks = True
+        kwargs.setdefault('xlabel', xlabel)
     elif isinstance(cases, (str, NDVar)):
         y = asndvar(cases, data=data)
         n_cases = len(y) if y.has_case else 1
@@ -196,14 +215,7 @@ def preview_partitions(
     else:
         tstep = 0.01  # resolution for trials specified by duration
         ns = [int(round(duration / tstep)) for duration in cases]
-    if tstep is None:
-        min_section = 0
-        kwargs.setdefault('xlabel', xlabel)
-    else:
-        if min_section is None:
-            min_section = TIME_SPLIT_MIN_SECTION
-        min_section = int(round(min_section / tstep))
     index = np.cumsum([0] + ns)
     segments = np.hstack([index[:-1, None], index[1:, None]])
-    splits = split_data(segments, partitions, model, data, validate, test, split, min_section)
-    return DataSplit(splits, tstep=tstep, center_xticks=center_xticks, **kwargs)
+    splits = split_data(segments, tstep=tstep, partitions=partitions, split=split, validate=validate, test=test, model=model, min_section=min_section, data=data)
+    return DataSplit(splits, center_xticks=center_xticks, **kwargs)

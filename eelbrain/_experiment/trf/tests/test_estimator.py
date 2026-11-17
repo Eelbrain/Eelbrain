@@ -24,6 +24,11 @@ def test_boosting():
     with pytest.raises(ValueError):
         Boosting(partitions=2)
     assert Boosting(partitions=2, cv=False).partitions == 2
+    assert (est.partitions, est.split) == (5, 'time')
+    # legacy: negative partitions concatenated the cases
+    assert Boosting(partitions=-5) == est
+    # whole cases were the only scheme for positive partitions before the split parameter
+    assert 'split' not in Boosting(split='cases')._as_dict()
     # no fit metrics without cross-validation
     assert Boosting(cv=False).metric_keys == ()
     assert repr(Boosting(basis=0.1, backward=True)) == "Boosting(basis=0.1, backward=True)"

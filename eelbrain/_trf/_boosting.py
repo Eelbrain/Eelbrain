@@ -271,8 +271,6 @@ class BoostingResult(PickleableDataClass):
     def __post_init__(self):
         if self.splits is None:
             self.partitions = None
-        elif self.splits.split == 'walk-forward':
-            self.partitions = self.splits.n_partitions - 1  # number of windows (see split_data)
         else:
             self.partitions = self.splits.n_partitions
 
@@ -340,27 +338,16 @@ class BoostingResult(PickleableDataClass):
                 continue
             elif name == 'partition_results':
                 value = bool(self.partition_results)
-            elif name == 'partitions':
-                value = None if self.splits is None else self.splits.partitions_arg
+            elif name in ('partitions', 'split', 'validate', 'min_section'):
+                value = None if self.splits is None else getattr(self.splits, f'{name}_arg')
+                if isinstance(value, str):
+                    value = repr(value)
             elif name == 'model':
                 if self.splits is None or self.splits.model is None:
                     continue
                 value = dataobj_repr(self.splits.model)
-            elif name == 'validate':
-                if self.splits is None:
-                    value = None
-                elif self.splits.validate_proportion in (None, 0.05):  # 0.05 is the default for split='walk-forward'
-                    value = self.splits.n_validate
-                else:
-                    value = self.splits.validate_proportion
             elif name == 'test':
                 value = None if self.splits is None else self.splits.n_test
-            elif name == 'split':
-                if self.splits is None or self.splits.split is None:  # split is None for results from before the parameter was added
-                    continue
-                elif self.splits.split == ('cases' if len(self.splits.segments) > 1 else 'time'):
-                    continue
-                value = repr(self.splits.split)
             else:
                 value = getattr(self, name)
             if value is not None and value != param.default:
@@ -1179,11 +1166,13 @@ def boosting(
         error: Literal['l1', 'l2'] = 'l2',
         basis: float = 0,
         basis_window: str = 'hamming',
-        partitions: int = None,  # Number of partitionings for cross-validation
+        *,
+        partitions: int = None,
+        split: Literal['cases', 'time', 'within-cases', 'walk-forward'] = None,
+        validate: float = None,
+        test: int = 1,
         model: CategorialArg = None,
-        validate: float = 1,  # Number of segments in validation set
-        test: int = 1,  # Number of segments in test set
-        split: Literal['cases', 'time', 'within_cases', 'walk-forward'] = None,
+        min_section: float = None,
         data: Dataset = None,
         selective_stopping: int = 0,
         partition_results: bool = False,
@@ -1239,34 +1228,21 @@ def boosting(
         Basis window (see :func:`scipy.signal.get_window` for options; default
         is ``'hamming'``).
     partitions
-        Divide the data into this many ``partitions`` (*k*) for
-        cross-validation. With ``test=1``, each partition is held out in turn
-        as test set, and the remaining data is divided again, holding out each
-        of the remaining partitions in turn for validation (early stopping);
-        each combination is one boosting run. This requires at least 3
-        partitions and results in ``k * (k - 1)`` boosting runs (instead of
-        ``k`` runs with ``test=0``, each holding out one partition for
-        validation). See :class:`Splits` for the resulting structure.
-        If data is continuous, data are divided into contiguous segments of
-        equal length (default 5).
-        If data has cases, how partitions are formed depends on ``split``.
-        By default, cases are divided with ``[::partitions]`` slices
-        (default ``n_cases``, which is only possible with 3 to 10 cases;
-        if ``model`` is specified, all cells need to have the same number of
-        cases, and ``n_cases`` is the number of cases per cell).
-        See :ref:`exa-data_split` example.
-    model
-        If data has cases, divide cases into different categories (division
-        for crossvalidation is done separately for each cell; only with
-        ``split='cases'``).
-    data
-        If provided, other parameters can be specified as string for items in
-        ``ds``.
+        Number of partitions (*k*) for cross-validation (default 5 for
+        continuous data, the number of cases for data with 3 to 10 cases).
+        The cross-validation parameters (``partitions``, ``split``,
+        ``validate``, ``test``, ``model`` and ``min_section``) are described
+        in :func:`split_data`, and illustrated in the :ref:`exa-data_split`
+        example.
+    split
+        How to form partitions: ``'cases'`` (whole cases; default for data
+        with cases), ``'time'`` (contiguous spans of time; default for
+        continuous data), ``'within-cases'`` (one piece of every case) or
+        ``'walk-forward'`` (training data always precedes the validation
+        data). See :func:`split_data`.
     validate
-        Number of partitions held out for validation (early stopping) in each
-        boosting run (currently has to be 1). With ``split='walk-forward'``, a
-        value between 0 and 1 sets the length of each validation window as
-        proportion of the case (the default, 1, corresponds to 0.05).
+        Size of the validation set, which is used for early stopping in each
+        boosting run (default 1 partition; see :func:`split_data`).
     test
         By default (``test=1``), the boosting algorithm performs *k*-fold
         cross-validation (with *k* = ``partitions``): Each partition is used as
@@ -1291,25 +1267,15 @@ def boosting(
         interest, or when the model will be evaluated on independent data
         (e.g., using :func:`convolve`). To inspect the fit of the individual
         boosting runs, use ``partition_results=True``.
-    split
-        If data has cases, how to form partitions (see :func:`split_data` and
-        the :ref:`exa-data_split` example):
-
-        - ``'cases'`` (default): each partition consists of whole cases, so
-          that case boundaries are always partition boundaries. Requires at
-          least as many cases as partitions.
-        - ``'time'``: cut the concatenated cases into ``partitions`` contiguous
-          spans of equal length (default 5), regardless of case boundaries.
-          A span boundary that falls within 15 s of a case boundary is moved
-          to the case boundary, so that cases shorter than 30 s are never cut.
-        - ``'within_cases'``: cut each case into ``partitions`` pieces of
-          equal length, and form each partition from one piece of every case
-          (default 5 partitions), so that each partition samples every case.
-        - ``'walk-forward'``: hold out the last ``partitions`` windows of every
-          case (default 3) one at a time as validation set, each with only the
-          data preceding it as training set. The length of the windows is set
-          with ``validate`` (they have to be at least as long as the kernel).
-          Requires ``test=0`` and cases of equal length (or continuous data).
+    model
+        With ``split='cases'``, sample partitions evenly from the cells of
+        this model (see :func:`split_data`).
+    min_section
+        With ``split='time'``, minimum duration (in seconds) of the pieces
+        left when a case is cut (default 15 s; see :func:`split_data`).
+    data
+        If provided, other parameters can be specified as string for items in
+        ``data``.
     selective_stopping
         By default, the boosting algorithm stops when the validation error
         stops decreasing. With ``selective_stopping=True``, boosting continues but
@@ -1327,6 +1293,7 @@ def boosting(
 
     See Also
     --------
+    split_data : description of the cross-validation parameters
     plot.preview_partitions : preview data partitions for cross-validation
 
     Notes
@@ -1369,7 +1336,7 @@ def boosting(
     dec_data.apply_basis(basis, basis_window)
     if scale_data:
         dec_data.normalize(error)
-    dec_data.initialize_cross_validation(partitions, model, data, validate, test, split)
+    dec_data.initialize_cross_validation(partitions, split=split, validate=validate, test=test, model=model, min_section=min_section, data=data)
 
     fit = Boosting(dec_data)
     fit.fit(tstart, tstop, selective_stopping, error, delta, mindelta)
