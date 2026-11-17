@@ -570,6 +570,11 @@ def test_split_data_within_cases():
     assert_array_equal(splits.splits[0].reserved, [[0, 5], [10, 15], [20, 25], [30, 35], [40, 45], [50, 55]])
     with pytest.raises(ValueError, match="not enough samples"):
         split_data(np.array([[0, 2], [2, 4]]), partitions=3, validate=1, test=0, split='within-cases')
+    # a single short segment would yield empty pieces, and cuts on its (hard) boundaries
+    with pytest.raises(ValueError, match=r"shortest segment \(3\)"):
+        split_data(np.array([[0, 100], [100, 103], [103, 203]]), partitions=5, test=0, split='within-cases')
+    splits = split_data(np.array([[0, 100], [100, 105], [105, 205]]), partitions=5, test=0, split='within-cases')
+    assert_array_equal(splits.splits[0].train, [[20, 100], [101, 105], [125, 205]])
 
 
 def test_splits_legacy_format():

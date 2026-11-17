@@ -530,6 +530,9 @@ def split_data(
             partitions = 4 if split == 'walk-forward' else 5
         if split == 'within-cases':
             # cut every segment into pieces of equal length
+            shortest_n_times = np.diff(segments, axis=1).min()
+            if shortest_n_times < partitions:
+                raise ValueError(f"{partitions=} with {split=}: not enough samples in the shortest segment ({shortest_n_times}) to cut it into {partitions} pieces")
             segment_cuts = np.vstack([np.round(np.linspace(start, stop, partitions + 1)) for start, stop in segments]).astype(np.int64)
         elif split == 'walk-forward':
             # partition 0 is the beginning of every segment, the remaining partitions are windows at its end
