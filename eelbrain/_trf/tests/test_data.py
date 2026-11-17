@@ -490,6 +490,12 @@ def test_split_data_time():
         split_data(np.array([[0, 3]]), 5, validate=1, test=0)
 
 
+def test_split_data_time_too_many_partitions():
+    "A span boundary at the end of the data (more partitions than samples)"
+    with pytest.raises(ValueError, match="too short"):
+        split_data(np.array([[0, 10], [10, 20]]), 50, test=0, split='time', min_section=2)
+
+
 def test_split_data_cases():
     "split='cases' (default with segments) never cuts segments"
     segments = np.array([[0, 100], [100, 200]])

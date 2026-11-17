@@ -484,7 +484,7 @@ def split_data(
             if min_section and len(segments) > 1:
                 # move span boundaries that would leave a piece shorter than min_section to the segment boundary
                 for i in range(1, partitions):
-                    i_segment = np.searchsorted(segments[:, 1], split_points[i], side='right')
+                    i_segment = np.searchsorted(segments[:, 0], split_points[i], side='right') - 1
                     start, stop = segments[i_segment]
                     to_start = split_points[i] - start
                     to_stop = stop - split_points[i]
