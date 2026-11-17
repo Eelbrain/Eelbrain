@@ -14,7 +14,7 @@ import pytest
 from pytest import approx
 import scipy.io
 import scipy.stats
-from eelbrain import datasets, boosting, combine, concatenate, convolve, correlation_coefficient, epoch_impulse_predictor, BoostingResult, ExecutionContext, NDVar, UTS, Scalar
+from eelbrain import datasets, boosting, combine, concatenate, convolve, correlation_coefficient, epoch_impulse_predictor, BoostingResult, Datalist, ExecutionContext, NDVar, UTS, Scalar
 
 from eelbrain.testing import assert_dataobj_equal
 from eelbrain._trf._boosting import Boosting, DeconvolutionData, convolve_1d
@@ -262,6 +262,10 @@ def test_boosting_dtype():
     res_32 = boosting([yi.astype(np.float32) for yi in y], [[xi.astype(np.float32) for xi in x]], 0, 0.1, partitions=3)
     assert_allclose(res_32.h[0].x, res.h[0].x, atol=1e-5)
     assert x[0].x.dtype == int
+    # trials in a Datalist without name
+    res = boosting(Datalist(y), Datalist(x), 0, 0.1, partitions=3)
+    assert res.h.name == res.x == 'x'
+    assert res.y == 'y'
     # continuous data
     res_32 = boosting(y[1].astype(np.float32), x[1].astype(np.float32), 0, 0.1)
     assert_allclose(res_32.h.x, boosting(y[1], x[1], 0, 0.1).h.x, atol=1e-5)

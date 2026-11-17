@@ -851,7 +851,8 @@ class SegmentedArray:
             dims = v0.get_dims(dimnames[1:-1] if case_to_segments else dimnames[:-1])
             n_rows = reduce(mul, map(len, dims), 1)
             start = blocks[-1].index.stop if blocks else 0
-            blocks.append(RowBlock(v.name, dims, slice(start, start + n_rows), _info.copy(v0.info)))
+            v_name = v0.name if v.name is None else v.name  # a list of trials without name is named after the first trial
+            blocks.append(RowBlock(v_name, dims, slice(start, start + n_rows), _info.copy(v0.info)))
             arrays.append(_ndvar_segments(v, dimnames, n_rows, case_to_segments))
         if len(arrays) == 1:
             segments, flat, owned = arrays[0]
