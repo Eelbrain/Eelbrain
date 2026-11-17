@@ -36,7 +36,7 @@ p = plot.preview_partitions(legend='upper center')
 ###############################################################################
 # Continuous experiments with several trials
 # ------------------------------------------
-# Experiments with continuous stimuli, such as stories, often consist of a few long trials, which can differ in length.
+# Experiments with continuous stimuli, such as audiobooks, often consist of a few long trials, which can differ in length.
 # For data with trials, the ``split`` parameter determines how partitions are formed.
 # To preview partitions for a specific experiment, ``cases`` can be a list specifying the duration of each trial in seconds:
 
@@ -48,12 +48,12 @@ trials = [180, 240, 204, 192, 228]
 p = plot.preview_partitions(trials, test=0, legend='upper center')
 
 ###############################################################################
-# With fewer partitions than trials, trials are assigned to partitions in turn (partition *i* receives trials ``[i::partitions]``). When the number of trials is not a multiple of the number of partitions, the partitions then differ in the number of trials, and thus substantially in size. This is a problem when the same setting has to apply to all participants of an experiment, as in a pipeline: when one participant is missing one of five trials, ``partitions=5`` is not possible with four whole trials, and ``partitions=3`` holds out twice as much data in one split as in the others. Even with the number of trials as partitions (the default), a participant with a missing trial is analyzed with a different cross-validation scheme (fewer runs, less training data per run) than the other participants:
+# With fewer partitions than trials, trials are assigned to partitions in turn (partition *i* receives trials ``[i::partitions]``). When the number of trials is not a multiple of the number of partitions, the partitions then differ in the number of trials:
 
-p = plot.preview_partitions(trials[:4], partitions=3, test=0, legend=False)
+p = plot.preview_partitions(trials, partitions=3, test=0, legend=False)
 
 ###############################################################################
-# With ``split='time'``, the partitions are instead contiguous spans of (approximately) equal length along the concatenated time axis. This allows using fewer partitions than trials, which is useful when the experiment has many trials, and more partitions than trials, which is necessary when the experiment has only 1 or 2 trials. A trial that straddles a partition boundary is cut into pieces. To avoid very short pieces, a partition boundary that falls within 15 s of a trial boundary is moved to that trial boundary. This limit can be changed with the ``min_section`` parameter (in seconds). In the example, two of the four partition boundaries fall within 15 s of a trial boundary and are moved there, so that the third partition consists of exactly one trial:
+# With ``split='time'``, the partitions are instead contiguous spans of (approximately) equal length along the concatenated time axis. A trial that straddles a partition boundary is cut into pieces. To avoid very short pieces, a partition boundary that falls within 15 s of a trial boundary is moved to that trial boundary. This limit can be changed with the ``min_section`` parameter (in seconds). In the example, two of the four partition boundaries fall within 15 s of a trial boundary and are moved there, so that the third partition consists of exactly one trial:
 
 p = plot.preview_partitions(trials, partitions=5, test=0, split='time', legend=False)
 
@@ -81,9 +81,9 @@ p = plot.preview_partitions(20, partitions=5, test=0, legend=False)
 p = plot.preview_partitions(20, partitions=3, test=0, legend=False)
 
 ###############################################################################
-# When trials belong to different conditions, the ``model`` parameter makes sure that each partition samples each condition evenly, by assigning trials to partitions separately within each condition. Here, trials alternate between two conditions in blocks of three:
+# When trials belong to different conditions, the ``model`` parameter makes sure that each partition samples each condition evenly, by assigning trials to partitions separately within each condition:
 
-p = plot.preview_partitions(12, partitions=3, test=0, model=Factor('aaabbb', tile=2), legend=False)
+p = plot.preview_partitions(12, partitions=3, test=0, model=Factor('AABB', tile=3), legend='fig')
 
 ###############################################################################
 # With ``split='time'``, trials that are shorter than 30 s are never cut (see above), so that each partition consists of a contiguous block of trials. In this example, trials are 10 s long:
