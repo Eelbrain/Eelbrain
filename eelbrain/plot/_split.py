@@ -33,16 +33,14 @@ class DataSplit(EelFigure, LegendMixin):
         'test', 'unused'``, as well as the cells of :attr:`Splits.model`; a
         cell with one of those names uses the same entry).
     xlabel
-        X-axis label (default ``'Time [s]'`` with ``tstep``, otherwise
-        ``'Sample'``).
+        X-axis label (default ``'Time [s]'`` with ``tstep``; otherwise
+        ``'Case'`` for data with several segments and ``'Sample'`` for
+        continuous data).
     tstep
         Time step between samples (default :attr:`Splits.tstep`); with a
-        time step, the x-axis shows time in seconds instead of sample
-        indices.
-    center_xticks
-        Label each sample at its center instead of placing ticks at sample
-        boundaries (for previews in which each sample stands for one
-        partition or trial).
+        time step, the x-axis shows time in seconds. Without one, it labels
+        each data segment (case) at its center, or shows sample indices for
+        continuous data.
     ...
         Also accepts :ref:`general-layout-parameters`.
 
@@ -67,7 +65,6 @@ class DataSplit(EelFigure, LegendMixin):
             colors: dict = None,
             xlabel: str = None,
             tstep: float = None,
-            center_xticks: bool = False,
             **kwargs,
     ):
         roles = ['train', 'validate', 'test']
@@ -82,10 +79,11 @@ class DataSplit(EelFigure, LegendMixin):
         colors = {**colors_for_oneway(roles, unambiguous=[6, 3, 5]), 'unused': '0.85', **(colors or {})}
         if tstep is None:
             tstep = splits.tstep
+        label_cases = tstep is None and len(splits.segments) > 1
         if tstep is None:
             scale = 1
             if xlabel is None:
-                xlabel = 'Sample'
+                xlabel = 'Case' if label_cases else 'Sample'
         else:
             scale = tstep
             if xlabel is None:
@@ -143,9 +141,10 @@ class DataSplit(EelFigure, LegendMixin):
         if xlabel:
             ax.set_xlabel(xlabel)
         ax.set_xlim(x_start * scale, x_stop * scale)
-        if center_xticks:
-            ax.xaxis.set_major_locator(FixedLocator(np.arange(x_start, x_stop) + 0.5, nbins=10))
-            ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: str(int(x))))
+        if label_cases:
+            centers = splits.segments.mean(1)
+            ax.xaxis.set_major_locator(FixedLocator(centers, nbins=10))
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: str(np.searchsorted(centers, x))))
         LegendMixin.__init__(self, legend, handles, labels)
         self._show()
 
@@ -209,27 +208,9 @@ def preview_partitions(
     :func:`~eelbrain.boosting`.
     """
     tstep = None  # trials specified by number: no time information
-    center_xticks = False  # each sample stands for one partition or trial
     if isinstance(cases, Integral):
-        n_cases = max(int(cases), 1)  # a single trial is continuous data
-        if scheme == 'walk-forward':
-            # trials need enough samples for the windows
-            ns = [100] * n_cases
-            xlabel = 'Sample'
-        elif split == 'cases' or (split is None and n_cases > 1):
-            # whole trials: one sample per trial
-            ns = [1] * n_cases
-            xlabel = 'Case'
-            center_xticks = True
-        else:
-            # trials need enough samples to be cut into partitions
-            ns = [partitions or 5] * n_cases
-            if n_cases == 1:
-                xlabel = 'Partition'
-                center_xticks = True
-            else:
-                xlabel = 'Sample'
-        kwargs.setdefault('xlabel', xlabel)
+        # a nominal number of samples per trial (a single trial is continuous data)
+        ns = [1000] * max(int(cases), 1)
     elif isinstance(cases, (str, NDVar)):
         y = asndvar(cases, data=data)
         n_cases = len(y) if y.has_case else 1
@@ -241,4 +222,4 @@ def preview_partitions(
     index = np.cumsum([0] + ns)
     segments = np.hstack([index[:-1, None], index[1:, None]])
     splits = split_data(segments, tstep=tstep, partitions=partitions, split=split, scheme=scheme, validate=validate, test=test, model=model, min_section=min_section, data=data)
-    return DataSplit(splits, center_xticks=center_xticks, **kwargs)
+    return DataSplit(splits, **kwargs)
