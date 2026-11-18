@@ -5,7 +5,7 @@
 Data partitions for cross-validation
 ====================================
 
-TRF estimation algorithms can use two different forms of cross-validation: cross-validation for optimizing regularization, and cross-validation for model evaluation. Cross-validation for model evaluation ensures that fit metrics, such as the explained variance, reflect how well the model predicts data that were not used to estimate it; fit metrics computed from the same data that were used to estimate the model would overestimate its predictive power. Both forms of cross-validation require partitioning the data into different segments. The :func:`eelbrain.plot.preview_partitions` function is for exploring the effect of different parameters on the way the data is split. When working with a :class:`~pipeline.Pipeline`, use :meth:`Pipeline.show_partitions <pipeline.Pipeline.show_partitions>` to inspect or preview partitioning for a specific dataset.
+TRF estimation algorithms can use two different forms of cross-validation: cross-validation for optimizing regularization, and cross-validation for model evaluation. Cross-validation for model evaluation ensures that fit metrics, such as the explained variance, reflect how well the model predicts data that were not used to estimate it; fit metrics computed from the same data that were used to estimate the model would overestimate its predictive power. Both forms of cross-validation require partitioning the data into different segments. The :func:`eelbrain.plot.preview_partitions` function is for exploring the effect of different parameters on the way the data is split. When working with a :class:`~pipeline.Pipeline`, use :meth:`Pipeline.show_partitions() <pipeline.Pipeline.show_partitions>` to inspect or preview partitioning for a specific dataset.
 
 .. contents:: Sections
     :local:
@@ -21,15 +21,15 @@ from eelbrain import *
 p = plot.preview_partitions(test=0, legend='upper center')
 
 ###############################################################################
-# The number of partitions can be controlled with the `partitions` parameter:
+# The number of partitions can be controlled with the ``partitions`` parameter:
 
 p = plot.preview_partitions(partitions=7, test=0, legend=False)
 p = plot.preview_partitions(partitions=10, test=0, legend=False)
 
 ###############################################################################
-# Validation and testing sets
-# ---------------------------
-# Testing the result of a model fit with cross-validation requires data that was never used during training. This is the default in the :func:`boosting` function (``test=1``): each partition is used in turn as testing set. For each testing set, the remaining partitions are used in different runs as training and validation data. The results of those runs are then averaged to predict responses in the testing data. In the plots, the runs are grouped by testing set (separated by black lines), and the y-axis labels the test partition. This nested loop means that the number of boosting runs can get large quickly when using many partitions (*k* partitions result in ``k * (k - 1)`` runs), so the default is to use five partitions:
+# Validation and test sets
+# ------------------------
+# Testing the result of a model fit with cross-validation requires data that was never used during training. This is the default in the :func:`boosting` function (``test=1``): each partition is used in turn as test set. For each test set, the remaining partitions are used in different runs as training and validation data. The results of those runs are then averaged to predict responses in the test data. In the plots, the runs are grouped by test set, and the y-axis labels the test partition. This nested loop means that the number of boosting runs can get large when using many partitions (*k* partitions result in ``k * (k - 1)`` runs), so the default is to use five partitions:
 
 p = plot.preview_partitions(legend='upper center')
 
@@ -96,11 +96,6 @@ p = plot.preview_partitions([10] * 20, test=0, legend=False)
 p = plot.preview_partitions(20, partitions=5, split='cases', legend=False)
 
 ###############################################################################
-# Choosing a scheme
-# -----------------
-# Partitions that consist of whole trials or contiguous periods of time test whether the model generalizes to a different period of the experiment. However, when the trials differ systematically (e.g., different conditions, learning or fatigue effects), a test partition that stems from a single trial may not represent the data as a whole. Partitions within trials (``split='within-cases'``) avoid this because every partition samples every trial, at the cost of more segment boundaries. For trial-based experiments with different conditions, the ``model`` parameter achieves the same without cutting trials.
-
-###############################################################################
 # Walk-forward validation
 # -----------------------
 # In all the splits above, the validation data is surrounded by training data. With ``scheme='walk-forward'``, each split instead trains only on the data preceding its validation set. With ``split='within-cases'``, each trial is divided into ``partitions`` partitions, of which all but the first are short windows at the end of the trial (by default each 5% of the trial). These windows are held out one at a time, resulting in ``partitions - 1`` splits.
@@ -117,3 +112,8 @@ p = plot.preview_partitions(1, partitions=4, validate=0.1, test=0, split='within
 # With ``split='time'`` (the default), the windows are instead at the end of the data as a whole, so that each split trains on everything that was recorded before its validation set:
 
 p = plot.preview_partitions(trials, partitions=4, validate=0.1, test=0, split='time', scheme='walk-forward', legend=False)
+
+###############################################################################
+# Choosing a scheme
+# -----------------
+# Partitions that consist of whole trials or contiguous periods of time test whether the model generalizes to a different period of the experiment. However, when the trials differ systematically (e.g., different conditions, learning or fatigue effects), a test partition that stems from a single trial may not represent the data as a whole. Partitions within trials (``split='within-cases'``) avoid this because every partition samples every trial, at the cost of more segment boundaries. For trial-based experiments with different conditions, the ``model`` parameter achieves the same without cutting trials.
