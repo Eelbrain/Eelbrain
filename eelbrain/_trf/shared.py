@@ -778,11 +778,6 @@ class RowBlock:
     info: dict = field(compare=False)
 
     @property
-    def shape(self) -> tuple[int, ...]:
-        "Shape corresponding to :attr:`dims`"
-        return tuple(len(dim) for dim in self.dims)
-
-    @property
     def n_rows(self) -> int:
         "Number of rows in the block"
         return self.index.stop - self.index.start
