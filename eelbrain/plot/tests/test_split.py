@@ -71,12 +71,12 @@ def test_preview_partitions():
     assert len(p.splits.split_segments) == 15
     p.close()
     # walk-forward: windows at the end of every trial; unused data is grayed out
-    p = plot.preview_partitions(ds['uts'][0], partitions=4, test=0, split='walk-forward')
+    p = plot.preview_partitions(ds['uts'][0], partitions=4, test=0, scheme='walk-forward')
     assert_array_equal(p.splits.split_segments[:, 1], [85, 90, 95, 100])
     ax = p.figure.axes[0]
     assert sum(abs(patch.get_facecolor()[0] - 0.85) < 1e-6 for patch in ax.patches) == 2  # the last split uses all data
     p.close()
-    p = plot.preview_partitions(2, partitions=4, test=0, split='walk-forward')
+    p = plot.preview_partitions(2, partitions=4, test=0, scheme='walk-forward')
     assert p.figure.axes[0].get_xlabel() == 'Sample'
     assert len(p.splits.split_segments) == 8
     p.close()

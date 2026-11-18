@@ -103,12 +103,17 @@ p = plot.preview_partitions(20, partitions=5, legend=False)
 ###############################################################################
 # Walk-forward validation
 # -----------------------
-# In all the splits above, the validation data is surrounded by training data. With ``split='walk-forward'``, each split instead trains only on the data preceding its validation set. Each trial is divided into ``partitions`` partitions, of which all but the first are short windows at the end of the trial (by default each 5% of the trial). These windows are held out one at a time, resulting in ``partitions - 1`` splits.
+# In all the splits above, the validation data is surrounded by training data. With ``scheme='walk-forward'``, each split instead trains only on the data preceding its validation set. By default, each trial is divided into ``partitions`` partitions, of which all but the first are short windows at the end of the trial (by default each 5% of the trial). These windows are held out one at a time, resulting in ``partitions - 1`` splits.
 
-p = plot.preview_partitions(1, partitions=4, test=0, split='walk-forward', legend='upper center')
-p = plot.preview_partitions(2, partitions=4, test=0, split='walk-forward', legend=False)
+p = plot.preview_partitions(1, partitions=4, test=0, scheme='walk-forward', legend='upper center')
+p = plot.preview_partitions(2, partitions=4, test=0, scheme='walk-forward', legend=False)
 
 ###############################################################################
 # With this scheme, a ``validate`` value between 0 and 1 sets the length of each validation window as proportion of the trial:
 
-p = plot.preview_partitions(1, partitions=4, validate=0.1, test=0, split='walk-forward', legend='fig')
+p = plot.preview_partitions(1, partitions=4, validate=0.1, test=0, scheme='walk-forward', legend='fig')
+
+###############################################################################
+# With ``split='time'``, the windows are instead at the end of the data as a whole, so that each split trains on everything that was recorded before its validation set:
+
+p = plot.preview_partitions(trials, partitions=4, validate=0.1, test=0, split='time', scheme='walk-forward', legend=False)

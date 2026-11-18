@@ -15,12 +15,12 @@ def test_boosting():
     # _as_dict covers every DICT_ATTRS entry
     d = est._as_dict()
     assert d['type'] == 'Boosting'
-    assert set(d) == {'type', *Boosting.DICT_ATTRS}.difference(('validate', 'min_section'))
+    assert set(d) == {'type', *Boosting.DICT_ATTRS}.difference(('scheme', 'validate', 'min_section'))
     # equality / repr
     assert est == Boosting()
     assert est != Boosting(basis=0.1)
     # cross-validation
-    assert est._split_args == {'partitions': 5, 'split': 'time', 'validate': None, 'test': 1, 'min_section': None}
+    assert est._split_args == {'partitions': 5, 'split': 'time', 'scheme': 'k-fold', 'validate': None, 'test': 1, 'min_section': None}
     with pytest.raises(ValueError):
         Boosting(partitions=-1)
     with pytest.raises(ValueError):
@@ -29,8 +29,10 @@ def test_boosting():
     with pytest.raises(ValueError, match='validation set'):
         Boosting(validate=0)
     with pytest.raises(ValueError, match='test=0'):
-        Boosting(split='walk-forward')
-    assert Boosting(split='walk-forward', validate=0.1, test=0)._split_args == {'partitions': 5, 'split': 'walk-forward', 'validate': 0.1, 'test': 0, 'min_section': None}
+        Boosting(scheme='walk-forward')
+    walk_forward = Boosting(scheme='walk-forward', validate=0.1, test=0)
+    assert walk_forward._split_args == {'partitions': 5, 'split': 'time', 'scheme': 'walk-forward', 'validate': 0.1, 'test': 0, 'min_section': None}
+    assert walk_forward._as_dict()['scheme'] == 'walk-forward'
     # results cached up to 0.43.0b4: no split parameter, cv instead of test, and negative partitions to concatenate the cases
     stored = {key: value for key, value in d.items() if key not in ('split', 'test')}
     stored['cv'] = True
@@ -45,6 +47,8 @@ def test_boosting():
     assert Boosting(partitions=4, test=0) != fingerprint['estimator']
     with pytest.raises(ValueError):
         Boosting(partitions=-5, split='cases')
+    with pytest.raises(ValueError):
+        Boosting(partitions=-5, scheme='walk-forward', test=0)
     # no fit metrics without test set
     assert Boosting(test=0).metric_keys == ()
     assert repr(Boosting(basis=0.1, backward=True)) == "Boosting(basis=0.1, backward=True)"
@@ -62,7 +66,7 @@ def test_ncrf():
     assert set(d) == {'type', *NCRF.DICT_ATTRS}
     assert NCRF() != NCRF(mu=0.5)
     # cross-validation without test set
-    assert est._split_args == {'partitions': None, 'split': 'walk-forward', 'validate': None, 'test': 0, 'min_section': None}
+    assert est._split_args == {'partitions': None, 'split': None, 'scheme': 'walk-forward', 'validate': None, 'test': 0, 'min_section': None}
     assert pickle.loads(pickle.dumps(est)) == est
 
 

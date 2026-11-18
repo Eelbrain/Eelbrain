@@ -355,7 +355,7 @@ These definitions can then be invoked like::
 
     trfs = e.load_trfs(..., estimator='forward')
 
-Both estimators use cross-validation, and share the parameters that determine how the data is partitioned for it (``partitions``, ``split``, ``validate`` and ``min_section``; see :func:`eelbrain.split_data`).
+Both estimators use cross-validation, and share the parameters that determine how the data is partitioned for it (``partitions``, ``split``, ``scheme``, ``validate`` and ``min_section``; see :func:`eelbrain.split_data`).
 :meth:`Pipeline.show_partitions` plots the partitions that an estimator uses for the current epoch and subject, or the partitions that would result from different parameters::
 
     e.show_partitions('forward', epoch='story')

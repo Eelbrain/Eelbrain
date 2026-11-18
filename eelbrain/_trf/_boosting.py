@@ -342,6 +342,10 @@ class BoostingResult(PickleableDataClass):
                 value = None if self.splits is None else getattr(self.splits, f'{name}_arg')
                 if isinstance(value, str):
                     value = repr(value)
+            elif name == 'scheme':
+                if self.splits is None or self.splits.scheme == param.default:
+                    continue
+                value = repr(self.splits.scheme)
             elif name == 'model':
                 if self.splits is None or self.splits.model is None:
                     continue
@@ -1168,7 +1172,8 @@ def boosting(
         basis_window: str = 'hamming',
         *,
         partitions: int = None,
-        split: Literal['cases', 'time', 'within-cases', 'walk-forward'] = None,
+        split: Literal['cases', 'time', 'within-cases'] = None,
+        scheme: Literal['k-fold', 'walk-forward'] = 'k-fold',
         validate: float = None,
         test: int = 1,
         model: CategorialArg = None,
@@ -1231,15 +1236,20 @@ def boosting(
         Number of partitions (*k*) for cross-validation (default 5 for
         continuous data, the number of cases for data with 3 to 10 cases).
         The cross-validation parameters (``partitions``, ``split``,
-        ``validate``, ``test``, ``model`` and ``min_section``) are described
+        ``scheme``, ``validate``, ``test``, ``model`` and ``min_section``) are described
         in :func:`split_data`, and illustrated in the :ref:`exa-data_split`
         example.
     split
         How to form partitions: ``'cases'`` (whole cases; default for data
         with cases), ``'time'`` (contiguous spans of time; default for
-        continuous data), ``'within-cases'`` (one piece of every case) or
-        ``'walk-forward'`` (training data always precedes the validation
-        data). See :func:`split_data`.
+        continuous data) or ``'within-cases'`` (one piece of every case). See
+        :func:`split_data`.
+    scheme
+        Which partitions are used for training when a partition is held out:
+        ``'k-fold'`` (all the other partitions; default) or
+        ``'walk-forward'`` (only the preceding partitions, so that the
+        training data always precedes the validation data; requires
+        ``test=0``). See :func:`split_data`.
     validate
         Size of the validation set, which is used for early stopping in each
         boosting run (default 1 partition; see :func:`split_data`).
@@ -1336,7 +1346,7 @@ def boosting(
     dec_data.apply_basis(basis, basis_window)
     if scale_data:
         dec_data.normalize(error)
-    dec_data.initialize_cross_validation(partitions, split=split, validate=validate, test=test, model=model, min_section=min_section, data=data)
+    dec_data.initialize_cross_validation(partitions, split=split, scheme=scheme, validate=validate, test=test, model=model, min_section=min_section, data=data)
 
     fit = Boosting(dec_data)
     fit.fit(tstart, tstop, selective_stopping, error, delta, mindelta)

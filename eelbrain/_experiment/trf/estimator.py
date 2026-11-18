@@ -160,22 +160,26 @@ class Boosting(Estimator):
         Normalize ``y`` and ``x`` before fitting.
     partitions
         Number of partitions for cross-validation. The cross-validation
-        parameters (``partitions``, ``split``, ``validate``, ``test`` and
-        ``min_section``) are described in :func:`eelbrain.split_data`; use
-        :meth:`Pipeline.show_partitions` to inspect how they partition the
-        data.
+        parameters (``partitions``, ``split``, ``scheme``, ``validate``,
+        ``test`` and ``min_section``) are described in
+        :func:`eelbrain.split_data`; use :meth:`Pipeline.show_partitions` to
+        inspect how they partition the data.
     split
         How to form partitions: ``'time'`` (default) forms partitions from
-        contiguous spans of time, ``'cases'`` from whole cases,
-        ``'within-cases'`` from pieces of every case, and ``'walk-forward'``
-        holds out windows at the end of every case (requires ``test=0``).
-        With ``None``, use ``'cases'`` for data with more than one case and
-        ``'time'`` for continuous data.
+        contiguous spans of time, ``'cases'`` from whole cases, and
+        ``'within-cases'`` from pieces of every case. With ``None``, use
+        ``'cases'`` for data with more than one case and ``'time'`` for
+        continuous data (``'within-cases'`` with ``scheme='walk-forward'``).
+    scheme
+        Which partitions are used for training when a partition is held out:
+        with ``'k-fold'`` (default) all the other partitions, with
+        ``'walk-forward'`` only the preceding partitions, so that the training
+        data always precedes the validation data (requires ``test=0``).
     validate
         Size of each validation set, which is used for early stopping. Only
-        used with ``split='walk-forward'``: the length of each validation set
-        as proportion of the case (default 0.05). With the other schemes, the
-        validation set is always one partition.
+        used with ``scheme='walk-forward'``: the length of each validation
+        set as proportion of the data that is cut (default 0.05). With
+        ``scheme='k-fold'``, the validation set is always one partition.
     test
         Number of partitions in each test set (0 or 1). With ``test=1``
         (default), each partition is held out as test set in turn, and fit
@@ -187,8 +191,8 @@ class Boosting(Estimator):
         (e.g., :meth:`Pipeline.load_model_test`) thus require ``test=1``. See
         the ``test`` parameter of :func:`eelbrain.boosting` for details.
     min_section
-        With ``split='time'``, minimum duration (in seconds) of the pieces
-        left when a case is cut (default 15).
+        With ``split='time'`` and ``scheme='k-fold'``, minimum duration (in
+        seconds) of the pieces left when a case is cut (default 15).
     partition_results
         Keep the result for each test partition (or, with ``test=0``, for
         each validation partition).
@@ -196,8 +200,8 @@ class Boosting(Estimator):
         Fit a backward model (predict the stimulus from the response). Only
         valid with a single-term model.
     """
-    DICT_ATTRS = ('basis', 'basis_window', 'error', 'delta', 'mindelta', 'selective_stopping', 'scale_data', 'partitions', 'split', 'validate', 'test', 'min_section', 'partition_results', 'backward')
-    DICT_DEFAULTS = {'split': None, 'validate': None, 'min_section': None}  # added after 0.43.0b4; the values that reproduce the cross-validation of results cached before
+    DICT_ATTRS = ('basis', 'basis_window', 'error', 'delta', 'mindelta', 'selective_stopping', 'scale_data', 'partitions', 'split', 'scheme', 'validate', 'test', 'min_section', 'partition_results', 'backward')
+    DICT_DEFAULTS = {'split': None, 'scheme': 'k-fold', 'validate': None, 'min_section': None}  # added after 0.43.0b4; the values that reproduce the cross-validation of results cached before
 
     def __init__(
             self,
@@ -209,7 +213,8 @@ class Boosting(Estimator):
             selective_stopping: int = 0,
             scale_data: bool = True,
             partitions: int | None = 5,
-            split: Literal['cases', 'time', 'within-cases', 'walk-forward'] | None = 'time',
+            split: Literal['cases', 'time', 'within-cases'] | None = 'time',
+            scheme: Literal['k-fold', 'walk-forward'] = 'k-fold',
             validate: float = None,
             test: int = 1,
             min_section: float = None,
@@ -227,17 +232,18 @@ class Boosting(Estimator):
             raise ValueError(f"{test=}: needs to be 0 or 1")
         elif validate == 0:
             raise ValueError(f"{validate=}: boosting requires a validation set for early stopping")
-        elif split == 'walk-forward' and test:
-            raise ValueError(f"{split=} with {test=}: the walk-forward scheme has no test set; use test=0")
+        elif scheme == 'walk-forward' and test:
+            raise ValueError(f"{scheme=} with {test=}: the walk-forward scheme has no test set; use test=0")
         if partitions is not None and partitions < 0:
             # legacy (results cached up to 0.43.0b4): concatenate the cases to continuous data and form abs(partitions) partitions of equal length
-            if split not in (None, 'time'):
-                raise ValueError(f"{partitions=} with {split=}")
+            if split not in (None, 'time') or scheme != 'k-fold':
+                raise ValueError(f"{partitions=} with {split=}, {scheme=}")
             split = None  # as stored for those results
         if partitions is not None and abs(partitions) < 2 + test:
             raise ValueError(f"{partitions=}: need at least {2 + test} partitions with {test=}")
         self.partitions = partitions
         self.split = split
+        self.scheme = scheme
         self.validate = typed_arg(validate, float, allow_none=True)
         self.test = int(test)
         self.min_section = typed_arg(min_section, float, allow_none=True)
@@ -265,7 +271,7 @@ class Boosting(Estimator):
             partitions = None
         else:
             partitions = abs(self.partitions)
-        return {'partitions': partitions, 'split': self.split, 'validate': self.validate, 'test': self.test, 'min_section': self.min_section}
+        return {'partitions': partitions, 'split': self.split, 'scheme': self.scheme, 'validate': self.validate, 'test': self.test, 'min_section': self.min_section}
 
     def _fit(self, y, xs, tstart, tstop, *, fwd=None, cov=None):
         if self._concatenate_cases:
@@ -327,22 +333,28 @@ class NCRF(Estimator):
     partitions
         Number of partitions for the cross-validation that selects ``mu``
         (unless ``mu`` is a single value). The cross-validation parameters
-        (``partitions``, ``split``, ``validate`` and ``min_section``) are
-        described in :func:`eelbrain.split_data`; use
+        (``partitions``, ``split``, ``scheme``, ``validate`` and
+        ``min_section``) are described in :func:`eelbrain.split_data`; use
         :meth:`Pipeline.show_partitions` to inspect how they partition the
-        data. With the default ``split``, the last ``partitions - 1``
-        partitions of every case are held out one at a time (default 4, i.e.,
-        3 splits).
+        data. With the default ``scheme``, the last ``partitions - 1``
+        partitions are held out one at a time (default 4, i.e., 3 splits).
     split
-        How to form partitions. The default (``'walk-forward'``) holds out
-        windows at the end of every case, each with only the data preceding it
-        as training set.
+        How to form partitions: ``'within-cases'`` from pieces of every case,
+        ``'time'`` from contiguous spans of time, and ``'cases'`` from whole
+        cases. With the default ``scheme``, the default is
+        ``'within-cases'``, which holds out windows at the end of every case.
+    scheme
+        Which partitions are used for training when a partition is held out:
+        with ``'walk-forward'`` (default) only the preceding partitions, so
+        that the training data always precedes the validation data; with
+        ``'k-fold'`` all the other partitions.
     validate
-        Size of each validation set. For ``split='walk-forward'``, the length
-        of each validation set as proportion of the case (default 0.05).
+        Size of each validation set. With ``scheme='walk-forward'``, the
+        length of each validation set as proportion of the data that is cut
+        (default 0.05).
     min_section
-        With ``split='time'``, minimum duration (in seconds) of the pieces
-        left when a case is cut (default 15).
+        With ``split='time'`` and ``scheme='k-fold'``, minimum duration (in
+        seconds) of the pieces left when a case is cut (default 15).
     tol
         Convergence tolerance.
     use_ES
@@ -358,7 +370,7 @@ class NCRF(Estimator):
     extra_inputs = ('fwd', 'cov')
     extra_input_fields = ('cov', 'mrisubject', 'src')
     requires_sensor_space = True
-    DICT_ATTRS = ('mu', 'basis_stride', 'n_iter', 'n_iterc', 'n_iterf', 'partitions', 'split', 'validate', 'min_section', 'tol', 'use_ES', 'basis_std')
+    DICT_ATTRS = ('mu', 'basis_stride', 'n_iter', 'n_iterc', 'n_iterf', 'partitions', 'split', 'scheme', 'validate', 'min_section', 'tol', 'use_ES', 'basis_std')
     metric_keys = ('mu', 'explained_variance', 'l2_error', 'cross_fit', 'weighted_l2_error')
 
     def __init__(
@@ -369,7 +381,8 @@ class NCRF(Estimator):
             n_iterc: int = 10,
             n_iterf: int = 100,
             partitions: int | None = None,
-            split: Literal['cases', 'time', 'within-cases', 'walk-forward'] | None = 'walk-forward',
+            split: Literal['cases', 'time', 'within-cases'] | None = None,
+            scheme: Literal['k-fold', 'walk-forward'] = 'walk-forward',
             validate: float = None,
             min_section: float = None,
             tol: float = 0.001,
@@ -383,6 +396,7 @@ class NCRF(Estimator):
         self.n_iterf = n_iterf
         self.partitions = typed_arg(partitions, int, allow_none=True)
         self.split = split
+        self.scheme = scheme
         self.validate = typed_arg(validate, float, allow_none=True)
         self.min_section = typed_arg(min_section, float, allow_none=True)
         self.tol = typed_arg(tol, float)
@@ -392,7 +406,7 @@ class NCRF(Estimator):
     @property
     def _split_args(self) -> dict[str, Any]:
         # no test set: NCRF cross-validates only to select mu
-        return {'partitions': self.partitions, 'split': self.split, 'validate': self.validate, 'test': 0, 'min_section': self.min_section}
+        return {'partitions': self.partitions, 'split': self.split, 'scheme': self.scheme, 'validate': self.validate, 'test': 0, 'min_section': self.min_section}
 
     def _fit(self, y, xs, tstart, tstop, *, fwd=None, cov=None):
         if fwd is None or cov is None:

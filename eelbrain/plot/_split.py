@@ -154,7 +154,8 @@ def preview_partitions(
     cases: int | Sequence[float] | NDVarArg = 0,
     *,
     partitions: int = None,
-    split: Literal['cases', 'time', 'within-cases', 'walk-forward'] = None,
+    split: Literal['cases', 'time', 'within-cases'] = None,
+    scheme: Literal['k-fold', 'walk-forward'] = 'k-fold',
     validate: float = None,
     test: int = 1,
     model: CategorialArg = None,
@@ -177,6 +178,8 @@ def preview_partitions(
         Number of partitions to divide the data into.
     split
         How to form partitions.
+    scheme
+        Which partitions are used for training when a partition is held out.
     validate
         Size of each validation set.
     test
@@ -206,7 +209,7 @@ def preview_partitions(
     center_xticks = False  # each sample stands for one partition or trial
     if isinstance(cases, Integral):
         n_cases = max(int(cases), 1)  # a single trial is continuous data
-        if split == 'walk-forward':
+        if scheme == 'walk-forward':
             # trials need enough samples for the windows
             ns = [100] * n_cases
             xlabel = 'Sample'
@@ -234,5 +237,5 @@ def preview_partitions(
         ns = [int(round(duration / tstep)) for duration in cases]
     index = np.cumsum([0] + ns)
     segments = np.hstack([index[:-1, None], index[1:, None]])
-    splits = split_data(segments, tstep=tstep, partitions=partitions, split=split, validate=validate, test=test, model=model, min_section=min_section, data=data)
+    splits = split_data(segments, tstep=tstep, partitions=partitions, split=split, scheme=scheme, validate=validate, test=test, model=model, min_section=min_section, data=data)
     return DataSplit(splits, center_xticks=center_xticks, **kwargs)

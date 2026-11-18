@@ -3316,7 +3316,8 @@ class Pipeline(StateModel):
             self,
             estimator: str = None,
             partitions: int = None,
-            split: Literal['cases', 'time', 'within-cases', 'walk-forward'] = None,
+            split: Literal['cases', 'time', 'within-cases'] = None,
+            scheme: Literal['k-fold', 'walk-forward'] = None,
             validate: float = None,
             test: int = None,
             min_section: float = None,
@@ -3338,6 +3339,9 @@ class Pipeline(StateModel):
             Number of partitions to divide the data into.
         split
             How to form partitions.
+        scheme
+            Which partitions are used for training when a partition is held
+            out (default ``'k-fold'``).
         validate
             Size of each validation set.
         test
@@ -3363,9 +3367,11 @@ class Pipeline(StateModel):
         :meth:`load_trf` (i.e., after epoch rejection). It is based on the
         events, without loading the data, and uses a time resolution of 10 ms.
         """
-        split_args = {'partitions': partitions, 'split': split, 'validate': validate, 'test': test, 'min_section': min_section}
+        split_args = {'partitions': partitions, 'split': split, 'scheme': scheme, 'validate': validate, 'test': test, 'min_section': min_section}
         if estimator is None:
             concatenate_cases = False
+            if scheme is None:
+                split_args['scheme'] = 'k-fold'
             if test is None:
                 split_args['test'] = 1
         else:

@@ -2765,6 +2765,12 @@ def test_show_partitions(samples_trf_experiment):
     durations = (splits.segments[:, 1] - splits.segments[:, 0]) * splits.tstep
     assert durations == pytest.approx([yi.time.tstep * yi.time.nsamples for yi in y], abs=splits.tstep)
     p.close()
+    # walk-forward: windows at the end of every case
+    p = e.show_partitions(scheme='walk-forward', test=0)
+    splits = p.splits
+    assert (splits.split, splits.scheme, len(splits.splits)) == ('within-cases', 'walk-forward', 3)
+    assert len(splits.split_segments) == 4 * len(y)
+    p.close()
 
 
 @requires_mne_sample_data
