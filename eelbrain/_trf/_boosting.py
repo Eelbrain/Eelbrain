@@ -1173,7 +1173,7 @@ def boosting(
         basis_window: str = 'hamming',
         *,
         partitions: int | None = 5,
-        split: Literal['cases', 'time', 'within-cases'] | None = 'time',
+        split: Literal['case', 'time', 'within-case'] | None = 'time',
         scheme: Literal['k-fold', 'walk-forward'] = 'k-fold',
         validate: float = None,
         test: int = 1,
@@ -1241,7 +1241,7 @@ def boosting(
         example.
     split
         How to form partitions: ``'time'`` (contiguous spans of time;
-        default), ``'cases'`` (whole cases) or ``'within-cases'`` (one piece
+        default), ``'case'`` (whole cases) or ``'within-case'`` (one piece
         of every case). See :func:`split_data`.
     scheme
         Which partitions are used for training when a partition is held out:
@@ -1277,7 +1277,7 @@ def boosting(
         (e.g., using :func:`convolve`). To inspect the fit of the individual
         boosting runs, use ``partition_results=True``.
     model
-        With ``split='cases'``, sample partitions evenly from the cells of
+        With ``split='case'``, sample partitions evenly from the cells of
         this model (see :func:`split_data`).
     min_section
         With ``split='time'``, minimum duration (in seconds) of the pieces

@@ -46,7 +46,7 @@ def test_boosting():
     assert Boosting(partitions=4, split=None, test=0) == fingerprint['estimator']
     assert Boosting(partitions=4, test=0) != fingerprint['estimator']
     with pytest.raises(ValueError):
-        Boosting(partitions=-5, split='cases')
+        Boosting(partitions=-5, split='case')
     with pytest.raises(ValueError):
         Boosting(partitions=-5, scheme='walk-forward', test=0)
     # no fit metrics without test set
@@ -75,8 +75,8 @@ def test_boosting_fit():
     ds = datasets.get_uts()
     y, x = ds['uts'][:6], ds['uts'][6:12]
     x.name = 'x'
-    res = Boosting(partitions=3, split='cases', test=0)._fit(y.copy(), [x.copy()], 0, 0.1)
-    assert (res.splits.split, res.splits.n_partitions, res.splits.n_test) == ('cases', 3, 0)
+    res = Boosting(partitions=3, split='case', test=0)._fit(y.copy(), [x.copy()], 0, 0.1)
+    assert (res.splits.split, res.splits.n_partitions, res.splits.n_test) == ('case', 3, 0)
     assert len(res.splits.segments) == 6
     # legacy: negative partitions concatenate the cases
     res = Boosting(partitions=-3, test=0)._fit(y.copy(), [x.copy()], 0, 0.1)

@@ -73,7 +73,7 @@ def test_preview_partitions():
     assert p.figure.axes[0].get_xlabel() == 'Sample'
     assert_array_equal(p.splits.split_segments, [[0, 250], [250, 500], [500, 750], [750, 1000]])
     p.close()
-    p = plot.preview_partitions(3, test=0, split='within-cases')
+    p = plot.preview_partitions(3, test=0, split='within-case')
     assert p.figure.axes[0].get_xlabel() == 'Case'
     assert p.splits.partitions_arg == 5
     assert len(p.splits.split_segments) == 15
@@ -84,7 +84,7 @@ def test_preview_partitions():
     ax = p.figure.axes[0]
     assert sum(abs(patch.get_facecolor()[0] - 0.85) < 1e-6 for patch in ax.patches) == 2  # the last split uses all data
     p.close()
-    p = plot.preview_partitions(2, partitions=4, test=0, split='within-cases', scheme='walk-forward')
+    p = plot.preview_partitions(2, partitions=4, test=0, split='within-case', scheme='walk-forward')
     assert p.figure.axes[0].get_xlabel() == 'Case'
     assert len(p.splits.split_segments) == 8
     p.close()
@@ -97,14 +97,14 @@ def test_preview_partitions():
     assert len(p.figure.axes[0].get_yticks()) == 0
     p.close()
     # model: a line above the plot indicates the cell of each trial
-    p = plot.preview_partitions(12, partitions=3, test=0, split='cases', model=Factor('aabb', tile=3))
+    p = plot.preview_partitions(12, partitions=3, test=0, split='case', model=Factor('aabb', tile=3))
     lines_a, lines_b = p.figure.axes[0].collections
     assert_array_equal([line[:, 0] / 1000 for line in lines_a.get_segments()], [[0, 1], [1, 2], [4, 5], [5, 6], [8, 9], [9, 10]])
     assert_array_equal([line[:, 0] / 1000 for line in lines_b.get_segments()], [[2, 3], [3, 4], [6, 7], [7, 8], [10, 11], [11, 12]])
     assert [text.get_text() for text in p.legend.get_texts()] == ['Training', 'Validation', 'a', 'b']
     p.close()
     # cells that share names with the plot's roles
-    p = plot.preview_partitions(12, partitions=3, test=0, split='cases', model=Factor(['train', 'test'], tile=6))
+    p = plot.preview_partitions(12, partitions=3, test=0, split='case', model=Factor(['train', 'test'], tile=6))
     assert [text.get_text() for text in p.legend.get_texts()] == ['Training', 'Validation', 'train', 'test']
     ax = p.figure.axes[0]
     assert ax.patches[0].get_facecolor() != tuple(ax.collections[0].get_colors()[0])

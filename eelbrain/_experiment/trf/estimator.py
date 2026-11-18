@@ -166,10 +166,10 @@ class Boosting(Estimator):
         inspect how they partition the data.
     split
         How to form partitions: ``'time'`` (default) forms partitions from
-        contiguous spans of time, ``'cases'`` from whole cases, and
-        ``'within-cases'`` from pieces of every case. With ``None``, use
-        ``'cases'`` for data with more than one case and ``'time'`` for
-        continuous data (``'within-cases'`` with ``scheme='walk-forward'``).
+        contiguous spans of time, ``'case'`` from whole cases, and
+        ``'within-case'`` from pieces of every case. With ``None``, use
+        ``'case'`` for data with more than one case and ``'time'`` for
+        continuous data (``'within-case'`` with ``scheme='walk-forward'``).
     scheme
         Which partitions are used for training when a partition is held out:
         with ``'k-fold'`` (default) all the other partitions, with
@@ -213,7 +213,7 @@ class Boosting(Estimator):
             selective_stopping: int = 0,
             scale_data: bool = True,
             partitions: int | None = 5,
-            split: Literal['cases', 'time', 'within-cases'] | None = 'time',
+            split: Literal['case', 'time', 'within-case'] | None = 'time',
             scheme: Literal['k-fold', 'walk-forward'] = 'k-fold',
             validate: float = None,
             test: int = 1,
@@ -339,10 +339,10 @@ class NCRF(Estimator):
         data. With the default ``scheme``, the last ``partitions - 1``
         partitions are held out one at a time (default 4, i.e., 3 splits).
     split
-        How to form partitions: ``'within-cases'`` from pieces of every case,
-        ``'time'`` from contiguous spans of time, and ``'cases'`` from whole
+        How to form partitions: ``'within-case'`` from pieces of every case,
+        ``'time'`` from contiguous spans of time, and ``'case'`` from whole
         cases. With the default ``scheme``, the default is
-        ``'within-cases'``, which holds out windows at the end of every case.
+        ``'within-case'``, which holds out windows at the end of every case.
     scheme
         Which partitions are used for training when a partition is held out:
         with ``'walk-forward'`` (default) only the preceding partitions, so
@@ -381,7 +381,7 @@ class NCRF(Estimator):
             n_iterc: int = 10,
             n_iterf: int = 100,
             partitions: int | None = None,
-            split: Literal['cases', 'time', 'within-cases'] | None = None,
+            split: Literal['case', 'time', 'within-case'] | None = None,
             scheme: Literal['k-fold', 'walk-forward'] = 'walk-forward',
             validate: float = None,
             min_section: float = None,

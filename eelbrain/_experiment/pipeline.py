@@ -3316,7 +3316,7 @@ class Pipeline(StateModel):
             self,
             estimator: str = None,
             partitions: int = None,
-            split: Literal['cases', 'time', 'within-cases'] = None,
+            split: Literal['case', 'time', 'within-case'] = None,
             scheme: Literal['k-fold', 'walk-forward'] = None,
             validate: float = None,
             test: int = None,
@@ -3363,7 +3363,7 @@ class Pipeline(StateModel):
         :class:`Boosting` estimator. The defaults of :class:`NCRF` differ:
 
          - :func:`eelbrain.split_data` and :class:`Boosting`: ``partitions=5, split='time', scheme='k-fold', test=1``
-         - :class:`NCRF`: ``partitions=4, split='within-cases', scheme='walk-forward', validate=0.05, test=0`` (NCRF never uses a test set)
+         - :class:`NCRF`: ``partitions=4, split='within-case', scheme='walk-forward', validate=0.05, test=0`` (NCRF never uses a test set)
 
         The plot shows the cases of the current epoch as they enter :meth:`load_trf`
         (i.e., after epoch rejection).

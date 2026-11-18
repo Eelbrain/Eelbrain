@@ -156,7 +156,7 @@ def preview_partitions(
     cases: int | Sequence[float] | NDVarArg = 0,
     *,
     partitions: int | None = 5,
-    split: Literal['cases', 'time', 'within-cases'] | None = 'time',
+    split: Literal['case', 'time', 'within-case'] | None = 'time',
     scheme: Literal['k-fold', 'walk-forward'] = 'k-fold',
     validate: float = None,
     test: int = 1,
@@ -188,7 +188,7 @@ def preview_partitions(
         Number of partitions in each test set (0 or 1).
     model
         Sample partitions evenly from the cells of this model (one entry per
-        trial; requires ``split='cases'``). A line above the plot indicates the cell of each trial.
+        trial; requires ``split='case'``). A line above the plot indicates the cell of each trial.
     min_section
         Minimum duration (in seconds) of the pieces left when a trial is cut.
     data

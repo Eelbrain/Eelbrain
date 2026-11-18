@@ -2751,9 +2751,9 @@ def test_show_partitions(samples_trf_experiment):
     assert (splits.split, splits.n_partitions, splits.n_test) == ('time', 4, 1)
     assert len(splits.segments) == len(y)
     p.close()
-    p = e.show_partitions(partitions=3, split='within-cases', test=0)
+    p = e.show_partitions(partitions=3, split='within-case', test=0)
     splits = p.splits
-    assert (splits.split, splits.n_partitions, splits.n_test) == ('within-cases', 3, 0)
+    assert (splits.split, splits.n_partitions, splits.n_test) == ('within-case', 3, 0)
     p.close()
     with pytest.raises(TypeError, match="estimator='boosting' with partitions, test"):
         e.show_partitions('boosting', partitions=3, test=0)
@@ -2766,9 +2766,9 @@ def test_show_partitions(samples_trf_experiment):
     assert durations == pytest.approx([yi.time.tstep * yi.time.nsamples for yi in y], abs=splits.tstep)
     p.close()
     # walk-forward: windows at the end of every case
-    p = e.show_partitions(partitions=4, split='within-cases', scheme='walk-forward', test=0)
+    p = e.show_partitions(partitions=4, split='within-case', scheme='walk-forward', test=0)
     splits = p.splits
-    assert (splits.split, splits.scheme, len(splits.splits)) == ('within-cases', 'walk-forward', 3)
+    assert (splits.split, splits.scheme, len(splits.splits)) == ('within-case', 'walk-forward', 3)
     assert len(splits.split_segments) == 4 * len(y)
     p.close()
 

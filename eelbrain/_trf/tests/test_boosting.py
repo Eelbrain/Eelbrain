@@ -217,7 +217,7 @@ def test_boosting_epochs():
     # 1d
     for tstart, basis in product((-0.1, 0.1, 0), (0, 0.05)):
         print(f"{tstart=}, {basis=}")
-        res = boosting('uts', [p0, p1], tstart, 0.6, split='cases', model='A', data=ds, basis=basis, partitions=3, partition_results=True, debug=True)
+        res = boosting('uts', [p0, p1], tstart, 0.6, split='case', model='A', data=ds, basis=basis, partitions=3, partition_results=True, debug=True)
         assert res.r == approx(0.229, abs=3e-3)
         y = res.cross_predict([p0, p1], name='predicted')
         assert correlation_coefficient(y, res.y_pred) > .999
@@ -226,7 +226,7 @@ def test_boosting_epochs():
         assert res.r == approx(r, abs=1e-3)
         assert res.splits.n_partitions == 3
     # 2d
-    res = boosting('utsnd', [p0, p1], 0, 0.6, split='cases', model='A', data=ds, partitions=3, partition_results=True)
+    res = boosting('utsnd', [p0, p1], 0, 0.6, split='case', model='A', data=ds, partitions=3, partition_results=True)
     assert len(res.h) == 2
     assert res.h[0].shape == (5, 60)
     assert res.h[1].shape == (5, 60)
@@ -238,12 +238,12 @@ def test_boosting_epochs():
     y_pred = res_cv.cross_predict([p0, p1], scale='normalized')
     assert_array_equal(y_pred, res_cv.y_pred)
     # vector
-    res = boosting('v3d', [p0, p1], 0, 0.6, error='l1', split='cases', model='A', data=ds, partitions=3)
+    res = boosting('v3d', [p0, p1], 0, 0.6, error='l1', split='case', model='A', data=ds, partitions=3)
     assert res.residual.ndim == 0
     # walk-forward: validation windows at the end of every case, trained on the data before them
-    res = boosting('uts', [p0, p1], 0, 0.1, data=ds, partitions=3, split='within-cases', validate=0.2, test=0, scheme='walk-forward', partition_results=True)
-    assert (res.splits.split, res.splits.scheme) == ('within-cases', 'walk-forward')
-    assert repr(res) == "<BoostingResult uts ~ a0 + a1, 0 - 0.1, partitions=3, split='within-cases', scheme='walk-forward', validate=0.2, test=0, partition_results=True>"
+    res = boosting('uts', [p0, p1], 0, 0.1, data=ds, partitions=3, split='within-case', validate=0.2, test=0, scheme='walk-forward', partition_results=True)
+    assert (res.splits.split, res.splits.scheme) == ('within-case', 'walk-forward')
+    assert repr(res) == "<BoostingResult uts ~ a0 + a1, 0 - 0.1, partitions=3, split='within-case', scheme='walk-forward', validate=0.2, test=0, partition_results=True>"
     assert_array_equal(res.splits.split_segments[:3], [[0, 60], [60, 80], [80, 100]])
     assert len(res.partition_results) == 2
     assert res.r is None
@@ -254,7 +254,7 @@ def test_boosting_epochs():
     with pytest.raises(ValueError, match="only available with scheme='walk-forward'"):
         boosting('uts', [p0, p1], 0, 0.1, data=ds, validate=0.2)
     with pytest.raises(ValueError, match="extends beyond the shortest cross-validation data segment"):
-        boosting('uts', [p0, p1], 0, 0.1, data=ds, test=0, split='within-cases', scheme='walk-forward')
+        boosting('uts', [p0, p1], 0, 0.1, data=ds, test=0, split='within-case', scheme='walk-forward')
 
 
 def test_boosting_dtype():

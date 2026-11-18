@@ -48,19 +48,19 @@ trials = [180, 240, 204, 192, 228]
 p = plot.preview_partitions(trials, test=0, legend='upper center')
 
 ###############################################################################
-# With ``split='cases'``, each partition instead consists of whole trials, so that trial boundaries are always partition boundaries. With as many partitions as trials, each trial is held out in turn. With trials of different lengths, the partitions then also differ in size:
+# With ``split='case'``, each partition instead consists of whole trials, so that trial boundaries are always partition boundaries. With as many partitions as trials, each trial is held out in turn. With trials of different lengths, the partitions then also differ in size:
 
-p = plot.preview_partitions(trials, partitions=5, test=0, split='cases', legend=False)
+p = plot.preview_partitions(trials, partitions=5, test=0, split='case', legend=False)
 
 ###############################################################################
 # With fewer partitions than trials, trials are assigned to partitions in turn (partition *i* receives trials ``[i::partitions]``). When the number of trials is not a multiple of the number of partitions, the partitions then differ in the number of trials:
 
-p = plot.preview_partitions(trials, partitions=3, test=0, split='cases', legend=False)
+p = plot.preview_partitions(trials, partitions=3, test=0, split='case', legend=False)
 
 ###############################################################################
-# With ``split='within-cases'``, each trial is divided into ``partitions`` pieces of equal length, and each partition is formed from the corresponding piece of every trial. Every partition thus contains data from every trial, in proportion to the trial's length:
+# With ``split='within-case'``, each trial is divided into ``partitions`` pieces of equal length, and each partition is formed from the corresponding piece of every trial. Every partition thus contains data from every trial, in proportion to the trial's length:
 
-p = plot.preview_partitions(trials, partitions=5, test=0, split='within-cases', legend=False)
+p = plot.preview_partitions(trials, partitions=5, test=0, split='within-case', legend=False)
 
 ###############################################################################
 # With a test set, the validation sets are nested within each test split in the same way as for continuous data:
@@ -75,15 +75,15 @@ p = plot.preview_partitions(trials[:4], test=0, legend=False)
 ###############################################################################
 # Trial-based experiments
 # -----------------------
-# Experiments with many short trials, each containing one event (e.g., one word), are best analyzed without ever cutting a trial. This is what ``split='cases'`` does: trials are assigned to partitions in an interleaved fashion (partition *i* receives trials ``[i::partitions]``), so that each partition samples the whole experiment evenly across time:
+# Experiments with many short trials, each containing one event (e.g., one word), are best analyzed without ever cutting a trial. This is what ``split='case'`` does: trials are assigned to partitions in an interleaved fashion (partition *i* receives trials ``[i::partitions]``), so that each partition samples the whole experiment evenly across time:
 
-p = plot.preview_partitions(20, partitions=5, test=0, split='cases', legend=False)
-p = plot.preview_partitions(20, partitions=3, test=0, split='cases', legend=False)
+p = plot.preview_partitions(20, partitions=5, test=0, split='case', legend=False)
+p = plot.preview_partitions(20, partitions=3, test=0, split='case', legend=False)
 
 ###############################################################################
 # When trials belong to different conditions, the ``model`` parameter makes sure that each partition samples each condition evenly, by assigning trials to partitions separately within each condition:
 
-p = plot.preview_partitions(12, partitions=3, test=0, split='cases', model=Factor('AABB', tile=3), legend='fig')
+p = plot.preview_partitions(12, partitions=3, test=0, split='case', model=Factor('AABB', tile=3), legend='fig')
 
 ###############################################################################
 # With the default, ``split='time'``, trials that are shorter than 30 s are never cut (see above), so that each partition consists of a contiguous block of trials. In this example, trials are 10 s long:
@@ -93,20 +93,20 @@ p = plot.preview_partitions([10] * 20, test=0, legend=False)
 ###############################################################################
 # With a test set, the validation sets are nested in the same way as for continuous data:
 
-p = plot.preview_partitions(20, partitions=5, split='cases', legend=False)
+p = plot.preview_partitions(20, partitions=5, split='case', legend=False)
 
 ###############################################################################
 # Walk-forward validation
 # -----------------------
-# In all the splits above, the validation data is surrounded by training data. With ``scheme='walk-forward'``, each split instead trains only on the data preceding its validation set. With ``split='within-cases'``, each trial is divided into ``partitions`` partitions, of which all but the first are short windows at the end of the trial (by default each 5% of the trial). These windows are held out one at a time, resulting in ``partitions - 1`` splits.
+# In all the splits above, the validation data is surrounded by training data. With ``scheme='walk-forward'``, each split instead trains only on the data preceding its validation set. With ``split='within-case'``, each trial is divided into ``partitions`` partitions, of which all but the first are short windows at the end of the trial (by default each 5% of the trial). These windows are held out one at a time, resulting in ``partitions - 1`` splits.
 
-p = plot.preview_partitions(1, partitions=4, test=0, split='within-cases', scheme='walk-forward', legend='upper center')
-p = plot.preview_partitions(2, partitions=4, test=0, split='within-cases', scheme='walk-forward', legend=False)
+p = plot.preview_partitions(1, partitions=4, test=0, split='within-case', scheme='walk-forward', legend='upper center')
+p = plot.preview_partitions(2, partitions=4, test=0, split='within-case', scheme='walk-forward', legend=False)
 
 ###############################################################################
 # With this scheme, a ``validate`` value between 0 and 1 sets the length of each validation window as proportion of the trial:
 
-p = plot.preview_partitions(1, partitions=4, validate=0.1, test=0, split='within-cases', scheme='walk-forward', legend='fig')
+p = plot.preview_partitions(1, partitions=4, validate=0.1, test=0, split='within-case', scheme='walk-forward', legend='fig')
 
 ###############################################################################
 # With ``split='time'`` (the default), the windows are instead at the end of the data as a whole, so that each split trains on everything that was recorded before its validation set:
@@ -116,4 +116,4 @@ p = plot.preview_partitions(trials, partitions=4, validate=0.1, test=0, split='t
 ###############################################################################
 # Choosing a scheme
 # -----------------
-# Partitions that consist of whole trials or contiguous periods of time test whether the model generalizes to a different period of the experiment. However, when the trials differ systematically (e.g., different conditions, learning or fatigue effects), a test partition that stems from a single trial may not represent the data as a whole. Partitions within trials (``split='within-cases'``) avoid this because every partition samples every trial, at the cost of more segment boundaries. For trial-based experiments with different conditions, the ``model`` parameter achieves the same without cutting trials.
+# Partitions that consist of whole trials or contiguous periods of time test whether the model generalizes to a different period of the experiment. However, when the trials differ systematically (e.g., different conditions, learning or fatigue effects), a test partition that stems from a single trial may not represent the data as a whole. Partitions within trials (``split='within-case'``) avoid this because every partition samples every trial, at the cost of more segment boundaries. For trial-based experiments with different conditions, the ``model`` parameter achieves the same without cutting trials.
