@@ -136,7 +136,10 @@ class DataSplit(EelFigure, LegendMixin):
             ax.set_ylabel('Test partition')
         else:
             ax.set_ylabel('Split')
-            ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+            if len(rows) == 1:
+                ax.set_yticks([])
+            else:
+                ax.yaxis.set_major_locator(MaxNLocator(integer=True))
         if xlabel:
             ax.set_xlabel(xlabel)
         ax.set_xlim(x_start * scale, x_stop * scale)

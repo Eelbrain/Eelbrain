@@ -80,6 +80,10 @@ def test_preview_partitions():
     assert p.figure.axes[0].get_xlabel() == 'Sample'
     assert len(p.splits.split_segments) == 8
     p.close()
+    # a single split needs no ticks to number the splits
+    p = plot.preview_partitions(2, partitions=2, test=0, scheme='walk-forward')
+    assert len(p.figure.axes[0].get_yticks()) == 0
+    p.close()
     # model: a line above the plot indicates the cell of each trial
     p = plot.preview_partitions(12, partitions=3, test=0, model=Factor('aabb', tile=3))
     lines_a, lines_b = p.figure.axes[0].collections
