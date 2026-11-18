@@ -517,7 +517,7 @@ class BoostingResult(PickleableDataClass):
         else:
             y_dims = self._y_dims
         y_dimnames = [dim.name for dim in y_dims]
-        n_y = sum(len(dim) for dim in y_dims) or 1
+        n_y = reduce(mul, map(len, y_dims), 1)
         y_pred = np.empty((1, n_y, x_data.n_times_flat))
         # prepare x:  (n_x_only, n_shared, n_x_times)
         x_data.flatten()
