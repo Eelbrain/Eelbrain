@@ -81,7 +81,7 @@ def test_boosting_fit():
     # legacy: negative partitions concatenate the cases
     res = Boosting(partitions=-3, test=0)._fit(y.copy(), [x.copy()], 0, 0.1)
     assert len(res.splits.segments) == 1
-    target = boosting(concatenate(y), concatenate(x), 0, 0.1, basis=0.05, partitions=3, test=0)
+    target = boosting(concatenate(y), concatenate(x), 0, 0.1, basis=0.05, partitions=3, split=None, test=0)
     assert res.splits == target.splits
     assert (res.h.x == target.h.x).all()
 

@@ -1422,9 +1422,9 @@ class DeconvolutionData:
 
     def initialize_cross_validation(
             self,
-            partitions: int = None,
+            partitions: int | None = 5,
             *,
-            split: Literal['cases', 'time', 'within-cases'] = None,
+            split: Literal['cases', 'time', 'within-cases'] | None = 'time',
             scheme: Literal['k-fold', 'walk-forward'] = 'k-fold',
             validate: float = None,
             test: int = 1,

@@ -338,10 +338,14 @@ class BoostingResult(PickleableDataClass):
                 continue
             elif name == 'partition_results':
                 value = bool(self.partition_results)
-            elif name in ('partitions', 'split', 'validate', 'min_section'):
+            elif name in ('partitions', 'split'):
+                # None is not the default, but the data-dependent rule (see split_data)
+                if self.splits is None or getattr(self.splits, f'{name}_arg') == param.default:
+                    continue
+                items.append(f"{name}={getattr(self.splits, f'{name}_arg')!r}")
+                continue
+            elif name in ('validate', 'min_section'):
                 value = None if self.splits is None else getattr(self.splits, f'{name}_arg')
-                if isinstance(value, str):
-                    value = repr(value)
             elif name == 'scheme':
                 if self.splits is None or self.splits.scheme == param.default:
                     continue
@@ -1168,8 +1172,8 @@ def boosting(
         basis: float = 0,
         basis_window: str = 'hamming',
         *,
-        partitions: int = None,
-        split: Literal['cases', 'time', 'within-cases'] = None,
+        partitions: int | None = 5,
+        split: Literal['cases', 'time', 'within-cases'] | None = 'time',
         scheme: Literal['k-fold', 'walk-forward'] = 'k-fold',
         validate: float = None,
         test: int = 1,
@@ -1230,17 +1234,15 @@ def boosting(
         Basis window (see :func:`scipy.signal.get_window` for options; default
         is ``'hamming'``).
     partitions
-        Number of partitions (*k*) for cross-validation (default 5 for
-        continuous data, the number of cases for data with 3 to 10 cases).
+        Number of partitions (*k*) for cross-validation (default 5).
         The cross-validation parameters (``partitions``, ``split``,
         ``scheme``, ``validate``, ``test``, ``model`` and ``min_section``) are described
         in :func:`split_data`, and illustrated in the :ref:`exa-data_split`
         example.
     split
-        How to form partitions: ``'cases'`` (whole cases; default for data
-        with cases), ``'time'`` (contiguous spans of time; default for
-        continuous data) or ``'within-cases'`` (one piece of every case). See
-        :func:`split_data`.
+        How to form partitions: ``'time'`` (contiguous spans of time;
+        default), ``'cases'`` (whole cases) or ``'within-cases'`` (one piece
+        of every case). See :func:`split_data`.
     scheme
         Which partitions are used for training when a partition is held out:
         ``'k-fold'`` (all the other partitions; default) or

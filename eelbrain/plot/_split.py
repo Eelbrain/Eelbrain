@@ -155,8 +155,8 @@ class DataSplit(EelFigure, LegendMixin):
 def preview_partitions(
     cases: int | Sequence[float] | NDVarArg = 0,
     *,
-    partitions: int = None,
-    split: Literal['cases', 'time', 'within-cases'] = None,
+    partitions: int | None = 5,
+    split: Literal['cases', 'time', 'within-cases'] | None = 'time',
     scheme: Literal['k-fold', 'walk-forward'] = 'k-fold',
     validate: float = None,
     test: int = 1,
@@ -177,9 +177,9 @@ def preview_partitions(
         trials of different lengths. Trials specified by their number have no
         duration, so ``min_section`` can not be used with them.
     partitions
-        Number of partitions to divide the data into.
+        Number of partitions to divide the data into (default 5).
     split
-        How to form partitions.
+        How to form partitions (default ``'time'``).
     scheme
         Which partitions are used for training when a partition is held out.
     validate
@@ -188,7 +188,7 @@ def preview_partitions(
         Number of partitions in each test set (0 or 1).
     model
         Sample partitions evenly from the cells of this model (one entry per
-        trial). A line above the plot indicates the cell of each trial.
+        trial; requires ``split='cases'``). A line above the plot indicates the cell of each trial.
     min_section
         Minimum duration (in seconds) of the pieces left when a trial is cut.
     data

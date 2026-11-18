@@ -94,7 +94,7 @@ def test_deconvolution_data_trials():
     assert_array_equal(data.segments, [[i * n_times, (i + 1) * n_times] for i in range(60)])
 
     # partitioning
-    data.initialize_cross_validation(3, test=0)
+    data.initialize_cross_validation(3, split='cases', test=0)
     assert len(data.splits.splits) == 3
     arange = np.arange(len(data.segments)) % 3
     for i, split in enumerate(data.splits.splits):
@@ -103,7 +103,7 @@ def test_deconvolution_data_trials():
         assert_array_equal(split.train, data.segments[~validate_index])
 
     # continuoue model
-    data.initialize_cross_validation(3, model='A', data=ds, test=0)
+    data.initialize_cross_validation(3, split='cases', model='A', data=ds, test=0)
     assert len(data.splits.splits) == 3
     for i, split in enumerate(data.splits.splits):
         validate_index = arange == i
@@ -112,7 +112,7 @@ def test_deconvolution_data_trials():
 
     # alternating model
     ds['C'] = Factor('abc', tile=20)
-    data.initialize_cross_validation(3, model='C', data=ds, test=0)
+    data.initialize_cross_validation(3, split='cases', model='C', data=ds, test=0)
     assert len(data.splits.splits) == 3
     arange = np.repeat(np.arange(20), 3) % 3
     for i, split in enumerate(data.splits.splits):
