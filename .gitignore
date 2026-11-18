@@ -22,6 +22,7 @@ doc/source/generated
 .hg
 .bzr
 .svn
+eelbrain/_version.py
 eelbrain/**/*.c
 eelbrain/**/*.h
 eelbrain/**/*.cpp

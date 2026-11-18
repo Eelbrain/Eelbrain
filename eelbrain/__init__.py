@@ -46,10 +46,15 @@ from . import testnd
 
 from .fmtxt import Report
 
-from importlib.metadata import version
-
 try:
-    __version__ = version("eelbrain")
-except Exception:
-    __version__ = "0.0.0"
-del version
+    # Written by setuptools_scm when the package is built
+    from ._version import __version__
+except ImportError:
+    # Source tree that has never been built
+    from importlib.metadata import version
+
+    try:
+        __version__ = version("eelbrain")
+    except Exception:
+        __version__ = "0.0.0"
+    del version

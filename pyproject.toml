@@ -1,7 +1,7 @@
 [build-system]
 requires = [
     "setuptools >= 70.1.0",
-    "setuptools_scm >= 6.2",
+    "setuptools_scm >= 8",
     "numpy >= 2,< 3",  # build code 2.0 and 1.x compatible
     "cython >= 3",
 ]
@@ -162,3 +162,4 @@ include-package-data = false
 include = ['eelbrain*']
 
 [tool.setuptools_scm]
+version_file = "eelbrain/_version.py"
