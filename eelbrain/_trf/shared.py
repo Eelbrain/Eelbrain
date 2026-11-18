@@ -226,19 +226,6 @@ class Splits(PickleableDataClass, EQMixIn):
     scheme: Literal['k-fold', 'walk-forward'] = 'k-fold'
 
     def __setstate__(self, state: dict):
-        if 'validate_proportion' in state:
-            # development versions before 0.43: the window proportion was stored separately, and for split='walk-forward' partitions was the number of windows
-            validate_proportion = state.pop('validate_proportion')
-            if state['split'] == 'walk-forward':
-                if validate_proportion != 0.05:
-                    state['validate_arg'] = validate_proportion
-                if state['partitions_arg'] is not None:
-                    state['partitions_arg'] += 1
-            elif state['split'] == 'within_cases':
-                state['split'] = 'within-cases'
-        if state.get('split') == 'walk-forward':
-            # development versions before 0.43: walk-forward was a split option, which cut every segment
-            state.update(split='within-cases', split_arg=None, scheme='walk-forward')
         # Backwards compatibility for BoostingResult version < 18
         splits = state['splits']
         if splits:

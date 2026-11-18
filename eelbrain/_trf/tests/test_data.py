@@ -411,16 +411,6 @@ def test_split_data_walk_forward():
     assert "split='within-cases', scheme='walk-forward', validate=0.25" in repr(splits)
     assert splits == pickle.loads(pickle.dumps(splits))
     assert_array_equal(splits.split_segments, [[0, 80], [80, 120], [120, 160], [160, 240], [240, 280], [280, 320]])
-    # splits pickled by development versions: walk-forward was a split option, partitions was the number of windows, and the proportion was stored separately
-    state = {key: value for key, value in splits.__getstate__().items() if key not in ('split_arg', 'validate_arg', 'min_section_arg', 'tstep', 'scheme')}
-    legacy = Splits.__new__(Splits)
-    legacy.__setstate__({**state, 'split': 'walk-forward', 'partitions_arg': 2, 'validate_proportion': 0.25})
-    assert legacy.partitions_arg == 3
-    assert legacy.validate_arg == 0.25
-    assert legacy == splits
-    legacy = Splits.__new__(Splits)
-    legacy.__setstate__({**splits.__getstate__(), 'split': 'walk-forward', 'split_arg': 'walk-forward', 'scheme': 'k-fold'})
-    assert legacy == splits
     # NCRF's r=0.05: windows of ceil(0.05 / 1.05 * 1000) = 48 samples
     splits = split_data(np.array([[0, 1000]]), partitions=3, validate=0.05 / 1.05, test=0, scheme='walk-forward')
     assert_array_equal(splits.split_segments, [[0, 904], [904, 952], [952, 1000]])
