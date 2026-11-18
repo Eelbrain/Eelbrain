@@ -46,10 +46,22 @@ from . import testnd
 
 from .fmtxt import Report
 
-from importlib.metadata import version
 
-try:
-    __version__ = version("eelbrain")
-except Exception:
-    __version__ = "0.0.0"
-del version
+def _installed_version() -> str:
+    "Version from the metadata installed next to this package"
+    from importlib.metadata import distributions, version
+    from pathlib import Path
+
+    # version("eelbrain") returns the first match on sys.path, which can be metadata from a different copy (e.g., an eelbrain.egg-info in the working directory)
+    try:
+        package_location = str(Path(__file__).parents[1])
+        adjacent_distributions = list(distributions(name="eelbrain", path=[package_location]))
+        if adjacent_distributions:
+            return adjacent_distributions[0].version
+        else:
+            return version("eelbrain")
+    except Exception:
+        return "0.0.0"
+
+
+__version__ = _installed_version()
