@@ -693,6 +693,31 @@ def _ceil_samples(x: float) -> int:
     return i if abs(x - i) < 1e-6 else ceil(x)
 
 
+def per_predictor(
+        t: float | Sequence[float],
+        n_predictors: int,
+        name: str,
+) -> list[float]:
+    """One value per predictor
+
+    Parameters
+    ----------
+    t
+        A scalar applies to all predictors; a sequence specifies one value
+        per predictor.
+    n_predictors
+        Number of predictors.
+    name
+        Name of the parameter for error messages.
+    """
+    if isinstance(t, (Sequence, np.ndarray)):
+        values = list(t)
+        if len(values) != n_predictors:
+            raise ValueError(f"{name}={t!r}: need one value per predictor ({n_predictors})")
+        return values
+    return [t] * n_predictors
+
+
 def lag_window(
         tstart: float | Sequence[float],
         tstop: float | Sequence[float] | None,
@@ -735,19 +760,11 @@ def lag_window(
     if (tstop is None) == (tmax is None):
         raise TypeError("exactly one of tstop and tmax is required")
 
-    def per_predictor(t: float | Sequence[float], name: str) -> list[float]:
-        if isinstance(t, (Sequence, np.ndarray)):
-            values = list(t)
-            if len(values) != n_predictors:
-                raise ValueError(f"{name}={t!r}: need one value per predictor ({n_predictors})")
-            return values
-        return [t] * n_predictors
-
-    i_start = [int(round(t / tstep)) for t in per_predictor(tstart, 'tstart')]
+    i_start = [int(round(t / tstep)) for t in per_predictor(tstart, n_predictors, 'tstart')]
     if tstop is None:
-        i_stop = [int(round(t / tstep)) + 1 for t in per_predictor(tmax, 'tmax')]
+        i_stop = [int(round(t / tstep)) + 1 for t in per_predictor(tmax, n_predictors, 'tmax')]
     else:
-        i_stop = [_ceil_samples(t / tstep) for t in per_predictor(tstop, 'tstop')]
+        i_stop = [_ceil_samples(t / tstep) for t in per_predictor(tstop, n_predictors, 'tstop')]
     for i, (start, stop) in enumerate(zip(i_start, i_stop)):
         if stop <= start:
             desc = f'{tstart=}, {tmax=}' if tstop is None else f'{tstart=}, {tstop=}'

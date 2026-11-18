@@ -38,7 +38,7 @@ from .._exceptions import OldVersionError
 from .._ndvar.ndvar import _concatenate_values, set_adjacency, set_parc
 from .._ndvar._convolve import convolve_1d, convolve_2d
 from .._utils import PickleableDataClass, user_activity
-from .shared import DeconvolutionData, Split, Splits, lag_window, merge_segments
+from .shared import DeconvolutionData, Split, Splits, lag_window, merge_segments, per_predictor
 from ._fit_metrics import get_evaluators
 from . import _boosting_opt as opt
 
@@ -911,16 +911,13 @@ class Boosting:
         n_xs = [block.n_rows for block in self.data.x.blocks]
         tstep = self.data.time.tstep
         i_start_by_predictor, i_stop_by_predictor = lag_window(tstart, tstop, tstep, len(n_xs))
-        sequence_types = (Sequence, np.ndarray)  # as in lag_window()
-        if isinstance(tstart, sequence_types) or isinstance(tstop, sequence_types):
-            # one value per predictor (also when only one of them was specified per predictor)
-            self.tstart = tuple(tstart) if isinstance(tstart, sequence_types) else (tstart,) * len(n_xs)
-            self.tstop = tuple(tstop) if isinstance(tstop, sequence_types) else (tstop,) * len(n_xs)
-            if not self.data.multiple_x:
-                self.tstart, self.tstop = self.tstart[0], self.tstop[0]
+        tstarts = per_predictor(tstart, len(n_xs), 'tstart')
+        tstops = per_predictor(tstop, len(n_xs), 'tstop')
+        if len(set(tstarts)) == 1 and len(set(tstops)) == 1:
+            # a window shared by all predictors is stored as scalars
+            self.tstart, self.tstop = tstarts[0], tstops[0]
         else:
-            self.tstart = tstart
-            self.tstop = tstop
+            self.tstart, self.tstop = tuple(tstarts), tuple(tstops)
         i_start_by_x = np.repeat(i_start_by_predictor, n_xs).astype(np.int64)
         i_stop_by_x = np.repeat(i_stop_by_predictor, n_xs).astype(np.int64)
         self._i_start = i_start = np.min(i_start_by_x)

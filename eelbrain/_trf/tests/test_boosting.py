@@ -538,6 +538,12 @@ def test_trf_len():
     res = boosting(y2, [x, x2], 0, 0.5, partitions=3)
     assert res.tstart == 0
     assert res.tstop == 0.5
+    # a window shared by all predictors is stored as scalars, however it was specified
+    res_seq = boosting(y2, [x, x2], [0, 0], [0.5, 0.5], partitions=3)
+    assert (res_seq.tstart, res_seq.tstop) == (0, 0.5)
+    assert_array_equal(res_seq.h[1], res.h[1])
+    res_seq = boosting(y2, [x, x2], [0, -0.1], 0.5, partitions=3)
+    assert (res_seq.tstart, res_seq.tstop) == ((0, -0.1), (0.5, 0.5))
 
     # test duplicate tstart, tend for multiple predictors
     k3 = NDVar(k2.x, UTS(0, 0.1, 4))
