@@ -375,8 +375,8 @@ def test_split_data_walk_forward():
     "scheme='walk-forward': windows at the end of every segment, trained on the data before them"
     # windows of 0.05 * 160 = 8 samples
     segments = np.array([[0, 160]])
-    splits = split_data(segments, partitions=3, test=0, scheme='walk-forward')
-    assert (splits.split, splits.split_arg, splits.scheme) == ('within-cases', None, 'walk-forward')
+    splits = split_data(segments, partitions=3, test=0, split='within-cases', scheme='walk-forward')
+    assert (splits.split, splits.split_arg, splits.scheme) == ('within-cases', 'within-cases', 'walk-forward')
     assert splits.partitions_arg == 3
     assert splits.n_partitions == 3
     assert len(splits.splits) == 2
@@ -392,20 +392,20 @@ def test_split_data_walk_forward():
     assert splits == pickle.loads(pickle.dumps(splits))
     # the same windows in every segment
     segments = np.array([[0, 160], [160, 320]])
-    splits = split_data(segments, partitions=3, test=0, scheme='walk-forward')
+    splits = split_data(segments, partitions=3, test=0, split='within-cases', scheme='walk-forward')
     assert_array_equal(splits.split_segments, [[0, 144], [144, 152], [152, 160], [160, 304], [304, 312], [312, 320]])
     assert_array_equal(splits.splits[0].reserved, [[144, 152], [304, 312]])
     assert_array_equal(splits.splits[0].train, [[0, 144], [160, 304]])
     assert_array_equal(splits.splits[1].reserved, [[152, 160], [312, 320]])
     assert_array_equal(splits.splits[1].train, [[0, 152], [160, 312]])
-    # default: 4 partitions (3 windows); a single window is allowed
-    splits = split_data(np.array([[0, 100]]), test=0, scheme='walk-forward')
-    assert splits.n_partitions == 4
+    # partitions=None: 4 partitions (3 windows), split=None: within-cases; a single window is allowed
+    splits = split_data(np.array([[0, 160], [160, 260]]), partitions=None, test=0, split=None, scheme='walk-forward')
+    assert (splits.split, splits.split_arg, splits.n_partitions, splits.partitions_arg) == ('within-cases', None, 4, None)
     assert len(splits.splits) == 3
-    assert_array_equal(splits.split_segments, [[0, 85], [85, 90], [90, 95], [95, 100]])
+    assert_array_equal(splits.split_segments, [[0, 136], [136, 144], [144, 152], [152, 160], [160, 245], [245, 250], [250, 255], [255, 260]])
     assert len(split_data(np.array([[0, 100]]), partitions=2, test=0, scheme='walk-forward').splits) == 1
     # validate as proportion of the segment: windows of 0.25 * 160 = 40 samples
-    splits = split_data(segments, partitions=3, validate=0.25, test=0, scheme='walk-forward')
+    splits = split_data(segments, partitions=3, validate=0.25, test=0, split='within-cases', scheme='walk-forward')
     assert splits.n_validate == 1
     assert splits.validate_arg == 0.25
     assert "split='within-cases', scheme='walk-forward', validate=0.25" in repr(splits)
@@ -424,16 +424,16 @@ def test_split_data_walk_forward():
     with pytest.raises(ValueError, match="proportion of the data"):
         split_data(segments, partitions=3, validate=0, test=0, scheme='walk-forward')
     with pytest.raises(ValueError, match="too short for 2 windows of 80 samples"):
-        split_data(segments, partitions=3, validate=0.5, test=0, scheme='walk-forward')
+        split_data(segments, partitions=3, validate=0.5, test=0, split='within-cases', scheme='walk-forward')
     # segments of different lengths: the windows are proportional to each segment
-    splits = split_data(np.array([[0, 100], [100, 160]]), partitions=3, validate=0.1, test=0, scheme='walk-forward')
+    splits = split_data(np.array([[0, 100], [100, 160]]), partitions=3, validate=0.1, test=0, split='within-cases', scheme='walk-forward')
     assert_array_equal(splits.split_segments, [[0, 80], [80, 90], [90, 100], [100, 148], [148, 154], [154, 160]])
     assert_array_equal(splits.splits[0].train, [[0, 80], [100, 148]])
     assert_array_equal(splits.splits[0].reserved, [[80, 90], [148, 154]])
     assert_array_equal(splits.splits[1].train, [[0, 90], [100, 154]])
     assert_array_equal(splits.splits[1].reserved, [[90, 100], [154, 160]])
     with pytest.raises(ValueError, match="3 samples are too short for 2 windows of 2 samples"):
-        split_data(np.array([[0, 100], [100, 103]]), partitions=3, validate=0.4, test=0, scheme='walk-forward')
+        split_data(np.array([[0, 100], [100, 103]]), partitions=3, validate=0.4, test=0, split='within-cases', scheme='walk-forward')
     with pytest.raises(NotImplementedError, match="only implements validation splits"):
         split_data(segments, partitions=3, scheme='walk-forward')
     with pytest.raises(ValueError, match="too short for 10 windows"):
@@ -451,9 +451,9 @@ def test_split_data_walk_forward():
     assert_array_equal(splits.splits[1].reserved, [[170, 200]])
     # for continuous data, both are the same
     segments = np.array([[0, 160]])
-    assert_array_equal(split_data(segments, test=0, split='time', scheme='walk-forward').split_segments, split_data(segments, test=0, scheme='walk-forward').split_segments)
+    assert_array_equal(split_data(segments, test=0, split='time', scheme='walk-forward').split_segments, split_data(segments, test=0, split='within-cases', scheme='walk-forward').split_segments)
     # short windows are not subject to min_section
-    assert len(split_data(np.array([[0, 100], [100, 200]]), test=0, split='time', scheme='walk-forward', tstep=1).splits) == 3
+    assert len(split_data(np.array([[0, 100], [100, 200]]), partitions=4, test=0, split='time', scheme='walk-forward', tstep=1).splits) == 3
     with pytest.raises(TypeError, match="min_section can only be used with split='time' and scheme='k-fold'"):
         split_data(segments, test=0, split='time', scheme='walk-forward', min_section=1, tstep=1)
     with pytest.raises(NotImplementedError, match="not ordered in time"):
@@ -487,8 +487,10 @@ def test_split_data_time():
     segments = np.array([[i * 10, (i + 1) * 10] for i in range(6)])
     splits = split_data(segments, partitions=3, validate=1, test=0, split='time')
     assert_array_equal(splits.splits[0].reserved, [[0, 10], [10, 20]])
-    # default for continuous data
-    assert split_data(np.array([[0, 100]]), partitions=3).split == 'time'
+    # default
+    assert (split_data(segments).split, split_data(segments).n_partitions) == ('time', 5)
+    # split=None for continuous data
+    assert split_data(np.array([[0, 100]]), partitions=3, split=None).split == 'time'
     # min_section: span boundaries close to a segment boundary snap to the segment boundary
     segments = np.array([[0, 95], [95, 300]])
     assert_array_equal(split_data(segments, partitions=3, test=0, split='time').split_segments, [[0, 95], [95, 100], [100, 200], [200, 300]])
@@ -509,8 +511,8 @@ def test_split_data_time():
     for split in ['cases', 'within-cases']:
         with pytest.raises(TypeError, match="min_section can only be used with split='time'"):
             split_data(segments, partitions=2, test=0, split=split, min_section=15, tstep=1)
-    with pytest.raises(TypeError, match="min_section can only be used"):  # default for data with more than one segment
-        split_data(segments, partitions=2, test=0, min_section=15, tstep=1)
+    with pytest.raises(TypeError, match="min_section can only be used"):  # split=None for data with more than one segment
+        split_data(segments, partitions=2, test=0, split=None, min_section=15, tstep=1)
     assert split_data(segments, partitions=2, test=0, tstep=1).min_section_arg is None
     assert_array_equal(splits.splits[0].reserved, [[0, 95]])
     assert_array_equal(splits.splits[1].reserved, [[95, 200]])
@@ -552,12 +554,12 @@ def test_split_data_time_too_many_partitions():
 
 
 def test_split_data_cases():
-    "split='cases' (default with segments) never cuts segments"
+    "split='cases' never cuts segments"
     segments = np.array([[0, 100], [100, 200]])
     with pytest.raises(ValueError, match="only 2 cases"):
-        split_data(segments, partitions=3, validate=1, test=0)
+        split_data(segments, partitions=3, validate=1, test=0, split='cases')
     with pytest.raises(ValueError, match="only 2 cases"):  # a multiple of the number of segments
-        split_data(segments, partitions=4, validate=1, test=0)
+        split_data(segments, partitions=4, validate=1, test=0, split='cases')
     with pytest.raises(TypeError, match="model can only be used"):
         split_data(segments, partitions=2, model=Factor('ab'), validate=1, test=0, split='time')
     with pytest.raises(ValueError, match="split='trials'"):
@@ -646,9 +648,9 @@ def test_splits_eq():
     # with model
     segments = np.array([[i * 10, (i + 1) * 10] for i in range(6)])
     model = Factor('ab', repeat=3)
-    splits = split_data(segments, partitions=3, model=model)
-    assert splits == split_data(segments, partitions=3, model=model)
+    splits = split_data(segments, partitions=3, split='cases', model=model)
+    assert splits == split_data(segments, partitions=3, split='cases', model=model)
     assert splits == pickle.loads(pickle.dumps(splits))
-    assert splits != split_data(segments, partitions=3, model=Factor('ab', tile=3))
-    assert splits != split_data(segments, partitions=3)
-    assert split_data(segments, partitions=3) != splits
+    assert splits != split_data(segments, partitions=3, split='cases', model=Factor('ab', tile=3))
+    assert splits != split_data(segments, partitions=3, split='cases')
+    assert split_data(segments, partitions=3, split='cases') != splits

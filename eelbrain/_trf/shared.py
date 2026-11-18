@@ -288,8 +288,8 @@ def split_data(
         segments: np.ndarray,
         *,
         tstep: float = None,
-        partitions: int = None,
-        split: Literal['cases', 'time', 'within-cases'] = None,
+        partitions: int | None = 5,
+        split: Literal['cases', 'time', 'within-cases'] | None = 'time',
         scheme: Literal['k-fold', 'walk-forward'] = 'k-fold',
         validate: float = None,
         test: int = 1,
@@ -315,23 +315,23 @@ def split_data(
         axis, and parameters in seconds are not available).
     partitions
         Number of partitions (*k*) to divide the data into. Each partition is
-        held out in turn (see ``validate`` and ``test``). The default is the
-        number of segments for ``split='cases'`` (only for 3 to 10 segments),
-        4 for ``scheme='walk-forward'`` and 5 otherwise.
+        held out in turn (see ``validate`` and ``test``). The default is 5.
+        With ``None``, use the number of segments for ``split='cases'`` (only
+        for 3 to 10 segments), 4 for ``scheme='walk-forward'`` and 5 otherwise.
     split
         How to form partitions (see notes for details):
 
+        - ``'time'`` (default): cut the concatenated time axis into
+          ``partitions`` contiguous spans of equal length. Segments are only
+          cut into pieces that are at least ``min_section`` long.
         - ``'cases'``: each partition consists of whole segments, so that
           segment boundaries are always partition boundaries. Requires at least
           as many segments as partitions.
-        - ``'time'``: cut the concatenated time axis into ``partitions``
-          contiguous spans of equal length. Segments are only cut into
-          pieces that are at least ``min_section`` long.
         - ``'within-cases'``: cut each segment into ``partitions`` pieces of
           equal length, and form partition *i* from the *i*-th piece of every
           segment, so that each partition samples every segment.
 
-        The default is ``'cases'`` for data with more than one segment and
+        With ``None``, use ``'cases'`` for data with more than one segment and
         ``'time'`` for continuous data (``'within-cases'`` with
         ``scheme='walk-forward'``).
     scheme
@@ -343,7 +343,7 @@ def split_data(
           training data always precedes the held-out data. The partitions
           after the first are short windows (see ``validate``), which are
           held out one at a time. Requires ``test=0``, and
-          ``split='within-cases'`` (default) or ``split='time'``.
+          ``split='time'`` or ``split='within-cases'``.
     validate
         Size of each validation set (the data that is held out to evaluate a
         model while fitting it, e.g., for early stopping in :func:`boosting`).
@@ -400,27 +400,26 @@ def split_data(
        continuous segment again. Hard boundaries are never merged.
 
     How the sections are formed and assigned to partitions (steps 1 and 2)
-    depends on ``split``. Except for the default, this never depends on the
+    depends on ``split``. Except for ``split=None``, this never depends on the
     number of segments, so that the same arguments lead to the same kind of
     cross-validation for datasets that differ in the number of segments (e.g.,
     a participant with a missing trial).
 
-    **Whole cases** (``split='cases'``, default for data with more than one
-    segment): whole segments are used as sections, so that segment boundaries
+    **Whole cases** (``split='cases'``): whole segments are used as sections, so that segment boundaries
     are always partition boundaries. The segments are assigned to partitions in
     an interleaved fashion, i.e., partition *p* receives segments
     ``[p::partitions]``. With ``model``, this is done separately within each
     cell, so that every partition samples each cell evenly (``model`` is only
-    allowed with this scheme). The automatic default is
+    allowed with this scheme). With ``partitions=None``, the default is
     ``partitions = n_segments`` (number of segments in the smallest cell with
     ``model``), which amounts to leave-one-out and is only available for 3 to
     10 segments (per cell); with ``model`` it further requires all cells to
     have the same size. More partitions than segments (per cell) raise an
     error.
 
-    **Time** (``split='time'``, default for continuous data): the
+    **Time** (``split='time'``, the default): the
     concatenated time axis is divided into ``partitions`` spans of equal
-    length (default 5), and the data is cut at these span boundaries (soft) as
+    length, and the data is cut at these span boundaries (soft) as
     well as at all segment boundaries (hard). Each section is assigned to the
     partition whose span contains its start, so partitions contain
     (approximately) equal numbers of samples and correspond to different
@@ -439,7 +438,7 @@ def split_data(
     partitions or a smaller ``min_section``).
 
     **Within cases** (``split='within-cases'``): each segment is cut into
-    ``partitions`` pieces of equal length (default 5), and partition *i*
+    ``partitions`` pieces of equal length, and partition *i*
     consists of the *i*-th piece of every segment. Every partition thus
     samples every segment in proportion to its length, at the cost of more
     segment boundaries. Note that partition *i* always covers the same
@@ -448,9 +447,9 @@ def split_data(
 
     **Walk-forward** (``scheme='walk-forward'``): the training data always
     precedes the held-out data. For steps 1 and 2, the data is cut into
-    ``partitions`` spans (default 4), of which the last ``partitions - 1`` are
+    ``partitions`` spans, of which the last ``partitions - 1`` are
     windows of equal length, and the first is the remaining data before them.
-    With ``split='within-cases'`` (the default with this scheme), every
+    With ``split='within-cases'``, every
     segment is cut this way, and partition *i* consists of the *i*-th piece of
     every segment. With ``split='time'``, the concatenated time axis is cut
     this way, so that all windows are at the end of the data (and cut

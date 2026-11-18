@@ -3336,9 +3336,9 @@ class Pipeline(StateModel):
             that this estimator uses. Can not be combined with the
             cross-validation parameters.
         partitions
-            Number of partitions to divide the data into.
+            Number of partitions to divide the data into (default 5).
         split
-            How to form partitions.
+            How to form partitions (default ``'time'``).
         scheme
             Which partitions are used for training when a partition is held
             out (default ``'k-fold'``).
@@ -3350,8 +3350,7 @@ class Pipeline(StateModel):
             Minimum duration (in seconds) of the pieces left when a case is cut.
         ...
             State parameters; other parameters are plotting parameters (see
-            :class:`eelbrain.plot.DataSplit`, including
-            :ref:`general-layout-parameters` like ``w`` and ``h``).
+            :class:`eelbrain.plot.DataSplit` and :ref:`general-layout-parameters`).
 
         See Also
         --------
@@ -3360,22 +3359,21 @@ class Pipeline(StateModel):
         Notes
         -----
         The cross-validation parameters, and their defaults, are those of
-        :func:`eelbrain.split_data`. The defaults of the estimators differ
-        (e.g., :class:`Boosting` defaults to ``partitions=5, split='time'``).
+        :func:`eelbrain.split_data`, which are also the defaults of the
+        :class:`Boosting` estimator. The defaults of :class:`NCRF` differ:
 
-        The plot shows the cases of the current epoch as they enter
-        :meth:`load_trf` (i.e., after epoch rejection). It is based on the
-        events, without loading the data, and uses a time resolution of 10 ms.
+         - :func:`eelbrain.split_data` and :class:`Boosting`: ``partitions=5, split='time', scheme='k-fold', test=1``
+         - :class:`NCRF`: ``partitions=4, split='within-cases', scheme='walk-forward', validate=0.05, test=0`` (NCRF never uses a test set)
+
+        The plot shows the cases of the current epoch as they enter :meth:`load_trf`
+        (i.e., after epoch rejection).
         """
         split_args = {'partitions': partitions, 'split': split, 'scheme': scheme, 'validate': validate, 'test': test, 'min_section': min_section}
+        specified = {key: value for key, value in split_args.items() if value is not None}
         if estimator is None:
             concatenate_cases = False
-            if scheme is None:
-                split_args['scheme'] = 'k-fold'
-            if test is None:
-                split_args['test'] = 1
+            split_args = {**Boosting()._split_args, **specified}
         else:
-            specified = [key for key, value in split_args.items() if value is not None]
             if specified:
                 raise TypeError(f"{estimator=} with {', '.join(specified)}: specify either an estimator or cross-validation parameters")
             est = self._estimators[estimator]

@@ -2745,10 +2745,10 @@ def test_show_partitions(samples_trf_experiment):
     assert len(splits.segments) == len(y)
     assert (splits.segments[0, 1] - splits.segments[0, 0]) * splits.tstep == pytest.approx(y.time.tstep * y.time.nsamples, abs=splits.tstep)
     p.close()
-    # cross-validation parameters, with the defaults of split_data
+    # cross-validation parameters, with the defaults of the Boosting estimator
     p = e.show_partitions(partitions=4)
     splits = p.splits
-    assert (splits.split, splits.n_partitions, splits.n_test) == ('cases', 4, 1)
+    assert (splits.split, splits.n_partitions, splits.n_test) == ('time', 4, 1)
     assert len(splits.segments) == len(y)
     p.close()
     p = e.show_partitions(partitions=3, split='within-cases', test=0)
@@ -2766,7 +2766,7 @@ def test_show_partitions(samples_trf_experiment):
     assert durations == pytest.approx([yi.time.tstep * yi.time.nsamples for yi in y], abs=splits.tstep)
     p.close()
     # walk-forward: windows at the end of every case
-    p = e.show_partitions(scheme='walk-forward', test=0)
+    p = e.show_partitions(partitions=4, split='within-cases', scheme='walk-forward', test=0)
     splits = p.splits
     assert (splits.split, splits.scheme, len(splits.splits)) == ('within-cases', 'walk-forward', 3)
     assert len(splits.split_segments) == 4 * len(y)

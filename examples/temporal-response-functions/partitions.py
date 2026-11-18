@@ -2,10 +2,10 @@
 .. _exa-data_split:
 .. currentmodule:: eelbrain
 
-Data partitions for boosting
-============================
+Data partitions for cross-validation
+====================================
 
-The boosting algorithm can use two different forms of cross-validation: cross-validation as stopping criterion (always on), and cross-validation for model evaluation (on by default, ``test=1``). Cross-validation for model evaluation ensures that fit metrics, such as the explained variance, reflect how well the model predicts data that were not used to estimate it; fit metrics computed from the same data that were used to estimate the model would overestimate its predictive power. Both forms of cross-validation require partitioning the data into different segments. The :func:`eelbrain.plot.preview_partitions` function is for exploring the effect of different parameters on the way the data is split.
+TRF estimation algorithms can use two different forms of cross-validation: cross-validation for optimizing regularization, and cross-validation for model evaluation. Cross-validation for model evaluation ensures that fit metrics, such as the explained variance, reflect how well the model predicts data that were not used to estimate it; fit metrics computed from the same data that were used to estimate the model would overestimate its predictive power. Both forms of cross-validation require partitioning the data into different segments. The :func:`eelbrain.plot.preview_partitions` function is for exploring the effect of different parameters on the way the data is split. When working with a :class:`~pipeline.Pipeline`, use :meth:`Pipeline.show_partitions <pipeline.Pipeline.show_partitions>` to inspect or preview partitioning for a specific dataset.
 
 .. contents:: Sections
     :local:
