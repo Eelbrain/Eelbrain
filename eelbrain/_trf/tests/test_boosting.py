@@ -204,6 +204,11 @@ def test_boosting_cross_predict(error):
     y_pred = trf.cross_predict('x1', ds)
     assert_array_equal(y_pred, trf.y_pred * trf.y_scale + trf.y_mean)
 
+    # Subset of the predictors
+    trf = boosting('y', ['x1', 'x2'], 0, 1, data=ds, error=error, partitions=3, partition_results=True)
+    assert trf.cross_predict('x1', ds).name == trf.y
+    assert trf.cross_predict('x1', ds, name='foo').name == 'foo'
+
 
 def test_boosting_epochs():
     """Test boosting with epoched data"""

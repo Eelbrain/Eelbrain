@@ -509,8 +509,8 @@ class BoostingResult(PickleableDataClass):
                 raise NotImplementedError("x in different order than original fit")
             # index for subset of self.x
             x_use_index = np.ones(self._x_mean_array.shape[0], bool)
-            for index, name in zip(to_index(self.x_mean), self.x):
-                x_use_index[index] = name in x_use
+            for index, x_name in zip(to_index(self.x_mean), self.x):
+                x_use_index[index] = x_name in x_use
         # prepare output array
         if self._y_dims is None:  # only possible in results from dev version
             y_dims = self.y_mean.dims
