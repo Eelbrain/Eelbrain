@@ -336,7 +336,7 @@ class NCRF(Estimator):
     split
         How to form partitions. The default (``'walk-forward'``) holds out
         windows at the end of every case, each with only the data preceding it
-        as training set; it requires a single case or cases of equal length.
+        as training set.
     validate
         Size of each validation set. For ``split='walk-forward'``, the length
         of each validation set as proportion of the case (default 0.05).

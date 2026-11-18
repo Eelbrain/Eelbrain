@@ -335,8 +335,7 @@ def split_data(
           segment, so that each partition samples every segment.
         - ``'walk-forward'``: hold out the last ``partitions - 1`` partitions
           of every segment one at a time, each with only the data preceding
-          it as training set. Requires ``test=0`` and a single segment or
-          segments of equal length.
+          it as training set. Requires ``test=0``.
 
         The default is ``'cases'`` for data with more than one segment and
         ``'time'`` for continuous data.
@@ -442,16 +441,18 @@ def split_data(
 
     **Walk-forward** (``split='walk-forward'``): the training data always
     precedes the held-out data. This is the scheme the NCRF package uses to
-    select its regularization parameter, for a single segment or segments of
-    equal length. Every segment is cut into ``partitions`` pieces (default 4):
-    the last ``partitions - 1`` pieces are windows of equal length at the end
-    of the segment, and the first piece is the remaining data before them.
-    Each window is held out in turn as validation set, with all the data
-    preceding it as training set; the data following the window is not used in
-    that split. This results in ``partitions - 1`` splits (NCRF's
-    ``n_splits``), because the first partition is never held out. For
-    segments of ``n`` samples, each window is ``ceil(validate * n)`` samples
-    long, with ``validate`` the proportion of the segment (default 0.05).
+    select its regularization parameter. Every segment is cut into
+    ``partitions`` pieces (default 4): the last ``partitions - 1`` pieces are
+    windows of equal length at the end of the segment, and the first piece is
+    the remaining data before them. Partition *i* consists of the *i*-th piece
+    of every segment. Each partition of windows is held out in turn as
+    validation set, with all the data preceding it in the same segment as
+    training set; the data following the windows is not used in that split.
+    This results in ``partitions - 1`` splits (NCRF's ``n_splits``), because
+    the first partition is never held out. In a segment of ``n`` samples, each
+    window is ``ceil(validate * n)`` samples long, with ``validate`` the
+    proportion of the segment (default 0.05), so that the windows of a longer
+    segment are longer.
     NCRF's ``r`` specifies the window relative to the rest of the segment and
     corresponds to ``validate = r / (1 + r)``. Steps 3 and 4 above do not
     apply, and the scheme requires a validation set and ``test=0``. Note that
@@ -538,15 +539,14 @@ def split_data(
             # partition 0 is the beginning of every segment, the remaining partitions are windows at its end
             if test:
                 raise NotImplementedError(f"{split=} with {test=}: the walk-forward scheme only implements validation splits (test=0)")
-            n_times = np.unique(np.diff(segments, axis=1))
-            if len(n_times) > 1:
-                raise NotImplementedError(f"{split=} with segments of different lengths ({', '.join(map(str, n_times))} samples): the walk-forward scheme needs a single segment or segments of equal length")
+            n_times = np.diff(segments, axis=1)
             n_windows = partitions - 1
-            n_window = _ceil_samples(validate * n_times[0])
-            n_train = n_times[0] - n_windows * n_window
-            if n_train < 1:
-                raise ValueError(f"{partitions=} with {split=}: segments of {n_times[0]} samples are too short for {n_windows} windows of {n_window} samples and training data before them; use fewer partitions")
-            segment_cuts = segments[:, :1] + np.concatenate([[0], n_train + n_window * np.arange(partitions)])
+            n_window = np.array([[_ceil_samples(validate * n)] for n in n_times[:, 0]])  # window length in each segment
+            n_train = n_times - n_windows * n_window
+            if n_train.min() < 1:
+                i = n_train.argmin()
+                raise ValueError(f"{partitions=} with {split=}: a segment of {n_times[i, 0]} samples is too short for {n_windows} windows of {n_window[i, 0]} samples and training data before them; use fewer partitions")
+            segment_cuts = np.hstack([segments[:, :1], segments[:, :1] + n_train + n_window * np.arange(partitions)])
         else:
             # partitions with equal numbers of samples, cut additionally at segment boundaries
             n_min_section = 0 if tstep is None else int(round(min_section / tstep))

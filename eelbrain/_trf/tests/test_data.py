@@ -431,8 +431,15 @@ def test_split_data_walk_forward():
         split_data(segments, partitions=3, validate=0, test=0, split='walk-forward')
     with pytest.raises(ValueError, match="too short for 2 windows of 80 samples"):
         split_data(segments, partitions=3, validate=0.5, test=0, split='walk-forward')
-    with pytest.raises(NotImplementedError, match="segments of equal length"):
-        split_data(np.array([[0, 100], [100, 160]]), partitions=3, test=0, split='walk-forward')
+    # segments of different lengths: the windows are proportional to each segment
+    splits = split_data(np.array([[0, 100], [100, 160]]), partitions=3, validate=0.1, test=0, split='walk-forward')
+    assert_array_equal(splits.split_segments, [[0, 80], [80, 90], [90, 100], [100, 148], [148, 154], [154, 160]])
+    assert_array_equal(splits.splits[0].train, [[0, 80], [100, 148]])
+    assert_array_equal(splits.splits[0].reserved, [[80, 90], [148, 154]])
+    assert_array_equal(splits.splits[1].train, [[0, 90], [100, 154]])
+    assert_array_equal(splits.splits[1].reserved, [[90, 100], [154, 160]])
+    with pytest.raises(ValueError, match="a segment of 3 samples is too short for 2 windows of 2 samples"):
+        split_data(np.array([[0, 100], [100, 103]]), partitions=3, validate=0.4, test=0, split='walk-forward')
     with pytest.raises(NotImplementedError, match="only implements validation splits"):
         split_data(segments, partitions=3, split='walk-forward')
     with pytest.raises(ValueError, match="too short for 10 windows"):
