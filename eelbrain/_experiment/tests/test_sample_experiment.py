@@ -2830,6 +2830,7 @@ def test_trf_ncrf_job(samples_experiment):
     assert not job.fwd.source.parc.startswith('unknown').any()
     assert set(job.y.sensor.names) >= set(job.fwd.sensor.names)
     # the fit selects mu through cross-validation with the estimator's partitions
+    pytest.importorskip('ncrf')
     fit = job()
     assert fit.cv_info() is not None
     assert fit.solver.mu > 0
