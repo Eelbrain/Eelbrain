@@ -3312,15 +3312,42 @@ class Pipeline(StateModel):
             raw -= raw.mean('time')
         return plot.TopoButterfly(raw, w=0, h=3, xlim=xlim, vmax=vmax, name=name)
 
-    def preview_partitions(self, estimator: str = 'boosting', **state) -> plot.DataSplit:
-        """Preview how a TRF estimator partitions the data for cross-validation
+    def show_partitions(
+            self,
+            estimator: str = None,
+            partitions: int = None,
+            split: Literal['cases', 'time', 'within-cases', 'walk-forward'] = None,
+            validate: float = None,
+            test: int = None,
+            min_section: float = None,
+            **kwargs,
+    ) -> plot.DataSplit:
+        """Visualize how the data of an epoch is partitioned for cross-validation
+
+        Specify an ``estimator`` to show how that estimator partitions the
+        data, or specify cross-validation parameters to explore how they
+        would partition the data.
 
         Parameters
         ----------
         estimator
-            Name of the estimator in :attr:`estimators` (default ``'boosting'``).
+            Name of an estimator in :attr:`estimators`: show the partitions
+            that this estimator uses. Can not be combined with the
+            cross-validation parameters.
+        partitions
+            Number of partitions to divide the data into.
+        split
+            How to form partitions.
+        validate
+            Size of each validation set.
+        test
+            Number of partitions in each test set (0 or 1; default 1).
+        min_section
+            Minimum duration (in seconds) of the pieces left when a case is cut.
         ...
-            State parameters.
+            State parameters; other parameters are plotting parameters (see
+            :class:`eelbrain.plot.DataSplit`, including
+            :ref:`general-layout-parameters` like ``w`` and ``h``).
 
         See Also
         --------
@@ -3328,13 +3355,29 @@ class Pipeline(StateModel):
 
         Notes
         -----
+        The cross-validation parameters, and their defaults, are those of
+        :func:`eelbrain.split_data`. The defaults of the estimators differ
+        (e.g., :class:`Boosting` defaults to ``partitions=5, split='time'``).
+
         The plot shows the cases of the current epoch as they enter
         :meth:`load_trf` (i.e., after epoch rejection). It is based on the
         events, without loading the data, and uses a time resolution of 10 ms.
         """
+        split_args = {'partitions': partitions, 'split': split, 'validate': validate, 'test': test, 'min_section': min_section}
+        if estimator is None:
+            concatenate_cases = False
+            if test is None:
+                split_args['test'] = 1
+        else:
+            specified = [key for key, value in split_args.items() if value is not None]
+            if specified:
+                raise TypeError(f"{estimator=} with {', '.join(specified)}: specify either an estimator or cross-validation parameters")
+            est = self._estimators[estimator]
+            split_args = est._split_args
+            concatenate_cases = est._concatenate_cases
+        state = {key: kwargs.pop(key) for key in list(kwargs) if key in self._fields}
         if state:
             self.set(**state)
-        est = self._estimators[estimator]
         ctx = self._resolve_derivative('epoch-events')
         ds = ctx.load()
         tmin, tmax, tstop, decim, variable_tmax = self._epochs[self.get('epoch')]._extraction_parameters(ds, ctx.options)
@@ -3344,9 +3387,9 @@ class Pipeline(StateModel):
             durations = list(tstop.x - tmin)
         else:
             durations = [tstop - tmin] * ds.n_cases
-        if est._concatenate_cases:
+        if concatenate_cases:
             durations = [sum(durations)]
-        return plot.preview_partitions(durations, **est._split_args)
+        return plot.preview_partitions(durations, **split_args, **kwargs)
 
     def set(self, subject: str = None, **state):
         """

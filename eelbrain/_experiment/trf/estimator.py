@@ -162,7 +162,7 @@ class Boosting(Estimator):
         Number of partitions for cross-validation. The cross-validation
         parameters (``partitions``, ``split``, ``validate``, ``test`` and
         ``min_section``) are described in :func:`eelbrain.split_data`; use
-        :meth:`Pipeline.preview_partitions` to inspect how they partition the
+        :meth:`Pipeline.show_partitions` to inspect how they partition the
         data.
     split
         How to form partitions: ``'time'`` (default) forms partitions from
@@ -329,7 +329,7 @@ class NCRF(Estimator):
         (unless ``mu`` is a single value). The cross-validation parameters
         (``partitions``, ``split``, ``validate`` and ``min_section``) are
         described in :func:`eelbrain.split_data`; use
-        :meth:`Pipeline.preview_partitions` to inspect how they partition the
+        :meth:`Pipeline.show_partitions` to inspect how they partition the
         data. With the default ``split``, the last ``partitions - 1``
         partitions of every case are held out one at a time (default 4, i.e.,
         3 splits).

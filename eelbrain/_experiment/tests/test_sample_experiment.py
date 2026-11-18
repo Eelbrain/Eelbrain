@@ -2734,19 +2734,33 @@ def test_load_trf(samples_trf_experiment):
 
 @requires_mne_sample_data
 @hide_plots
-def test_preview_partitions(samples_trf_experiment):
-    "preview_partitions derives the cases that enter the fit from the events"
+def test_show_partitions(samples_trf_experiment):
+    "show_partitions derives the cases that enter the fit from the events"
     e = samples_trf_experiment()
     y = e.load_trf_job('imp', 0, 0.1).y
-    p = e.preview_partitions()
+    # partitions of an estimator
+    p = e.show_partitions('boosting')
     splits = p.splits
     assert (splits.split, splits.n_partitions, splits.n_test) == ('time', 5, 1)
     assert len(splits.segments) == len(y)
     assert (splits.segments[0, 1] - splits.segments[0, 0]) * splits.tstep == pytest.approx(y.time.tstep * y.time.nsamples, abs=splits.tstep)
     p.close()
+    # cross-validation parameters, with the defaults of split_data
+    p = e.show_partitions(partitions=4)
+    splits = p.splits
+    assert (splits.split, splits.n_partitions, splits.n_test) == ('cases', 4, 1)
+    assert len(splits.segments) == len(y)
+    p.close()
+    p = e.show_partitions(partitions=3, split='within-cases', test=0)
+    splits = p.splits
+    assert (splits.split, splits.n_partitions, splits.n_test) == ('within-cases', 3, 0)
+    p.close()
+    with pytest.raises(TypeError, match="estimator='boosting' with partitions, test"):
+        e.show_partitions('boosting', partitions=3, test=0)
     # variable-length cases
     y = e.load_trf_job('imp', 0, 0.1, epoch='cont').y
-    p = e.preview_partitions(epoch='cont')
+    p = e.show_partitions('boosting', epoch='cont', w=6, h=3, legend=False)
+    assert tuple(p.figure.get_size_inches()) == (6, 3)
     splits = p.splits
     durations = (splits.segments[:, 1] - splits.segments[:, 0]) * splits.tstep
     assert durations == pytest.approx([yi.time.tstep * yi.time.nsamples for yi in y], abs=splits.tstep)

@@ -356,9 +356,10 @@ These definitions can then be invoked like::
     trfs = e.load_trfs(..., estimator='forward')
 
 Both estimators use cross-validation, and share the parameters that determine how the data is partitioned for it (``partitions``, ``split``, ``validate`` and ``min_section``; see :func:`eelbrain.split_data`).
-:meth:`Pipeline.preview_partitions` plots the partitions that result for the current epoch and subject::
+:meth:`Pipeline.show_partitions` plots the partitions that an estimator uses for the current epoch and subject, or the partitions that would result from different parameters::
 
-    e.preview_partitions('forward', epoch='story')
+    e.show_partitions('forward', epoch='story')
+    e.show_partitions(partitions=10, split='time', epoch='story')
 
 For :class:`Boosting`, the analysis *space* is determined by the :ref:`state-inv` state, as for evoked analysis:
 with ``inv=''`` the TRF is fit to sensor data, with a non-empty inverse solution it is fit to source-localized data (in source space, the :ref:`state-parc` state masks the source space: sources labeled ``"unknown"`` are excluded).
