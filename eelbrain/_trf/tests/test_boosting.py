@@ -14,7 +14,7 @@ import pytest
 from pytest import approx
 import scipy.io
 import scipy.stats
-from eelbrain import datasets, boosting, combine, concatenate, convolve, correlation_coefficient, epoch_impulse_predictor, BoostingResult, Datalist, ExecutionContext, NDVar, UTS, Scalar, split_data
+from eelbrain import datasets, boosting, combine, concatenate, convolve, correlation_coefficient, epoch_impulse_predictor, BoostingResult, Datalist, ExecutionContext, NDVar, UTS, Scalar, Space, split_data
 
 from eelbrain.testing import assert_dataobj_equal
 from eelbrain._trf._boosting import Boosting, DeconvolutionData, convolve_1d
@@ -276,6 +276,22 @@ def test_boosting_dtype():
     # continuous data
     res_32 = boosting(y[1].astype(np.float32), x[1].astype(np.float32), 0, 0.1)
     assert_allclose(res_32.h.x, boosting(y[1], x[1], 0, 0.1).h.x, atol=1e-5)
+
+
+@pytest.mark.parametrize('error', ['l1', 'l2'])
+def test_boosting_vector(error):
+    "Test boosting with vector data"
+    ds = datasets._get_continuous()
+    x1 = ds['x1']
+    rng = np.random.default_rng(0)
+    y_data = rng.normal(size=(3, 1)) * x1.x + rng.normal(size=(3, len(x1.time)))
+    y = NDVar(y_data, (Space('RAS'), x1.time), 'y')
+    # partition results: each test set is evaluated on the uncropped data
+    res = boosting(y, x1, 0, 0.1, error=error, partitions=3, partition_results=True, debug=True)
+    for i, partition_result in enumerate(res.partition_results):
+        res_i = res.fit.evaluate_fit(i_test=i)
+        assert partition_result.r == res_i.r
+        assert partition_result.r_l1 == res_i.r_l1
 
 
 def test_boosting_object():

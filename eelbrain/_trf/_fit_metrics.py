@@ -240,8 +240,8 @@ class VectorCorrelation(Evaluator):
             y_pred: np.ndarray,  # data predicted by model
     ):
         for x, segments in zip(self.xs, self.segments):
-            y, y_pred = self._crop_y(segments, y, y_pred)
-            x[i] = self._r(y, y_pred)
+            y_i, y_pred_i = self._crop_y(segments, y, y_pred)
+            x[i] = self._r(y_i, y_pred_i)
 
     def _r(self, y, y_pred):
         # shape (space, time)
