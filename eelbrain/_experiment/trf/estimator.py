@@ -16,6 +16,7 @@ import numpy as np
 from ..._data_obj import Dataset, Datalist, NDVar, Var
 from ..._ndvar import concatenate
 from ..._trf._boosting import boosting
+from ..._trf.shared import split_data
 from ..configuration import Configuration, typed_arg
 
 
@@ -425,8 +426,7 @@ class NCRF(Estimator):
         if isinstance(self.mu, Real):
             splits = None  # a single mu is not cross-validated
         else:
-            data.data.initialize_cross_validation(**self._split_args)
-            splits = data.data.splits
+            splits = split_data(data.data.segments, tstep=data.data.time.tstep, **self._split_args)
         estimator = NCRFEstimator.from_lead_field(fwd, cov)
         solver = ChampLasso(mu=self.mu, n_iter=self.n_iter, n_iterc=self.n_iterc, n_iterf=self.n_iterf, tol=self.tol, use_es=self.use_ES)
         return estimator.fit(data, solver, cv=splits, compute_explained_variance=True)

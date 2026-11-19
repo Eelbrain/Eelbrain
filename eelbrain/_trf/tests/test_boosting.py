@@ -14,7 +14,7 @@ import pytest
 from pytest import approx
 import scipy.io
 import scipy.stats
-from eelbrain import datasets, boosting, combine, concatenate, convolve, correlation_coefficient, epoch_impulse_predictor, BoostingResult, Datalist, ExecutionContext, NDVar, UTS, Scalar
+from eelbrain import datasets, boosting, combine, concatenate, convolve, correlation_coefficient, epoch_impulse_predictor, BoostingResult, Datalist, ExecutionContext, NDVar, UTS, Scalar, split_data
 
 from eelbrain.testing import assert_dataobj_equal
 from eelbrain._trf._boosting import Boosting, DeconvolutionData, convolve_1d
@@ -124,12 +124,8 @@ def test_boosting():
     assert correlation_coefficient(y_pred, y, 'time') == pytest.approx(res_cv.r)
     # fit res_cv on same data as res
     fit = res_cv.fit
-    splits = fit.data.splits
-    fit.data.initialize_cross_validation(3)  # splits that were not fit
-    with pytest.raises(RuntimeError, match="does not match the splits used in fit"):
-        fit.evaluate_fit()
-    fit.data.splits = replace(splits, splits=[splits.splits[3]])
-    # the existing runs are still matched to the (equal) replaced split
+    fit.splits = replace(fit.splits, splits=[fit.splits.splits[3]])
+    # the existing runs are still matched to the remaining split
     assert_dataobj_equal(fit.evaluate_fit().h, res_cv.partition_results[3].h)
     assert_dataobj_equal(pickle.loads(pickle.dumps(fit)).evaluate_fit().h, res_cv.partition_results[3].h)
     fit.fit(0, 1, 0, 'l2')
@@ -286,17 +282,18 @@ def test_boosting_object():
     "Test Boosting object"
     ds = datasets._get_continuous(ynd=True)
     with pytest.raises(ValueError, match="without y"):
-        Boosting(DeconvolutionData('x2', data=ds))
+        Boosting(DeconvolutionData('x2', data=ds), None)
     data = DeconvolutionData('x2', 'y', ds)
     data.x.normalize(True, 'l1')
-    data.initialize_cross_validation(4)
+    splits = split_data(data.segments, partitions=4)
     with pytest.raises(ValueError, match="only x or only y normalized"):
-        Boosting(data).fit(0, 1)
+        Boosting(data, splits).fit(0, 1)
+    with pytest.raises(ValueError, match="not for the segments of the data"):
+        Boosting(data, split_data(data.segments + 1, partitions=4))
     data = DeconvolutionData('x2', 'y', ds)
     data.apply_basis(0.2, 'hamming')
     data.normalize('l1')
-    data.initialize_cross_validation(4)
-    model = Boosting(data)
+    model = Boosting(data, splits)
     model.fit(0, 1, selective_stopping=1, error='l1')
     res_oo = model.evaluate_fit()
 

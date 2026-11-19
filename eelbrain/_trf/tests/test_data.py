@@ -32,25 +32,25 @@ def test_deconvolution_data_continuous():
     assert abs(data.x.flat).mean() == pytest.approx(1, abs=1e-10)
 
     # partitioning, no testing set
-    data.initialize_cross_validation(4, test=0)
-    assert len(data.splits.splits) == 4
-    assert not any(split.is_test or split.splits for split in data.splits.splits)
-    assert_array_equal(data.splits.splits[0].reserved, [[0, 20]])
-    assert_array_equal(data.splits.splits[0].train, [[20, 80]])
-    assert_array_equal(data.splits.splits[1].reserved, [[20, 40]])
-    assert_array_equal(data.splits.splits[1].train, [[0, 20], [40, 80]])
-    assert_array_equal(data.splits.splits[2].reserved, [[40, 60]])
-    assert_array_equal(data.splits.splits[2].train, [[0, 40], [60, 80]])
-    assert_array_equal(data.splits.splits[3].reserved, [[60, 80]])
-    assert_array_equal(data.splits.splits[3].train, [[0, 60]])
+    splits = split_data(data.segments, tstep=data.time.tstep, partitions=4, test=0)
+    assert len(splits.splits) == 4
+    assert not any(split.is_test or split.splits for split in splits.splits)
+    assert_array_equal(splits.splits[0].reserved, [[0, 20]])
+    assert_array_equal(splits.splits[0].train, [[20, 80]])
+    assert_array_equal(splits.splits[1].reserved, [[20, 40]])
+    assert_array_equal(splits.splits[1].train, [[0, 20], [40, 80]])
+    assert_array_equal(splits.splits[2].reserved, [[40, 60]])
+    assert_array_equal(splits.splits[2].train, [[0, 40], [60, 80]])
+    assert_array_equal(splits.splits[3].reserved, [[60, 80]])
+    assert_array_equal(splits.splits[3].train, [[0, 60]])
 
     # partitioning, testing set
-    data.initialize_cross_validation(4, test=1)
-    assert len(data.splits.splits) == 4
-    assert all(split.is_test and len(split.splits) == 3 for split in data.splits.splits)
-    assert [split.i_reserved for split in data.splits.splits] == [0, 1, 2, 3]
+    splits = split_data(data.segments, tstep=data.time.tstep, partitions=4, test=1)
+    assert len(splits.splits) == 4
+    assert all(split.is_test and len(split.splits) == 3 for split in splits.splits)
+    assert [split.i_reserved for split in splits.splits] == [0, 1, 2, 3]
     # test partition 0
-    test_split = data.splits.splits[0]
+    test_split = splits.splits[0]
     assert_array_equal(test_split.reserved, [[0, 20]])
     assert_array_equal(test_split.train, [[20, 80]])
     assert [split.i_reserved for split in test_split.splits] == [1, 2, 3]
@@ -65,7 +65,7 @@ def test_deconvolution_data_continuous():
     assert_array_equal(test_split.splits[2].reserved, [[60, 80]])
     assert_array_equal(test_split.splits[2].train, [[20, 60]])
     # test partition 1
-    test_split = data.splits.splits[1]
+    test_split = splits.splits[1]
     assert_array_equal(test_split.reserved, [[20, 40]])
     assert_array_equal(test_split.train, [[0, 20], [40, 80]])
     assert [split.i_reserved for split in test_split.splits] == [0, 2, 3]
@@ -76,7 +76,7 @@ def test_deconvolution_data_continuous():
     assert_array_equal(test_split.splits[1].reserved, [[40, 60]])
     assert_array_equal(test_split.splits[1].train, [[0, 20], [60, 80]])
     # test partition 3, validation partition 2
-    test_split = data.splits.splits[3]
+    test_split = splits.splits[3]
     assert_array_equal(test_split.reserved, [[60, 80]])
     assert_array_equal(test_split.train, [[0, 60]])
     assert_array_equal(test_split.splits[2].reserved, [[40, 60]])
@@ -94,28 +94,28 @@ def test_deconvolution_data_trials():
     assert_array_equal(data.segments, [[i * n_times, (i + 1) * n_times] for i in range(60)])
 
     # partitioning
-    data.initialize_cross_validation(3, split='case', test=0)
-    assert len(data.splits.splits) == 3
+    splits = split_data(data.segments, tstep=data.time.tstep, partitions=3, split='case', test=0)
+    assert len(splits.splits) == 3
     arange = np.arange(len(data.segments)) % 3
-    for i, split in enumerate(data.splits.splits):
+    for i, split in enumerate(splits.splits):
         validate_index = arange == i
         assert_array_equal(split.reserved, data.segments[validate_index])
         assert_array_equal(split.train, data.segments[~validate_index])
 
     # continuoue model
-    data.initialize_cross_validation(3, split='case', model='A', data=ds, test=0)
-    assert len(data.splits.splits) == 3
-    for i, split in enumerate(data.splits.splits):
+    splits = split_data(data.segments, tstep=data.time.tstep, partitions=3, split='case', model='A', data=ds, test=0)
+    assert len(splits.splits) == 3
+    for i, split in enumerate(splits.splits):
         validate_index = arange == i
         assert_array_equal(split.reserved, data.segments[validate_index])
         assert_array_equal(split.train, data.segments[~validate_index])
 
     # alternating model
     ds['C'] = Factor('abc', tile=20)
-    data.initialize_cross_validation(3, split='case', model='C', data=ds, test=0)
-    assert len(data.splits.splits) == 3
+    splits = split_data(data.segments, tstep=data.time.tstep, partitions=3, split='case', model='C', data=ds, test=0)
+    assert len(splits.splits) == 3
     arange = np.repeat(np.arange(20), 3) % 3
-    for i, split in enumerate(data.splits.splits):
+    for i, split in enumerate(splits.splits):
         validate_index = arange == i
         assert_array_equal(split.reserved, data.segments[validate_index])
         assert_array_equal(split.train, data.segments[~validate_index])

@@ -1266,12 +1266,8 @@ class DeconvolutionData:
         Name of the predictor (a list for multiple predictors).
     basis : float
         Length of the basis window applied to ``x`` (0 for none).
-    splits : Splits
-        Cross-validation scheme (``None`` before :meth:`initialize_cross_validation`).
     """
     y: SegmentedArray | None = None  # None without y
-    # cross-validation
-    splits: Splits | None = None
 
     def __init__(
             self,
@@ -1419,47 +1415,6 @@ class DeconvolutionData:
                 seg_start, seg_stop = self.segments[i]
                 out.append((i, int(max(start, seg_start) - seg_start), int(min(stop, seg_stop) - seg_start)))
         return out
-
-    def initialize_cross_validation(
-            self,
-            partitions: int | None = 5,
-            *,
-            split: Literal['case', 'time', 'within-case'] | None = 'time',
-            scheme: Literal['k-fold', 'walk-forward'] = 'k-fold',
-            validate: float = None,
-            test: int = 1,
-            model: CategorialArg = None,
-            min_section: float = None,
-            data: Dataset = None,
-    ):
-        """Initialize the cross-validation scheme (:attr:`splits`)
-
-        Parameters
-        ----------
-        partitions
-            Number of partitions to divide the data into.
-        split
-            How to form partitions.
-        scheme
-            Which partitions are used for training when a partition is held
-            out.
-        validate
-            Size of each validation set.
-        test
-            Number of partitions in each test set (0 or 1).
-        model
-            Sample partitions evenly from the cells of this model.
-        min_section
-            Minimum duration (in seconds) of the pieces left when a segment
-            is cut.
-        data
-            Dataset in which to evaluate ``model`` if it is a string.
-
-        Notes
-        -----
-        See :func:`split_data` for a full description of the parameters.
-        """
-        self.splits = split_data(self.segments, tstep=self.time.tstep, partitions=partitions, split=split, scheme=scheme, validate=validate, test=test, model=model, min_section=min_section, data=data)
 
     def data_scale_ndvars(self) -> tuple:
         """Normalization parameters packaged like the input data

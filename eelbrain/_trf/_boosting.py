@@ -38,7 +38,7 @@ from .._exceptions import OldVersionError
 from .._ndvar.ndvar import _concatenate_values, set_adjacency, set_parc
 from .._ndvar._convolve import convolve_1d, convolve_2d
 from .._utils import PickleableDataClass, user_activity
-from .shared import DeconvolutionData, Split, Splits, lag_window, merge_segments, per_predictor
+from .shared import DeconvolutionData, Split, Splits, lag_window, merge_segments, per_predictor, split_data
 from ._fit_metrics import get_evaluators
 from . import _boosting_opt as opt
 
@@ -849,8 +849,8 @@ class Boosting:
         data = DeconvolutionData(x, y, ds)
         data.apply_basis(0.05, 'hamming')
         data.normalize('l1')
-        data.initialize_cross_validation(5)
-        model = Boosting(data)
+        splits = split_data(data.segments, tstep=data.time.tstep, partitions=5)
+        model = Boosting(data, splits)
         model.fit(0, 0.500, selective_stopping=1, error='l1')
         result = model.evaluate_fit()
     """
@@ -876,11 +876,15 @@ class Boosting:
     def __init__(
             self,
             data: DeconvolutionData,
+            splits: Splits,
     ):
         if data.y is None:
             raise ValueError("data without y: boosting requires a dependent variable")
+        elif not np.array_equal(splits.segments, data.segments):
+            raise ValueError(f"{splits=}: not for the segments of the data")
         data.flatten()
         self.data = data
+        self.splits = splits
 
     def __setstate__(self, state: dict):
         self.__dict__.update(state)
@@ -934,16 +938,16 @@ class Boosting:
         shortest_segment_n_times = min(self.data.segment_n_times)
         if max_lag_n_times > shortest_segment_n_times:
             raise ValueError(f"{tstart=}, {tstop=}: the kernel extends beyond the shortest data segment ({shortest_segment_n_times} samples)")
-        if not self.data.splits.n_validate:
+        if not self.splits.n_validate:
             raise NotImplementedError("Boosting without validation set (validate=0): early stopping requires a validation set")
-        shortest_cv_segment_n_times = np.min(np.diff(self.data.splits.split_segments, axis=1))
+        shortest_cv_segment_n_times = np.min(np.diff(self.splits.split_segments, axis=1))
         if max_lag_n_times > shortest_cv_segment_n_times:
             raise ValueError(f"{tstart=}, {tstop=}: the kernel extends beyond the shortest cross-validation data segment ({shortest_cv_segment_n_times} samples)")
 
         self.t_fit_start = time.time()
 
         # boosting: one run per leaf split
-        runs = self.data.splits.leaves
+        runs = self.splits.leaves
         train = package_splits([split.train for _, split in runs])
         validate = package_splits([split.reserved for _, split in runs])
         train_and_validate = package_splits([split.train_and_reserved for _, split in runs])
@@ -1051,10 +1055,10 @@ class Boosting:
             Add additional attributes to the returned result.
         """
         if cross_fit is None:
-            cross_fit = bool(self.data.splits.n_test)
-        elif cross_fit and not self.data.splits.n_test:
+            cross_fit = bool(self.splits.n_test)
+        elif cross_fit and not self.splits.n_test:
             raise ValueError(f"{cross_fit=} for model without cross-validation")
-        if partition_results and not cross_fit and self.data.splits.n_test:
+        if partition_results and not cross_fit and self.splits.n_test:
             raise ValueError(f"{partition_results=} with {cross_fit=} for model with test set")
 
         # fit evaluation
@@ -1068,22 +1072,19 @@ class Boosting:
 
         # top-level splits to evaluate (test splits with cross_fit, validation splits otherwise)
         if cross_fit:
-            top_splits = self.data.splits.splits
+            top_splits = self.splits.splits
             if i_test is not None:
                 top_splits = [split for split in top_splits if split.i_reserved == i_test]
                 if not top_splits:
-                    raise ValueError(f"{i_test=}: test partitions are {[split.i_reserved for split in self.data.splits.splits]}")
+                    raise ValueError(f"{i_test=}: test partitions are {[split.i_reserved for split in self.splits.splits]}")
         elif i_test is not None:
             raise ValueError(f"{i_test=} without cross_fit")
         elif partition_results:
-            top_splits = self.data.splits.splits
+            top_splits = self.splits.splits
         else:
             top_splits = []
         # kernel for each top-level split: average of its runs
-        partitions = [[result for result in self.split_results if result.top_split == split] for split in top_splits]
-        for split, partition in zip(top_splits, partitions):
-            if not partition:
-                raise RuntimeError(f"data.splits does not match the splits used in fit(): no boosting runs for the split with {split.i_reserved=}")
+        partitions = [[result for result in self.split_results if result.top_split is split] for split in top_splits]
         hs = [self._get_h(partition) for partition in partitions]
         n_samples = self.data.n_times_flat
 
@@ -1153,7 +1154,7 @@ class Boosting:
             # results
             h, self._get_h_failed(self.split_results),
             # advanced parameters
-            self.data.basis, self.data.basis_window, self.data.splits,
+            self.data.basis, self.data.basis_window, self.splits,
             # advanced data properties
             n_samples, y_block.info, y_block.dims,
             partition_results=partition_results_list,
@@ -1349,9 +1350,9 @@ def boosting(
     dec_data.apply_basis(basis, basis_window)
     if scale_data:
         dec_data.normalize(error)
-    dec_data.initialize_cross_validation(partitions, split=split, scheme=scheme, validate=validate, test=test, model=model, min_section=min_section, data=data)
+    splits = split_data(dec_data.segments, tstep=dec_data.time.tstep, partitions=partitions, split=split, scheme=scheme, validate=validate, test=test, model=model, min_section=min_section, data=data)
 
-    fit = Boosting(dec_data)
+    fit = Boosting(dec_data, splits)
     fit.fit(tstart, tstop, selective_stopping, error, delta, mindelta)
     return fit.evaluate_fit(debug=debug, partition_results=partition_results)
 
