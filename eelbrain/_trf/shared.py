@@ -373,6 +373,7 @@ def split_data(
     See Also
     --------
     plot.preview_partitions : Plot the splits resulting from different parameters
+    :ref:`exa-data_split` : Examples with visualization
 
     Notes
     -----
@@ -382,96 +383,21 @@ def split_data(
        a piece of a segment. Boundaries between the original segments are
        *hard*; boundaries introduced by cutting a segment are *soft*.
     2. Assign each section to one of ``partitions`` partitions.
-    3. Create the :class:`Split` tree (this describes ``scheme='k-fold'``;
-       see below for walk-forward). With ``test=1``, create one test split
+    3. Create the :class:`Split` tree. For ``scheme='k-fold'``:
+       with ``test=1``, create one test split
        for each partition *i*: partition *i* is held out as test set and all
        remaining partitions form the training set. With ``validate=1``, each
-       split created so far (or, with ``test=0``, the whole data) is further
-       divided into validation splits, one for each partition *j* in its
-       training set: partition *j* is held out as validation set and the
-       remaining training partitions form the training set. With ``validate=1``
-       and ``test=1`` this yields *k* test splits with ``k - 1`` validation
-       splits each, i.e., ``k * (k - 1)`` model fits (for *k* =
-       ``partitions``); with one of them set to 0, it yields *k* top-level
-       splits without inner splits; with both set to 0, a single split that
-       uses all data for training.
+       training set is further divided into validation splits, one for each
+       partition *j*: partition *j* is held out as validation set and the
+       remaining training partitions form the training set. With
+       ``partitions=k, validate=1, test=1``, this yields *k* test splits with
+       ``k - 1`` validation splits each, i.e., ``k * (k - 1)`` model fits;
+       with one of them set to 0, it yields *k* top-level splits without inner
+       splits.
     4. Within each set of a split, merge adjacent sections at soft boundaries,
        so that pieces of a segment that end up in the same set form one
        continuous segment again. Hard boundaries are never merged.
 
-    How the sections are formed and assigned to partitions (steps 1 and 2)
-    depends on ``split``. Except for ``split=None``, this never depends on the
-    number of segments, so that the same arguments lead to the same kind of
-    cross-validation for datasets that differ in the number of segments (e.g.,
-    a participant with a missing trial).
-
-    **Whole cases** (``split='case'``): whole segments are used as sections, so that segment boundaries
-    are always partition boundaries. The segments are assigned to partitions in
-    an interleaved fashion, i.e., partition *p* receives segments
-    ``[p::partitions]``. With ``model``, this is done separately within each
-    cell, so that every partition samples each cell evenly (``model`` is only
-    allowed with this scheme). With ``partitions=None``, the default is
-    ``partitions = n_segments`` (number of segments in the smallest cell with
-    ``model``), which amounts to leave-one-out and is only available for 3 to
-    10 segments (per cell); with ``model`` it further requires all cells to
-    have the same size. More partitions than segments (per cell) raise an
-    error.
-
-    **Time** (``split='time'``, the default): the
-    concatenated time axis is divided into ``partitions`` spans of equal
-    length, and the data is cut at these span boundaries (soft) as
-    well as at all segment boundaries (hard). Each section is assigned to the
-    partition whose span contains its start, so partitions contain
-    (approximately) equal numbers of samples and correspond to different
-    periods of time, while a span that straddles a segment boundary yields two
-    sections in the same partition. For continuous data (a single segment),
-    this simply cuts the data into ``partitions`` contiguous sections of equal
-    length. A span boundary that falls within ``min_section`` of a segment
-    boundary is moved to that segment boundary (the closer one, if both are
-    within reach), so that cutting a segment never leaves a piece shorter than
-    ``min_section``. Segments shorter than ``2 * min_section`` are thus never
-    cut, and partitions are formed from whole segments wherever that is
-    possible within this tolerance. This always works when the spans are at
-    least ``2 * min_section`` long; with shorter spans, an error is raised if
-    two span boundaries would be moved to the same segment boundary, or if a
-    span boundary that can not be moved leaves a shorter piece (use fewer
-    partitions or a smaller ``min_section``).
-
-    **Within cases** (``split='within-case'``): each segment is cut into
-    ``partitions`` pieces of equal length, and partition *i*
-    consists of the *i*-th piece of every segment. Every partition thus
-    samples every segment in proportion to its length, at the cost of more
-    segment boundaries. Note that partition *i* always covers the same
-    relative position within the segments (e.g., the first partition contains
-    the beginning of every segment).
-
-    **Walk-forward** (``scheme='walk-forward'``): the training data always
-    precedes the held-out data. For steps 1 and 2, the data is cut into
-    ``partitions`` spans, of which the last ``partitions - 1`` are
-    windows of equal length, and the first is the remaining data before them.
-    With ``split='within-case'``, every
-    segment is cut this way, and partition *i* consists of the *i*-th piece of
-    every segment. With ``split='time'``, the concatenated time axis is cut
-    this way, so that all windows are at the end of the data (and cut
-    additionally at segment boundaries); for continuous data, both are the
-    same. Each window is ``ceil(validate * n)`` samples long, with ``n`` the
-    number of samples in the segment (``'within-case'``) or in the whole data
-    (``'time'``), and ``validate`` the proportion (default 0.05). In step 3,
-    each partition of windows is held out in turn as validation set, with all
-    the partitions preceding it as training set; the partitions following it
-    are not used in that split. This results in ``partitions - 1`` splits,
-    because the first partition is never held out. The scheme requires a
-    validation set and ``test=0``; ``min_section`` and ``split='case'`` (in
-    which partitions are not ordered in time) are not available. Note that
-    the training sets of the splits differ by one window only. This is the
-    scheme the NCRF package uses to select its regularization parameter (with
-    ``split='within-case'``): NCRF's ``n_splits`` is ``partitions - 1``, and
-    NCRF's ``r``, which specifies the window relative to the rest of the
-    segment, corresponds to ``validate = r / (1 + r)``.
-
-    See :ref:`exa-data_split` for illustrations of these schemes, and use
-    :meth:`Splits.plot` (or :func:`plot.preview_partitions`) to inspect a
-    specific configuration.
     """
     partitions_arg, split_arg, validate_arg, min_section_arg = partitions, split, validate, min_section
     if partitions is not None and int(partitions) != partitions:
