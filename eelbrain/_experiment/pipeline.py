@@ -3312,6 +3312,89 @@ class Pipeline(StateModel):
             raw -= raw.mean('time')
         return plot.TopoButterfly(raw, w=0, h=3, xlim=xlim, vmax=vmax, name=name)
 
+    def show_partitions(
+            self,
+            estimator: str = None,
+            partitions: int = None,
+            split: Literal['case', 'time', 'within-case'] = None,
+            scheme: Literal['k-fold', 'walk-forward'] = None,
+            validate: float = None,
+            test: int = None,
+            min_section: float = None,
+            **kwargs,
+    ) -> plot.DataSplit:
+        """Visualize how the data of an epoch is partitioned for cross-validation
+
+        Specify an ``estimator`` to show how that estimator partitions the
+        data, or specify cross-validation parameters to explore how they
+        would partition the data.
+
+        Parameters
+        ----------
+        estimator
+            Name of an estimator in :attr:`estimators`: show the partitions
+            that this estimator uses. Can not be combined with the
+            cross-validation parameters.
+        partitions
+            Number of partitions to divide the data into (default 5).
+        split
+            How to form partitions (default ``'time'``).
+        scheme
+            Which partitions are used for training when a partition is held
+            out (default ``'k-fold'``).
+        validate
+            Size of each validation set.
+        test
+            Number of partitions in each test set (0 or 1; default 1).
+        min_section
+            Minimum duration (in seconds) of the pieces left when a case is cut.
+        ...
+            State parameters; other parameters are plotting parameters (see
+            :class:`eelbrain.plot.DataSplit` and :ref:`general-layout-parameters`).
+
+        See Also
+        --------
+        eelbrain.plot.preview_partitions : preview partitions independently of an experiment
+
+        Notes
+        -----
+        The cross-validation parameters, and their defaults, are those of
+        :func:`eelbrain.split_data`, which are also the defaults of the
+        :class:`Boosting` estimator. The defaults of :class:`NCRF` differ:
+
+         - :func:`eelbrain.split_data` and :class:`Boosting`: ``partitions=5, split='time', scheme='k-fold', test=1``
+         - :class:`NCRF`: ``partitions=4, split='within-case', scheme='walk-forward', validate=0.05, test=0`` (NCRF never uses a test set)
+
+        The plot shows the cases of the current epoch as they enter :meth:`load_trf`
+        (i.e., after epoch rejection).
+        """
+        split_args = {'partitions': partitions, 'split': split, 'scheme': scheme, 'validate': validate, 'test': test, 'min_section': min_section}
+        specified = {key: value for key, value in split_args.items() if value is not None}
+        if estimator is None:
+            concatenate_cases = False
+            split_args = {**Boosting()._split_args, **specified}
+        else:
+            if specified:
+                raise TypeError(f"{estimator=} with {', '.join(specified)}: specify either an estimator or cross-validation parameters")
+            est = self._estimators[estimator]
+            split_args = est._split_args
+            concatenate_cases = est._concatenate_cases
+        state = {key: kwargs.pop(key) for key in list(kwargs) if key in self._fields}
+        if state:
+            self.set(**state)
+        ctx = self._resolve_derivative('epoch-events')
+        ds = ctx.load()
+        tmin, tmax, tstop, decim, variable_tmax = self._epochs[self.get('epoch')]._extraction_parameters(ds, ctx.options)
+        if tstop is None:
+            tstop = tmax + decim / ds.info['raw.samplingrate']  # tmax is the last sample
+        if variable_tmax:
+            durations = list(tstop.x - tmin)
+        else:
+            durations = [tstop - tmin] * ds.n_cases
+        if concatenate_cases:
+            durations = [sum(durations)]
+        return plot.preview_partitions(durations, **split_args, **kwargs)
+
     def set(self, subject: str = None, **state):
         """
         Set variable values.

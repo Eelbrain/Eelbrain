@@ -14,10 +14,10 @@ import pytest
 from pytest import approx
 import scipy.io
 import scipy.stats
-from eelbrain import datasets, boosting, combine, concatenate, convolve, correlation_coefficient, epoch_impulse_predictor, BoostingResult, ExecutionContext, NDVar, UTS, Scalar
+from eelbrain import datasets, boosting, combine, concatenate, convolve, correlation_coefficient, epoch_impulse_predictor, BoostingResult, Datalist, ExecutionContext, NDVar, UTS, Scalar, split_data
 
 from eelbrain.testing import assert_dataobj_equal
-from eelbrain._trf._boosting import Boosting, DeconvolutionData, Split, convolve_1d
+from eelbrain._trf._boosting import Boosting, DeconvolutionData, convolve_1d
 from eelbrain._trf._boosting_opt import boosting_fit
 
 
@@ -77,8 +77,10 @@ def test_boosting():
     assert res.h_scaled.info['unit'] == 'V'
     assert res.proportion_explained == approx(0.591, abs=0.001)
     # inplace
-    res_ip = boosting(y.copy(), x1.copy(), 0, 1, 'inplace')
+    y_ip = y.copy()
+    res_ip = boosting(y_ip, x1.copy(), 0, 1, 'inplace')
     assert_res_equal(res_ip, res)
+    assert y_ip.mean() == approx(0, abs=1e-10)
     # persistence
     res_p = pickle.loads(pickle.dumps(res, pickle.HIGHEST_PROTOCOL))
     assert_res_equal(res_p, res)
@@ -98,9 +100,9 @@ def test_boosting():
     assert list(res.partition_result_data().keys()) == ['i_validate', 'r', 'ev', 'train_r', 'train_ev', 'x1']
     assert list(res.partition_result_data()['i_validate']) == list(range(5))
     for res_i, split in zip(res.partition_results, res.splits.splits):
-        assert res_i.i_validate == split.i_validate
-        assert res_i.n_samples == np.sum(split.validate[:, 1] - split.validate[:, 0])
-        for segments, r in ((split.validate, res_i.r), (split.train, res_i.train_r)):
+        assert res_i.i_validate == split.i_reserved
+        assert res_i.n_samples == np.sum(split.reserved[:, 1] - split.reserved[:, 0])
+        for segments, r in ((split.reserved, res_i.r), (split.train, res_i.train_r)):
             y_pred = [convolve(res_i.h_scaled, NDVar(x1.x[i0:i1], UTS(x1.time.times[i0], x1.time.tstep, i1 - i0))) for i0, i1 in segments]
             y_pred = np.concatenate([y_pred_i.x for y_pred_i in y_pred])
             y_i = np.concatenate([y.x[i0:i1] for i0, i1 in segments])
@@ -122,7 +124,10 @@ def test_boosting():
     assert correlation_coefficient(y_pred, y, 'time') == pytest.approx(res_cv.r)
     # fit res_cv on same data as res
     fit = res_cv.fit
-    fit.data.splits = replace(fit.data.splits, splits=[fit.data.splits.splits[i] for i in [9, 10, 11]])
+    fit.splits = replace(fit.splits, splits=[fit.splits.splits[3]])
+    # the existing runs are still matched to the remaining split
+    assert_dataobj_equal(fit.evaluate_fit().h, res_cv.partition_results[3].h)
+    assert_dataobj_equal(pickle.loads(pickle.dumps(fit)).evaluate_fit().h, res_cv.partition_results[3].h)
     fit.fit(0, 1, 0, 'l2')
     res_cv = fit.evaluate_fit(debug=True)
     assert_dataobj_equal(res_cv.h, res.h)
@@ -184,7 +189,7 @@ def test_boosting_cross_predict(error):
     assert proportion_explained == pytest.approx(trf.proportion_explained, 1e-16)
     # Proportion explained in each test partition
     for res in trf.partition_results:
-        segments = [split.test for split in trf.splits.splits if split.i_test == res.i_test][0]
+        segments = [split.reserved for split in trf.splits.splits if split.i_reserved == res.i_test][0]
         index = np.concatenate([np.arange(start, stop) for start, stop in segments])
         y_i = y_normalized.x[index]
         residual_i = y_residual.x[index]
@@ -210,7 +215,7 @@ def test_boosting_epochs():
     # 1d
     for tstart, basis in product((-0.1, 0.1, 0), (0, 0.05)):
         print(f"{tstart=}, {basis=}")
-        res = boosting('uts', [p0, p1], tstart, 0.6, model='A', data=ds, basis=basis, partitions=3, partition_results=True, debug=True)
+        res = boosting('uts', [p0, p1], tstart, 0.6, split='case', model='A', data=ds, basis=basis, partitions=3, partition_results=True, debug=True)
         assert res.r == approx(0.229, abs=3e-3)
         y = res.cross_predict([p0, p1], name='predicted')
         assert correlation_coefficient(y, res.y_pred) > .999
@@ -219,30 +224,76 @@ def test_boosting_epochs():
         assert res.r == approx(r, abs=1e-3)
         assert res.splits.n_partitions == 3
     # 2d
-    res = boosting('utsnd', [p0, p1], 0, 0.6, model='A', data=ds, partitions=3, partition_results=True)
+    res = boosting('utsnd', [p0, p1], 0, 0.6, split='case', model='A', data=ds, partitions=3, partition_results=True)
     assert len(res.h) == 2
     assert res.h[0].shape == (5, 60)
     assert res.h[1].shape == (5, 60)
     y = res.cross_predict([p0, p1])
     r = correlation_coefficient(y, ds['utsnd'], ('case', 'time'))
     assert_dataobj_equal(res.r, r, decimal=3, name=False)
+    # inplace: data that has to be copied for boosting is not also scaled in place
+    y_ip = ds['utsnd'].copy()
+    res_ip = boosting(y_ip, [p0, p1], 0, 0.6, 'inplace', split='case', model='A', data=ds, partitions=3)
+    assert_array_equal(y_ip.x, ds['utsnd'].x)
+    assert_dataobj_equal(res_ip.h[0], res.h[0])
     # cross-validation
     res_cv = boosting('utsnd', [p0, p1], 0, 0.6, error='l1', data=ds, partitions=3, test=1, partition_results=True, debug=True)
     y_pred = res_cv.cross_predict([p0, p1], scale='normalized')
     assert_array_equal(y_pred, res_cv.y_pred)
     # vector
-    res = boosting('v3d', [p0, p1], 0, 0.6, error='l1', model='A', data=ds, partitions=3)
+    res = boosting('v3d', [p0, p1], 0, 0.6, error='l1', split='case', model='A', data=ds, partitions=3)
     assert res.residual.ndim == 0
+    # walk-forward: validation windows at the end of every case, trained on the data before them
+    res = boosting('uts', [p0, p1], 0, 0.1, data=ds, partitions=3, split='within-case', validate=0.2, test=0, scheme='walk-forward', partition_results=True)
+    assert (res.splits.split, res.splits.scheme) == ('within-case', 'walk-forward')
+    assert repr(res) == "<BoostingResult uts ~ a0 + a1, 0 - 0.1, partitions=3, split='within-case', scheme='walk-forward', validate=0.2, test=0, partition_results=True>"
+    assert_array_equal(res.splits.split_segments[:3], [[0, 60], [60, 80], [80, 100]])
+    assert len(res.partition_results) == 2
+    assert res.r is None
+    assert res.h[0].shape == (10,)
+    assert res.partitions == 3
+    res = boosting('uts', [p0, p1], 0, 0.02, data=ds, partitions=3, test=0, scheme='walk-forward')
+    assert repr(res) == "<BoostingResult uts ~ a0 + a1, 0 - 0.02, partitions=3, scheme='walk-forward', test=0>"
+    with pytest.raises(ValueError, match="only available with scheme='walk-forward'"):
+        boosting('uts', [p0, p1], 0, 0.1, data=ds, validate=0.2)
+    with pytest.raises(ValueError, match="extends beyond the shortest cross-validation data segment"):
+        boosting('uts', [p0, p1], 0, 0.1, data=ds, test=0, split='within-case', scheme='walk-forward')
+
+
+def test_boosting_dtype():
+    "Data that is not float64 is converted"
+    rng = np.random.default_rng(0)
+    y = [NDVar(rng.normal(size=n), UTS(0, 0.01, n), 'y') for n in (300, 400, 350)]
+    x = [NDVar((rng.normal(size=n) > 0).astype(int), UTS(0, 0.01, n), 'x') for n in (300, 400, 350)]
+    res = boosting(y, [x], 0, 0.1, partitions=3)
+    res_32 = boosting([yi.astype(np.float32) for yi in y], [[xi.astype(np.float32) for xi in x]], 0, 0.1, partitions=3)
+    assert_allclose(res_32.h[0].x, res.h[0].x, atol=1e-5)
+    assert x[0].x.dtype == int
+    # trials in a Datalist without name
+    res = boosting(Datalist(y), Datalist(x), 0, 0.1, partitions=3)
+    assert res.h.name == res.x == 'x'
+    assert res.y == 'y'
+    # continuous data
+    res_32 = boosting(y[1].astype(np.float32), x[1].astype(np.float32), 0, 0.1)
+    assert_allclose(res_32.h.x, boosting(y[1], x[1], 0, 0.1).h.x, atol=1e-5)
 
 
 def test_boosting_object():
     "Test Boosting object"
     ds = datasets._get_continuous(ynd=True)
-    data = DeconvolutionData('y', 'x2', ds)
+    with pytest.raises(ValueError, match="without y"):
+        Boosting(DeconvolutionData('x2', data=ds), None)
+    data = DeconvolutionData('x2', 'y', ds)
+    data.x.normalize(True, 'l1')
+    splits = split_data(data.segments, partitions=4)
+    with pytest.raises(ValueError, match="only x or only y normalized"):
+        Boosting(data, splits).fit(0, 1)
+    with pytest.raises(ValueError, match="not for the segments of the data"):
+        Boosting(data, split_data(data.segments + 1, partitions=4))
+    data = DeconvolutionData('x2', 'y', ds)
     data.apply_basis(0.2, 'hamming')
     data.normalize('l1')
-    data.initialize_cross_validation(4)
-    model = Boosting(data)
+    model = Boosting(data, splits)
     model.fit(0, 1, selective_stopping=1, error='l1')
     res_oo = model.evaluate_fit()
 
@@ -435,10 +486,10 @@ def test_boosting_fit():
     y_len = len(y)
     seg_len = int(y_len / 40)
     all_segments = np.array([[0, seg_len], [seg_len, y_len]], np.int64)
-    split = Split(all_segments[1:], all_segments[:1])
+    train, validate = all_segments[1:], all_segments[:1]
     tstart = np.array([0], np.int64)
     tstop = np.array([10], np.int64)
-    h, history = boosting_fit(y, x, x_pads, split.train, split.validate, split.train_and_validate, tstart, tstop, 0.005, 0.005, 2)
+    h, history = boosting_fit(y, x, x_pads, train, validate, all_segments, tstart, tstop, 0.005, 0.005, 2)
     test_sse_history = [step.e_test for step in history]
     test_seg_len = int(floor(x.shape[1] / 40))
     y_pred = convolve_array(h, x[:, :test_seg_len], x_pads)
@@ -456,7 +507,7 @@ def test_boosting_fit():
     x_pads = np.zeros(len(x))
     tstart = np.array([0, 0, 0], np.int64)
     tstop = np.array([10, 10, 10], np.int64)
-    h, history = boosting_fit(y, x, x_pads, split.train, split.validate, split.train_and_validate, tstart, tstop, 0.005, 0.005, 2)
+    h, history = boosting_fit(y, x, x_pads, train, validate, all_segments, tstart, tstop, 0.005, 0.005, 2)
     test_sse_history = [step.e_test for step in history]
     test_seg_len = int(floor(x.shape[1] / 40))
     y_pred = convolve_array(h, x[:, :test_seg_len], x_pads)
@@ -496,6 +547,12 @@ def test_trf_len():
     res = boosting(y2, [x, x2], 0, 0.5, partitions=3)
     assert res.tstart == 0
     assert res.tstop == 0.5
+    # a window shared by all predictors is stored as scalars, however it was specified
+    res_seq = boosting(y2, [x, x2], [0, 0], [0.5, 0.5], partitions=3)
+    assert (res_seq.tstart, res_seq.tstop) == (0, 0.5)
+    assert_array_equal(res_seq.h[1], res.h[1])
+    res_seq = boosting(y2, [x, x2], [0, -0.1], 0.5, partitions=3)
+    assert (res_seq.tstart, res_seq.tstop) == ((0, -0.1), (0.5, 0.5))
 
     # test duplicate tstart, tend for multiple predictors
     k3 = NDVar(k2.x, UTS(0, 0.1, 4))
@@ -550,12 +607,15 @@ def test_boosting_arguments():
             boosting('y', 'x1', 0, 0.1, data=ds, partitions=3, **kwargs)
     with pytest.raises(ValueError):
         boosting('y', 'x1', [0, 0], [0.1, 0.1], data=ds, partitions=3)
-    with pytest.raises(TypeError):
-        boosting('y', 'x1', [0], 0.1, data=ds, partitions=3)
     with pytest.raises(NotImplementedError):
         boosting('y', 'x1', 0, 0.1, data=ds, partitions=3, validate=0)
     # sequence tstart/tstop for a single predictor
     res = boosting('y', 'x1', [0], [0.1], data=ds, partitions=3)
     assert res.tstart == 0
     assert res.tstop == 0.1
+    assert repr(res) == '<BoostingResult y ~ x1, 0 - 0.1, partitions=3>'
+    # results from before the split parameter (without segments before version 13)
+    res.splits = replace(res.splits, split=None)
+    assert repr(res) == '<BoostingResult y ~ x1, 0 - 0.1, partitions=3>'
+    res.splits = replace(res.splits, segments=None, split_segments=None)
     assert repr(res) == '<BoostingResult y ~ x1, 0 - 0.1, partitions=3>'

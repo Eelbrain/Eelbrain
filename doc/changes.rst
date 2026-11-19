@@ -58,7 +58,9 @@ New in 0.43
     The built-in ``cov`` options are now ``'emptyroom'`` (the default) and
     ``'ad_hoc'``; for epoch-based options see :attr:`pipeline.Pipeline.noise_covariance`.
   - Temporal response function analyses: :meth:`pipeline.Pipeline.load_trf`,
-    :meth:`pipeline.Pipeline.load_trfs`, :meth:`pipeline.Pipeline.load_model_test`
+    :meth:`pipeline.Pipeline.load_trfs`, :meth:`pipeline.Pipeline.load_model_test`,
+    and :meth:`pipeline.Pipeline.show_partitions` to show how the data of an
+    epoch is partitioned for cross-validation.
   - New :meth:`pipeline.Pipeline.clean_cache` reviews and deletes invalid or
     stale cache files, including artifacts whose configuration changed since
     they were built and everything downstream of them.
@@ -94,11 +96,12 @@ New in 0.43
 
 * Boosting:
 
-  - API change: :func:`boosting` now performs cross-validation by default
-    (``test=1``), so that fit metrics reflect predictive power for held-out
-    data. The default number of partitions is now 5 (instead of 10).
-    ``test=0`` and ``partitions=10`` restores the previous TRF estimation, but
-    fit metrics are no longer computed because they would overestimate predictive power.
+  - API change: new defaults for cross-validation in :func:`boosting`
+    (``test=1, partitions=5, split='time'``; see :ref:`exa-data_split`).
+    To restore the previous TRF estimation, use ``test=0, partitions=10``
+    for continuous data, and ``test=0, partitions=None, split=None`` for
+    data with several cases. With ``test=0``, fit metrics are no longer
+    computed, because they would overestimate predictive power.
   - API change: the proportion of explained variance is now called ``ev``
     instead of ``det``, in the :class:`Dataset` returned by
     :meth:`BoostingResult.partition_result_data`
@@ -110,6 +113,9 @@ New in 0.43
     to the variability in the evaluated data segments. Previously, it was
     computed relative to the variability in all data, which strongly
     overestimated it.
+  - More options for data partitioning (see :ref:`exa-data_split`).
+  - The ``basis`` is now applied to each case separately, so that it no longer
+    smooths across case boundaries.
 
 * ICA-GUI (:func:`gui.select_components`):
 

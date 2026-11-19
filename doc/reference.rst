@@ -191,6 +191,8 @@ Temporal Response Functions
    BoostingResult
    ExecutionContext
    Splits
+   Split
+   split_data
    epoch_impulse_predictor
    event_impulse_predictor
 
