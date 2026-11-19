@@ -320,6 +320,10 @@ def test_row_block_equality():
     assert data_other.y.blocks == data.y.blocks
     assert DeconvolutionData([ds['x2'], x], ds['y']).x.blocks != data.x.blocks
     assert DeconvolutionData(x, ds['y']).x.blocks != data.x.blocks
+    # pickled by fields
+    blocks = pickle.loads(pickle.dumps(data.x.blocks))
+    assert blocks == data.x.blocks
+    assert blocks[0].info == data.x.blocks[0].info
 
 
 def test_lag_matrix():

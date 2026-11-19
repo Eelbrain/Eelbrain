@@ -772,7 +772,7 @@ def lag_window(
 
 
 @dataclass
-class RowBlock:
+class RowBlock(PickleableDataClass):
     """Rows of a :class:`SegmentedArray` that stem from one :class:`NDVar`
 
     Attributes
