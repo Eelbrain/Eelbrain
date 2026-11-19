@@ -3507,6 +3507,27 @@ def test_show_model_test(samples_experiment):
     assert 'Baseline' in text
     assert 'full > base' not in text
     assert fmtxt.html(doc).count('<svg') == 3  # 2 topomaps + colorbar
+    # the proportion of explained variance is displayed in %
+    res = e.load_model_test('full > base', 0, 0.1, pmin=None, samples=10)
+    assert res.difference.info['unit'] == 'proportion'
+    scale = plot._base.AxisScale(res.difference)
+    assert scale.label == 'ev [%]'
+    assert scale.scale == 100
+    # ... including tests that were cached before the metric carried its unit
+    artifacts = {}
+    for path in (Path(root) / 'derivatives' / 'eelbrain' / 'cache' / 'trf-model-test').rglob('*.pickle'):
+        cached_res = load.unpickle(path)
+        if isinstance(cached_res, testnd.NDTest):
+            for attr in ('difference', 'c1_mean', 'c0_mean'):  # a related-measures test stores the condition means, not the difference
+                if (ndvar := getattr(cached_res, attr, None)) is not None:
+                    ndvar.info.clear()
+            save.pickle(cached_res, path)
+            artifacts[path] = path.stat().st_mtime_ns
+    assert len(artifacts) == 2
+    for comparison in ('full > base', 'base > 0'):
+        res = e.load_model_test(comparison, 0, 0.1, pmin=None, samples=10)
+        assert res.difference.info['unit'] == 'proportion'
+    assert {path: path.stat().st_mtime_ns for path in artifacts} == artifacts  # loaded from the cache, not rebuilt
 
     # mass-univariate test without p-values
     with pytest.raises(ValueError, match='needs p-values'):

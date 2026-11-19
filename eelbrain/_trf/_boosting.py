@@ -32,6 +32,7 @@ import mne
 import numpy as np
 from numpy import newaxis
 
+from .. import _info
 from .._config import CONFIG
 from .._data_obj import Case, Dataset, Dimension, SourceSpaceBase, NDVar, CategorialArg, NDVarArg, UTS, dataobj_repr
 from .._exceptions import OldVersionError
@@ -418,7 +419,10 @@ class BoostingResult(PickleableDataClass):
     def train_proportion_explained(self) -> float | NDVar | None:
         if self.train_residual is None:
             return None
-        return 1 - (self.train_residual / getattr(self, f'train_{self.error}_total'))
+        proportion_explained = 1 - (self.train_residual / getattr(self, f'train_{self.error}_total'))
+        if isinstance(proportion_explained, NDVar):
+            proportion_explained.info = _info.for_proportion_explained()
+        return proportion_explained
 
     @cached_property
     def _variability(self):
@@ -604,7 +608,10 @@ class BoostingResult(PickleableDataClass):
     def proportion_explained(self) -> float | NDVar | None:
         if self.residual is None:
             return None
-        return 1 - (self.residual / self._variability)
+        proportion_explained = 1 - (self.residual / self._variability)
+        if isinstance(proportion_explained, NDVar):
+            proportion_explained.info = _info.for_proportion_explained()
+        return proportion_explained
 
     def _apply_ndvar_transform(self, func: Callable):
         "Apply func to all NDVars in-place (only for source space transformation)"

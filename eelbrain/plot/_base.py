@@ -171,6 +171,7 @@ DISPLAY_UNIT = {
     'V': 'µV',
     'T': 'fT',
     'T/m': 'fT/cm',  # planar gradiometers: data in T/m, shown in the conventional fT/cm
+    'proportion': '%',
     'sensor': int,
 }
 UNIT_FORMAT = {
@@ -183,6 +184,7 @@ UNIT_FORMAT = {
     'pT': 1e12,
     'fT': 1e15,
     'fT/cm': 1e13,  # relative to the T/m gradient base: 1 T/m = 1e13 fT/cm
+    '%': 100,
     'dSPM': 1,
     'p': 1,
     'T': 1,

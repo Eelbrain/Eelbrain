@@ -8,13 +8,13 @@ import warnings
 import mne
 import numpy as np
 
-from ... import load, save
+from ... import _info, load, save
 from ..._data_obj import Dataset, Datalist, Factor, NDVar, Var, combine, isuv
 from ..._io.pickle import update_subjects_dir
 from ..._mne import morph_source_space, xhemi
 from ..._ndvar import set_tmin
 from ..._ndvar.uts import pad
-from ..._stats.testnd import MultiEffectNDTest
+from ..._stats.testnd import MultiEffectNDTest, NDDifferenceTest
 from ..._utils.mne_utils import is_fake_mri
 from ..configuration import Configuration
 from ..data import DataSpec
@@ -981,6 +981,9 @@ class TRFModelTestDerivative(Derivative[Any]):
         value = load.unpickle(path)
         if ctx.options['data'].source:
             update_subjects_dir(value, ctx.root / MRI_SDIR, 2)
+        # Tests cached before the metric carried its display unit
+        if ctx.options['metric'] == 'ev' and isinstance(value, NDDifferenceTest) and 'unit' not in value.difference.info:
+            value.difference.info.update(_info.for_proportion_explained())
         return value
 
     def save(self, ctx: Request, path: Path, value: Any) -> None:
