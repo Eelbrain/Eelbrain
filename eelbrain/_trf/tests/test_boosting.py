@@ -288,6 +288,11 @@ def test_boosting_object():
     with pytest.raises(ValueError, match="without y"):
         Boosting(DeconvolutionData('x2', data=ds))
     data = DeconvolutionData('x2', 'y', ds)
+    data.x.normalize(True, 'l1')
+    data.initialize_cross_validation(4)
+    with pytest.raises(ValueError, match="only x or only y normalized"):
+        Boosting(data).fit(0, 1)
+    data = DeconvolutionData('x2', 'y', ds)
     data.apply_basis(0.2, 'hamming')
     data.normalize('l1')
     data.initialize_cross_validation(4)

@@ -896,6 +896,8 @@ class Boosting:
             mindelta: float = None,  # narrow search by reducing delta until reaching mindelta
     ):
         self.data.check_data()
+        if (self.data.x.mean is None) != (self.data.y.mean is None):
+            raise ValueError("data with only x or only y normalized: boosting requires both or neither (see DeconvolutionData.normalize())")
         if error not in ('l1', 'l2'):
             raise ValueError(f"{error=}")
         error_id = int(error[1])
