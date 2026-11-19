@@ -77,8 +77,10 @@ def test_boosting():
     assert res.h_scaled.info['unit'] == 'V'
     assert res.proportion_explained == approx(0.591, abs=0.001)
     # inplace
-    res_ip = boosting(y.copy(), x1.copy(), 0, 1, 'inplace')
+    y_ip = y.copy()
+    res_ip = boosting(y_ip, x1.copy(), 0, 1, 'inplace')
     assert_res_equal(res_ip, res)
+    assert y_ip.mean() == approx(0, abs=1e-10)
     # persistence
     res_p = pickle.loads(pickle.dumps(res, pickle.HIGHEST_PROTOCOL))
     assert_res_equal(res_p, res)
@@ -233,6 +235,11 @@ def test_boosting_epochs():
     y = res.cross_predict([p0, p1])
     r = correlation_coefficient(y, ds['utsnd'], ('case', 'time'))
     assert_dataobj_equal(res.r, r, decimal=3, name=False)
+    # inplace: data that has to be copied for boosting is not also scaled in place
+    y_ip = ds['utsnd'].copy()
+    res_ip = boosting(y_ip, [p0, p1], 0, 0.6, 'inplace', split='case', model='A', data=ds, partitions=3)
+    assert_array_equal(y_ip.x, ds['utsnd'].x)
+    assert_dataobj_equal(res_ip.h[0], res.h[0])
     # cross-validation
     res_cv = boosting('utsnd', [p0, p1], 0, 0.6, error='l1', data=ds, partitions=3, test=1, partition_results=True, debug=True)
     y_pred = res_cv.cross_predict([p0, p1], scale='normalized')

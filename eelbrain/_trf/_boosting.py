@@ -1208,7 +1208,8 @@ def boosting(
         the standard deviation (when ``error='l2'``) or the mean absolute
         value (when ``error='l1'``). Use ``'inplace'`` to save memory by scaling
         the original objects specified as ``y`` and ``x`` instead of making a
-        copy. The data scale is stored in the :class:`BoostingResult`:
+        copy (data that has to be copied to rearrange it for boosting is left
+        unchanged). The data scale is stored in the :class:`BoostingResult`:
         :attr:`BoostingResult.y_mean`, :attr:`BoostingResult.y_scale`, :attr:`BoostingResult.x_mean`, and :attr:`BoostingResult.x_scale`
         attributes.
     delta
@@ -1342,6 +1343,7 @@ def boosting(
         raise ValueError(f"{selective_stopping=}")
 
     dec_data = DeconvolutionData(x, y, data, scale_in_place)
+    dec_data.flatten()  # before scaling, so that data which has to be copied for boosting is not also scaled in place
     dec_data.apply_basis(basis, basis_window)
     if scale_data:
         dec_data.normalize(error)
