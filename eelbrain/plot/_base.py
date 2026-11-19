@@ -1687,8 +1687,9 @@ class EelFigure(MatplotlibFigure):
         self._crosshair_lines = None
         self._crosshair_axes = None
 
-        # add callbacks
-        if use_inline_backend() and not layout.interactive:
+        # static notebook figures are rendered on demand, so they need neither callbacks nor redraws
+        self._static = use_inline_backend() and not layout.interactive
+        if self._static:
             return
         self.canvas.mpl_connect('motion_notify_event', self._on_motion)
         self.canvas.mpl_connect('axes_leave_event', self._on_leave_axes)
@@ -1887,7 +1888,7 @@ class EelFigure(MatplotlibFigure):
 
     def _redraw(self, axes: Collection[matplotlib.axes.Axes]):
         "Redraw ``axes`` after an interactive update"
-        if not axes:
+        if not axes or self._static:
             return
         elif self._has_frame:
             self.canvas.redraw(axes)
@@ -3561,6 +3562,8 @@ class TimeSlicerEF(TimeSlicer):
         imageio.mimwrite(filename, ims, **kwargs)
 
     def _im_array(self):
+        if not self._has_frame and self.figure.stale:
+            self.figure.canvas.draw()  # without an Eelbrain frame, time updates are not rendered immediately
         # private attr usage is official: https://matplotlib.org/gallery/misc/agg_buffer_to_array.html
         return np.array(self.figure.canvas.renderer._renderer)
 
