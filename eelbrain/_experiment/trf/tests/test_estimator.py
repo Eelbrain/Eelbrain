@@ -66,7 +66,7 @@ def test_ncrf():
     assert set(d) == {'type', *NCRF.DICT_ATTRS}
     assert NCRF() != NCRF(mu=0.5)
     # cross-validation without test set
-    assert est._split_args == {'partitions': None, 'split': None, 'scheme': 'walk-forward', 'validate': None, 'test': 0, 'min_section': None}
+    assert est._split_args == {'partitions': 4, 'split': 'within-case', 'scheme': 'walk-forward', 'validate': None, 'test': 0, 'min_section': None}
     assert pickle.loads(pickle.dumps(est)) == est
 
 

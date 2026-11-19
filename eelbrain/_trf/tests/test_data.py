@@ -411,9 +411,9 @@ def test_split_data_walk_forward():
     assert_array_equal(splits.splits[0].train, [[0, 144], [160, 304]])
     assert_array_equal(splits.splits[1].reserved, [[152, 160], [312, 320]])
     assert_array_equal(splits.splits[1].train, [[0, 152], [160, 312]])
-    # partitions=None: 4 partitions (3 windows), split=None: within-case; a single window is allowed
-    splits = split_data(np.array([[0, 160], [160, 260]]), partitions=None, test=0, split=None, scheme='walk-forward')
-    assert (splits.split, splits.split_arg, splits.n_partitions, splits.partitions_arg) == ('within-case', None, 4, None)
+    # split=None: within-case; a single window is allowed
+    splits = split_data(np.array([[0, 160], [160, 260]]), partitions=4, test=0, split=None, scheme='walk-forward')
+    assert (splits.split, splits.split_arg, splits.n_partitions, splits.partitions_arg) == ('within-case', None, 4, 4)
     assert len(splits.splits) == 3
     assert_array_equal(splits.split_segments, [[0, 136], [136, 144], [144, 152], [152, 160], [160, 245], [245, 250], [250, 255], [255, 260]])
     assert len(split_data(np.array([[0, 100]]), partitions=2, test=0, scheme='walk-forward').splits) == 1

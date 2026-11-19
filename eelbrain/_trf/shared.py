@@ -316,8 +316,8 @@ def split_data(
     partitions
         Number of partitions (*k*) to divide the data into. Each partition is
         held out in turn (see ``validate`` and ``test``). The default is 5.
-        With ``None``, use the number of segments for ``split='case'`` (only
-        for 3 to 10 segments), 4 for ``scheme='walk-forward'`` and 5 otherwise.
+        Use ``None`` for backwards compatibility (for ``split='case'``: the
+        number of segments; for ``split='walk-forward'``: 4).
     split
         How to form partitions (see notes for details):
 
