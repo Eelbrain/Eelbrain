@@ -965,6 +965,8 @@ class SegmentedArray:
         stops = np.cumsum(n_times)
         flat = np.empty((blocks[-1].index.stop, stops[-1]))
         for (segments, _, _), block in zip(arrays, blocks):
+            if [seg.shape[-1] for seg in segments] != n_times:
+                raise ValueError(f"{name}: not all NDVars have the same time dimension and cases")
             for seg, start, stop in zip(segments, stops - n_times, stops):
                 flat[block.index, start:stop] = seg
         return cls(_segment_views(flat, n_times), True, flat, blocks, vector_dim, name)

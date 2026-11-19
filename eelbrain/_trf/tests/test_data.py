@@ -7,7 +7,7 @@ import pytest
 
 from eelbrain import Factor, NDVar, Scalar, Space, datasets, epoch_impulse_predictor
 from eelbrain._ndvar._convolve import convolve_1d
-from eelbrain._trf.shared import DeconvolutionData, Split, Splits, lag_matrix, lag_window, package_values, split_data
+from eelbrain._trf.shared import DeconvolutionData, SegmentedArray, Split, Splits, lag_matrix, lag_window, package_values, split_data
 
 
 def test_deconvolution_data_continuous():
@@ -309,6 +309,15 @@ def test_deconvolution_data_vector_only():
     # packaging from the blocks alone, without the array
     assert package_values(data.y.blocks, np.arange(1.), 'value', n_vector=2)[0] == 0
     assert_array_equal(package_values(data.y.blocks, np.arange(2.), 'value', n_vector=2)[0].x, [0, 1])
+
+
+def test_segmented_array_from_ndvars():
+    "NDVars that are stacked need the same segments"
+    ds = datasets._get_continuous()
+    array = SegmentedArray.from_ndvars([ds['x1'], ds['x2']], False, False, 'x', False)
+    assert array.n_rows == 3
+    with pytest.raises(ValueError, match="same time dimension and cases"):
+        SegmentedArray.from_ndvars([ds['x1'], ds['x2'].sub(time=(0, 5))], False, False, 'x', False)
 
 
 def test_row_block_equality():
