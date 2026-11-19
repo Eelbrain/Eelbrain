@@ -127,7 +127,7 @@ def test_table():
     table.midrule()
     table.cells('a1', 'b1', 'a2', 'b2')
     assert str(table) == 'A    B \n-------\na1   b1\na2   b2'
-    assert html(table) == '<figure><table border="1" frame="hsides" rules="none" cellpadding="2"><tr>\n<td style="text-align:left">A</td>\n<td style="text-align:left">B</td>\n</tr>\n<tr>\n<td style="text-align:left">a1</td>\n<td style="text-align:left">b1</td>\n</tr>\n<tr>\n<td style="text-align:left">a2</td>\n<td style="text-align:left">b2</td>\n</tr></table></figure>'
+    assert html(table) == '<figure><table border="1" frame="hsides" rules="none" style="border-top:1px solid;border-bottom:1px solid" cellpadding="2"><tr>\n<td style="text-align:left;padding-inline:0.5em">A</td>\n<td style="text-align:left;padding-inline:0.5em">B</td>\n</tr>\n<tr>\n<td style="text-align:left;padding-inline:0.5em">a1</td>\n<td style="text-align:left;padding-inline:0.5em">b1</td>\n</tr>\n<tr>\n<td style="text-align:left;padding-inline:0.5em">a2</td>\n<td style="text-align:left;padding-inline:0.5em">b2</td>\n</tr></table></figure>'
     assert table.get_rtf() == (
         '\\trowd\n\\cellx0000\n\\cellx1000\n\\row\n'
         'A\\intbl\\cell\nB\\intbl\\cell\n\\row\n'
@@ -141,7 +141,7 @@ def test_table():
 
     # right-align
     table.columns = 'lr'
-    assert html(table) == '<figure><table border="1" frame="hsides" rules="none" cellpadding="2"><tr>\n<td style="text-align:left">A</td>\n<td style="text-align:right">B</td>\n</tr>\n<tr>\n<td style="text-align:left">a1</td>\n<td style="text-align:right">b1</td>\n</tr>\n<tr>\n<td style="text-align:left">a2</td>\n<td style="text-align:right">b2</td>\n</tr></table></figure>'
+    assert html(table) == '<figure><table border="1" frame="hsides" rules="none" style="border-top:1px solid;border-bottom:1px solid" cellpadding="2"><tr>\n<td style="text-align:left;padding-inline:0.5em">A</td>\n<td style="text-align:right;padding-inline:0.5em">B</td>\n</tr>\n<tr>\n<td style="text-align:left;padding-inline:0.5em">a1</td>\n<td style="text-align:right;padding-inline:0.5em">b1</td>\n</tr>\n<tr>\n<td style="text-align:left;padding-inline:0.5em">a2</td>\n<td style="text-align:right;padding-inline:0.5em">b2</td>\n</tr></table></figure>'
     table.columns = 'll'
 
     # empty table
