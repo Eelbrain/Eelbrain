@@ -1692,6 +1692,11 @@ class EelFigure(MatplotlibFigure):
         self.canvas.mpl_connect('resize_event', self._on_resize)
         self.canvas.mpl_connect('key_press_event', self._on_key_press)
         self.canvas.mpl_connect('key_release_event', self._on_key_release)
+        if not self._has_frame:
+            # matplotlib only keeps weak references to callbacks, so without an Eelbrain frame the figure has to keep the plot alive (plots can share a figure through the axes parameter)
+            if not hasattr(figure, '_eelfigures'):
+                figure._eelfigures = []
+            figure._eelfigures.append(self)
 
     def __repr__(self):
         title = self._frame.GetTitle() if self._has_frame else self._title
