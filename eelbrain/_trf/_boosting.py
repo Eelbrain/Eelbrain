@@ -38,7 +38,7 @@ from .._exceptions import OldVersionError
 from .._ndvar.ndvar import _concatenate_values, set_adjacency, set_parc
 from .._ndvar._convolve import convolve_1d, convolve_2d
 from .._utils import PickleableDataClass, user_activity
-from .shared import DeconvolutionData, Split, Splits, lag_window, merge_segments, per_predictor, split_data
+from .shared import DeconvolutionData, Split, Splits, lag_window, merge_segments, split_data
 from ._fit_metrics import get_evaluators
 from . import _boosting_opt as opt
 
@@ -920,9 +920,7 @@ class Boosting:
         # TRF extent in indices, per predictor and per row of x
         n_xs = [block.n_rows for block in self.data.x.blocks]
         tstep = self.data.time.tstep
-        i_start_by_predictor, i_stop_by_predictor = lag_window(tstart, tstop, tstep, len(n_xs))
-        tstarts = per_predictor(tstart, len(n_xs), 'tstart')
-        tstops = per_predictor(tstop, len(n_xs), 'tstop')
+        tstarts, tstops, i_start_by_predictor, i_stop_by_predictor = lag_window(tstart, tstop, tstep, len(n_xs))
         if len(set(tstarts)) == 1 and len(set(tstops)) == 1:
             # a window shared by all predictors is stored as scalars
             self.tstart, self.tstop = tstarts[0], tstops[0]

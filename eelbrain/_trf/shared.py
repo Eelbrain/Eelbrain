@@ -719,12 +719,11 @@ def per_predictor(
 
 def lag_window(
         tstart: float | Sequence[float],
-        tstop: float | Sequence[float] | None,
+        tstop: float | Sequence[float],
         tstep: float,
         n_predictors: int,
-        tmax: float | Sequence[float] | None = None,
-) -> tuple[list[int], list[int]]:
-    """Lag window of each predictor in samples
+) -> tuple[list[float], list[float], list[int], list[int]]:
+    """Lag window of each predictor in seconds and in samples
 
     Parameters
     ----------
@@ -738,12 +737,13 @@ def lag_window(
         Time step in seconds.
     n_predictors
         Number of predictors.
-    tmax
-        Alternative to ``tstop``: the last lag in seconds, inclusive (like
-        :attr:`UTS.tmax`).
 
     Returns
     -------
+    tstarts
+        ``tstart`` of each predictor.
+    tstops
+        ``tstop`` of each predictor.
     i_start
         First lag of each predictor in samples.
     i_stop
@@ -752,23 +752,18 @@ def lag_window(
 
     Notes
     -----
-    ``tstart`` and ``tmax`` are rounded to the nearest sample. ``tstop`` is
-    rounded up (allowing for floating point error), so that the window includes
-    every lag before ``tstop``.
+    ``tstart`` is rounded to the nearest sample. ``tstop`` is rounded up
+    (allowing for floating point error), so that the window includes every lag
+    before ``tstop``.
     """
-    if (tstop is None) == (tmax is None):
-        raise TypeError("exactly one of tstop and tmax is required")
-
-    i_start = [int(round(t / tstep)) for t in per_predictor(tstart, n_predictors, 'tstart')]
-    if tstop is None:
-        i_stop = [int(round(t / tstep)) + 1 for t in per_predictor(tmax, n_predictors, 'tmax')]
-    else:
-        i_stop = [_ceil_samples(t / tstep) for t in per_predictor(tstop, n_predictors, 'tstop')]
+    tstarts = per_predictor(tstart, n_predictors, 'tstart')
+    tstops = per_predictor(tstop, n_predictors, 'tstop')
+    i_start = [int(round(t / tstep)) for t in tstarts]
+    i_stop = [_ceil_samples(t / tstep) for t in tstops]
     for i, (start, stop) in enumerate(zip(i_start, i_stop)):
         if stop <= start:
-            desc = f'{tstart=}, {tmax=}' if tstop is None else f'{tstart=}, {tstop=}'
-            raise ValueError(f"{desc}: empty lag window for predictor {i}")
-    return i_start, i_stop
+            raise ValueError(f"{tstart=}, {tstop=}: empty lag window for predictor {i}")
+    return tstarts, tstops, i_start, i_stop
 
 
 @dataclass

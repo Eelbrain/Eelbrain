@@ -349,22 +349,19 @@ def test_lag_matrix():
 
 
 def test_lag_window():
-    "Lag windows in samples: tstop is exclusive, tmax inclusive"
-    assert lag_window(0, 0.5, 0.01, 1) == ([0], [50])
-    assert lag_window(0, None, 0.01, 1, tmax=0.49) == ([0], [50])
-    assert lag_window(-0.1, [0.2, 0.3], 0.01, 2) == ([-10, -10], [20, 30])
-    assert lag_window([0, 0.1], 0.2, 0.01, 2) == ([0, 10], [20, 20])
+    "Lag windows in seconds and in samples: tstop is exclusive"
+    assert lag_window(0, 0.5, 0.01, 1) == ([0], [0.5], [0], [50])
+    assert lag_window(-0.1, [0.2, 0.3], 0.01, 2) == ([-0.1, -0.1], [0.2, 0.3], [-10, -10], [20, 30])
+    assert lag_window([0, 0.1], 0.2, 0.01, 2) == ([0, 0.1], [0.2, 0.2], [0, 10], [20, 20])
     # a window that ends between samples includes the last lag before tstop
-    assert lag_window(0, 0.505, 0.01, 1) == ([0], [51])
+    assert lag_window(0, 0.505, 0.01, 1)[2:] == ([0], [51])
     # floating point error does not add a lag
-    assert lag_window(0, 0.1 + 0.02, 0.01, 1) == ([0], [12])
-    assert lag_window(0, 0.3, 0.005, 1) == ([0], [60])
+    assert lag_window(0, 0.1 + 0.02, 0.01, 1)[2:] == ([0], [12])
+    assert lag_window(0, 0.3, 0.005, 1)[2:] == ([0], [60])
     with pytest.raises(ValueError, match="need one value per predictor"):
         lag_window([0], 0.2, 0.01, 2)
     with pytest.raises(ValueError, match="empty lag window"):
         lag_window(0.2, 0.2, 0.01, 1)
-    with pytest.raises(TypeError):
-        lag_window(0, 0.2, 0.01, 1, tmax=0.19)
 
 
 def test_trf_module():
