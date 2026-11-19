@@ -15,7 +15,7 @@ def test_boosting():
     # _as_dict covers every DICT_ATTRS entry
     d = est._as_dict()
     assert d['type'] == 'Boosting'
-    assert set(d) == {'type', *Boosting.DICT_ATTRS}.difference(('scheme', 'validate', 'min_section'))
+    assert set(d) == {'type', *Boosting.DICT_ATTRS}
     # equality / repr
     assert est == Boosting()
     assert est != Boosting(basis=0.1)
@@ -32,9 +32,8 @@ def test_boosting():
         Boosting(scheme='walk-forward')
     walk_forward = Boosting(scheme='walk-forward', validate=0.1, test=0)
     assert walk_forward._split_args == {'partitions': 5, 'split': 'time', 'scheme': 'walk-forward', 'validate': 0.1, 'test': 0, 'min_section': None}
-    assert walk_forward._as_dict()['scheme'] == 'walk-forward'
-    # results cached up to 0.43.0b4: no split parameter, cv instead of test, and negative partitions to concatenate the cases
-    stored = {key: value for key, value in d.items() if key not in ('split', 'test')}
+    # results cached up to 0.43.0b4: no split_data parameters, cv instead of test, and negative partitions to concatenate the cases
+    stored = {key: value for key, value in d.items() if key not in ('split', 'scheme', 'validate', 'test', 'min_section')}
     stored['cv'] = True
     TRFDerivative.normalize_stored_fingerprint(None, fingerprint := {'estimator': {**stored, 'partitions': -5}})
     legacy = Boosting(partitions=-5)
@@ -67,6 +66,13 @@ def test_ncrf():
     assert NCRF() != NCRF(mu=0.5)
     # cross-validation without test set
     assert est._split_args == {'partitions': 4, 'split': 'within-case', 'scheme': 'walk-forward', 'validate': None, 'test': 0, 'min_section': None}
+    # results cached up to 0.43.0b4: n_splits instead of the split_data parameters
+    stored = {key: value for key, value in d.items() if key not in ('partitions', 'split', 'scheme', 'validate', 'min_section')}
+    TRFDerivative.normalize_stored_fingerprint(None, fingerprint := {'estimator': {**stored, 'n_splits': 3}})
+    assert est == fingerprint['estimator']
+    TRFDerivative.normalize_stored_fingerprint(None, fingerprint := {'estimator': {**stored, 'n_splits': 5}})
+    assert NCRF(mu=0.5, partitions=6) == fingerprint['estimator']
+    assert est != fingerprint['estimator']
     assert pickle.loads(pickle.dumps(est)) == est
 
 

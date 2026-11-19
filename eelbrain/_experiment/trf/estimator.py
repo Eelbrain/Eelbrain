@@ -202,7 +202,6 @@ class Boosting(Estimator):
         valid with a single-term model.
     """
     DICT_ATTRS = ('basis', 'basis_window', 'error', 'delta', 'mindelta', 'selective_stopping', 'scale_data', 'partitions', 'split', 'scheme', 'validate', 'test', 'min_section', 'partition_results', 'backward')
-    DICT_DEFAULTS = {'split': None, 'scheme': 'k-fold', 'validate': None, 'min_section': None}  # added after 0.43.0b4; the values that reproduce the cross-validation of results cached before
 
     def __init__(
             self,

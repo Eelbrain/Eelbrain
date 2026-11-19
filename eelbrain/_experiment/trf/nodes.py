@@ -297,8 +297,13 @@ class TRFDerivative(Derivative[object]):
             return
         if est.get('scale_data') == 'inplace':  # < 0.43.0a3
             est['scale_data'] = True
-        if 'cv' in est:  # <= 0.43.0b4
+        # <= 0.43.0b4: before the cross-validation parameters of split_data; add the values that reproduce the cross-validation of those results
+        if 'cv' in est:  # Boosting
             est['test'] = int(est.pop('cv'))
+            est.update(split=None, scheme='k-fold', validate=None, min_section=None)
+        elif 'n_splits' in est:  # NCRF: the last n_splits windows of every case were held out one at a time
+            est['partitions'] = est.pop('n_splits') + 1
+            est.update(split='within-case', scheme='walk-forward', validate=None, min_section=None)
 
     def validate_options(self, ctx: Request) -> None:
         _normalize_trf_options(ctx.options)
