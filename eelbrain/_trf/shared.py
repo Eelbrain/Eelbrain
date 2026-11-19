@@ -1135,11 +1135,11 @@ class SegmentedArray:
 
     def check(self):
         "Raise an error for rows that are flat or contain NaN"
-        if self.scale_norm is None:  # range of each row (NaN for rows containing NaN)
-            values = np.max([seg.max(-1) for seg in self.segments], 0) - np.min([seg.min(-1) for seg in self.segments], 0)
-            self._check_values(values, False)
-        else:  # the scale was estimated from the data (one entry per vector for vector data)
-            self._check_values(self.scale, bool(self.n_vector))
+        if self.scale_norm is not None:
+            return  # normalize() checked the data when estimating the scale
+        # range of each row (NaN for rows containing NaN)
+        values = np.max([seg.max(-1) for seg in self.segments], 0) - np.min([seg.min(-1) for seg in self.segments], 0)
+        self._check_values(values, False)
 
     def _check_values(self, values: np.ndarray, per_vector: bool):
         "Raise an error for rows (or vectors, with ``per_vector``) whose ``values`` are 0 (flat) or NaN"
@@ -1347,6 +1347,8 @@ class DeconvolutionData:
             raise NotImplementedError("Applying basis more than once")
         elif not basis:
             return
+        elif self.x.mean is not None:
+            raise ValueError("x is already normalized: apply the basis before normalizing, because it changes the scale of x")
         self.x._copy_data()
         n = int(round(basis / self.time.tstep))
         w = scipy.signal.get_window(basis_window, n, False)

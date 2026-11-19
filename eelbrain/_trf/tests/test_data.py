@@ -21,10 +21,12 @@ def test_deconvolution_data_continuous():
     data.flatten()
     assert data.x.flat[0].mean() == pytest.approx(0, abs=1e-16)
     assert abs(data.x.flat).mean() == pytest.approx(1, abs=1e-10)
-    with pytest.raises(ValueError):
-        data.apply_basis(0.050, 'hamming')
+    with pytest.raises(ValueError, match="already normalized"):
+        data.apply_basis(0.500, 'hamming')
     # with basis
     data = DeconvolutionData(ds['x1'][:8], ds['y'][:8])
+    with pytest.raises(ValueError):
+        data.apply_basis(0.050, 'hamming')  # shorter than a sample
     data.apply_basis(0.500, 'hamming')
     data.normalize('l1')
     data.flatten()
