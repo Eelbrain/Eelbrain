@@ -512,7 +512,7 @@ def split_data(
     if partitions is not None and partitions <= n_validate + test:
         raise ValueError(f"{partitions=}: need at least {n_validate + test + 1} partitions with {validate=} and {test=}")
     if model is not None and split != 'case':
-        raise TypeError(f"model={dataobj_repr(model)!r} with {split=}: model can only be used with split='case'")
+        raise TypeError(f"model={dataobj_repr(model, True)!r} with {split=}: model can only be used with split='case'")
     if min_section is None:
         min_section = 15
     elif split != 'time' or scheme != 'k-fold':
