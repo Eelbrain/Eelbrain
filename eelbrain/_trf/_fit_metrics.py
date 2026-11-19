@@ -170,10 +170,9 @@ class VectorL1(Evaluator):
             y: np.ndarray,  # actual data
             y_pred: np.ndarray,  # data predicted by model
     ):
-        err = norm(y - y_pred, axis=0)
         for x, segments in zip(self.xs, self.segments):
-            err_i = self._crop_y(segments, err)
-            x[i] = err_i.sum(-1)
+            y_i, y_pred_i = self._crop_y(segments, y, y_pred)  # y_pred is only defined in the predicted segments
+            x[i] = norm(y_i - y_pred_i, axis=0).sum()
 
 
 class VectorL2(Evaluator):
@@ -187,12 +186,9 @@ class VectorL2(Evaluator):
             y: np.ndarray,  # actual data
             y_pred: np.ndarray,  # data predicted by model
     ):
-        err = y - y_pred
-        err **= 2
-        err = err.sum(0)
         for x, segments in zip(self.xs, self.segments):
-            err_i = self._crop_y(segments, err)
-            x[i] = err_i.sum()
+            y_i, y_pred_i = self._crop_y(segments, y, y_pred)  # y_pred is only defined in the predicted segments
+            x[i] = ((y_i - y_pred_i) ** 2).sum()
 
 
 class VectorL1Total(Evaluator):
