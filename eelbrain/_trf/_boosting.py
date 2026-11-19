@@ -550,10 +550,9 @@ class BoostingResult(PickleableDataClass):
             name = self.y
 
         if x_data.is_ragged:
-            split_points = [0, *np.cumsum(x_data.n_times)]
-            shape = [*[len(dim) for dim in y_dims], split_points[-1]]
+            shape = [*[len(dim) for dim in y_dims], x_data.n_times_flat]
             y_pred = y_pred.reshape(shape)
-            y_pred = [y_pred[..., i0: i1] for i0, i1 in zip(split_points[:-1], split_points[1:])]
+            y_pred = [y_pred[..., start:stop] for start, stop in x_data.segments]
             y_pred = [NDVar(y_, [*y_dims, uts], name, self._y_info) for y_, uts in zip(y_pred, x_data.time_dim)]
             if scale == 'original' and self.scale_data:
                 for y_ in y_pred:

@@ -1249,14 +1249,10 @@ class DeconvolutionData:
         ``(n_segments, 2)`` array of segment ``[start, stop]`` indices on the
         concatenated time axis. The segments delimit chunks of continuous data,
         such as trials.
-    segment_n_times : list of int
-        Number of time samples in each segment.
     time : UTS
         Time dimension (of the first segment for ragged data).
     time_dim : UTS | list of UTS
         Time dimension of each segment (a list for ragged data).
-    n_times_flat : int
-        Total number of time samples across all segments.
     x_name : str | list of str
         Name of the predictor (a list for multiple predictors).
     basis : float
@@ -1284,31 +1280,23 @@ class DeconvolutionData:
         for xi in xs[1:]:
             if _time_structure(xi) != structure:
                 raise ValueError(f"x={xs}: not all predictors have the same time dimension and cases")
-        has_case = is_ragged or n_cases > 0
-        case_to_segments = has_case and not is_ragged
-        n_segments = n_cases if has_case else 1
+        case_to_segments = n_cases > 0 and not is_ragged
         if is_ragged:
-            n_times = [len(uts) for uts in time_dim]
-            segment_n_times = n_times
+            segment_n_times = [len(uts) for uts in time_dim]
         else:
-            n_times = len(time_dim)
-            segment_n_times = [n_times] * n_segments
+            segment_n_times = [len(time_dim)] * max(n_cases, 1)
         stops = np.cumsum(segment_n_times, dtype=np.int64)
         segments = np.hstack(((stops - segment_n_times)[:, newaxis], stops[:, newaxis]))
 
         self.x = SegmentedArray.from_ndvars(xs, case_to_segments, False, 'x', in_place)
         self.is_ragged = is_ragged
-        self.has_case = has_case
         self.n_cases = n_cases
         self.case_to_segments = case_to_segments
         self.time_dim = time_dim
         self.time = time_dim[0] if is_ragged else time_dim
-        self.n_times = n_times
-        self.n_times_flat = int(stops[-1])
         self.multiple_x = multiple_x
         self.x_name = [block.name for block in self.x.blocks] if multiple_x else self.x.blocks[0].name
         self.segments = segments
-        self.segment_n_times = segment_n_times
         # basis
         self.basis = 0
         self.basis_window = None
@@ -1323,6 +1311,16 @@ class DeconvolutionData:
         if y_structure != structure:
             raise ValueError(f"y={dataobj_repr(y)}: does not have the same time dimension and cases as x: y={y_structure[1:]}, x={structure[1:]}")
         self.y = SegmentedArray.from_ndvars([y], case_to_segments, True, f"y={dataobj_repr(y)}", in_place)
+
+    @property
+    def segment_n_times(self) -> list[int]:
+        "Number of time samples in each segment"
+        return (self.segments[:, 1] - self.segments[:, 0]).tolist()
+
+    @property
+    def n_times_flat(self) -> int:
+        "Total number of time samples across all segments"
+        return int(self.segments[-1, 1])
 
     def flatten(self):
         "Build the concatenated arrays (see :meth:`SegmentedArray.flatten`)"
@@ -1488,6 +1486,6 @@ class DeconvolutionData:
         dims = self.y.blocks[0].dims
         shape = tuple(len(dim) for dim in dims)
         if self.case_to_segments:
-            data = np.rollaxis(data.reshape((*shape, self.n_cases, self.n_times)), -2)
+            data = np.rollaxis(data.reshape((*shape, self.n_cases, len(self.time))), -2)
             return NDVar(data, (Case, *dims, self.time), name)
-        return NDVar(data.reshape((*shape, self.n_times)), (*dims, self.time), name)
+        return NDVar(data.reshape((*shape, len(self.time))), (*dims, self.time), name)
