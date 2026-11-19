@@ -171,6 +171,7 @@ DISPLAY_UNIT = {
     'V': 'µV',
     'T': 'fT',
     'T/m': 'fT/cm',  # planar gradiometers: data in T/m, shown in the conventional fT/cm
+    'proportion': '%',
     'sensor': int,
 }
 UNIT_FORMAT = {
@@ -183,6 +184,7 @@ UNIT_FORMAT = {
     'pT': 1e12,
     'fT': 1e15,
     'fT/cm': 1e13,  # relative to the T/m gradient base: 1 T/m = 1e13 fT/cm
+    '%': 100,
     'dSPM': 1,
     'p': 1,
     'T': 1,
@@ -702,12 +704,21 @@ def find_labels(
 def brain_data(
         data: NDVar | testnd.NDTest,
         dataset: Dataset = None,
-):
-    # for GlassBrain and surfer brain
-    if isinstance(data, testnd.NDDifferenceTest):
-        return data.masked_difference()
-    else:
-        return asndvar(data, data=dataset)
+        sig: bool = True,
+) -> NDVar:
+    """Data for brain plots (GlassBrain and surfer brain)
+
+    For a test result, the map of the tested effect: the difference for a
+    difference test, otherwise the test statistic; ``sig`` masks the map by
+    significance.
+    """
+    if isinstance(data, testnd.MultiEffectNDTest):
+        raise NotImplementedError(f"{data.__class__.__name__}: effect map of a multi-effect test")
+    elif isinstance(data, testnd.NDDifferenceTest):
+        return data.masked_difference() if sig else data.difference
+    elif isinstance(data, testnd.NDTest):
+        return data.masked_parameter_map() if sig else data._statistic_map
+    return asndvar(data, data=dataset)
 
 
 def butterfly_data(

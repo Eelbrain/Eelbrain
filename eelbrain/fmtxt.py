@@ -1162,7 +1162,8 @@ class Cell(FMText):
         # alignment
         if self.just:
             align = self.just
-        options['style'] = f"text-align:{_html_alignments[align]}"
+        # Column spacing as inline style, because a page stylesheet that resets padding overrides the table's cellpadding (Marimo)
+        options['style'] = f"text-align:{_html_alignments[align]};padding-inline:0.5em"
         return _html_element('td', html_repr, env, options)
 
     def get_rtf(self, env: dict = ENV):
@@ -1595,7 +1596,8 @@ class Table(FMTextElement):
 
         # table frame
         if self.rules:
-            table_options = {'border': 1, 'frame': 'hsides', 'rules': 'none'}
+            # The style repeats the attributes: a page stylesheet that resets borders (e.g., in Marimo) overrides the attributes, while renderers without CSS (wx.html) only know the attributes
+            table_options = {'border': 1, 'frame': 'hsides', 'rules': 'none', 'style': "border-top:1px solid;border-bottom:1px solid"}
         else:
             table_options = {'border': 0}
         table_options['cellpadding'] = 2

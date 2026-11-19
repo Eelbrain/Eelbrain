@@ -15,6 +15,8 @@ meas
         Probability (statistics).
     r, t, f
         Statistic (correlation, t- and f- values).
+    ev
+        Proportion of explained variability (model fit).
 
 contours
     Default plotting argument.
@@ -165,6 +167,11 @@ def for_meg(vmax=None, mult=1, meas="B", unit='T', old=None):
     if vmax is not None:
         info['vmax'] = vmax
     return _update(info, old)
+
+
+def for_proportion_explained():
+    "Proportion of the variability in the data explained by a model (displayed in %)"
+    return {'meas': 'ev', 'unit': 'proportion'}
 
 
 def for_boolean(old=None):

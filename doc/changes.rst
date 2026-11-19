@@ -59,6 +59,7 @@ New in 0.43
     ``'ad_hoc'``; for epoch-based options see :attr:`pipeline.Pipeline.noise_covariance`.
   - Temporal response function analyses: :meth:`pipeline.Pipeline.load_trf`,
     :meth:`pipeline.Pipeline.load_trfs`, :meth:`pipeline.Pipeline.load_model_test`,
+    :meth:`pipeline.Pipeline.show_model_test`,
     and :meth:`pipeline.Pipeline.show_partitions` to show how the data of an
     epoch is partitioned for cross-validation.
   - New :meth:`pipeline.Pipeline.clean_cache` reviews and deletes invalid or

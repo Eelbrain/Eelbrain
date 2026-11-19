@@ -3,7 +3,7 @@ import numpy as np
 
 from .. import fmtxt, plot
 from .._data_obj import cellname
-from .._stats.testnd import TTestIndependent, TTestRelated
+from .._stats.testnd import NDTest, TTestIndependent, TTestRelated
 from .._text import ms
 from ..fmtxt import Section
 from ._source import cluster_timecourse
@@ -142,3 +142,39 @@ def sensor_time_cluster(section, cluster, y, model, ds, colors, match='subject')
     p.close()
 
     cluster_timecourse(section, cluster, y, 'sensor', model, ds, colors, match)
+
+
+def sensor_topomaps(
+        ress: dict[str, NDTest],
+        axw: float = None,
+        vmax: float = None,
+        cmap: str = None,
+        sig: bool = True,
+) -> fmtxt.Figure:
+    """Figure with one topographic map of the (significant) effect per test
+
+    Parameters
+    ----------
+    ress
+        ``{label: result}`` mapping of sensor-space test results.
+    axw
+        Width of each topomap in inches.
+    vmax
+        Colormap range (by default, one range is determined for all maps).
+    cmap
+        Colormap.
+    sig
+        Mask the maps by significance (default ``True``).
+    """
+    topographies = [plot._base.brain_data(res, sig=sig) for res in ress.values()]
+    vlims = plot._base.find_fig_vlims([topographies], vmax)
+    vmin, vmax = next(iter(vlims.values()))
+    panels = []
+    for (label, res), y in zip(ress.items(), topographies):
+        title = [label, fmtxt.Stars.from_p(res.p.min())]
+        p = plot.Topomap(y, cmap=cmap, vmin=vmin, vmax=vmax, title=title, axw=axw, show=False, clip='circle')
+        panels.append(p.image())
+        p.close()
+    cbar = p.plot_colorbar(orientation='vertical', h=p._layout.h, w=p._layout.w, width=0.1)
+    panels.append(cbar.image(close=True))
+    return fmtxt.Figure(fmtxt.FloatingLayout(panels))
