@@ -1,3 +1,28 @@
+"""Infrastructure shared by TRF estimators (boosting, NCRF, ...)
+
+Two independent parts, linked only by indices on the concatenated time axis
+(all segments joined along time):
+
+Data
+    :class:`DeconvolutionData` turns the input NDVars into arrays and back:
+    it determines the segment structure (trials) from ``x``, holds ``x`` and
+    ``y`` as one :class:`SegmentedArray` each, and packages results (kernels,
+    predictions, normalization parameters) as NDVars again.
+    A :class:`SegmentedArray` stacks the time series of one or more NDVars as
+    rows; each :class:`RowBlock` records which rows stem from which NDVar, so
+    that per-row values can be mapped back (:func:`package_values`).
+
+Cross-validation
+    :func:`split_data` divides :attr:`DeconvolutionData.segments` into
+    partitions and returns the :class:`Splits` scheme, a tree of
+    :class:`Split` objects whose leaves are the individual model fits.
+    :meth:`DeconvolutionData.segment_slices` maps the index ranges of a
+    :class:`Split` back to slices of the data segments.
+
+Lags
+    :func:`lag_window` converts lag windows from seconds to samples, and
+    :func:`lag_matrix` generates the corresponding lagged predictor.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields

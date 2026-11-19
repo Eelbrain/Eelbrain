@@ -340,10 +340,10 @@ class NCRF(Estimator):
         data. With the default ``scheme``, the last ``partitions - 1``
         partitions are held out one at a time (default 4, i.e., 3 splits).
     split
-        How to form partitions: ``'within-case'`` from pieces of every case,
-        ``'time'`` from contiguous spans of time, and ``'case'`` from whole
-        cases. With the default ``scheme``, the default is
-        ``'within-case'``, which holds out windows at the end of every case.
+        How to form partitions: ``'within-case'`` (default) from pieces of
+        every case, ``'time'`` from contiguous spans of time, and ``'case'``
+        from whole cases. With the default ``scheme``, ``'within-case'`` holds
+        out windows at the end of every case.
     scheme
         Which partitions are used for training when a partition is held out:
         with ``'walk-forward'`` (default) only the preceding partitions, so
