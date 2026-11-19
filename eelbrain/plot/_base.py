@@ -1489,6 +1489,9 @@ class FigureFrame:
     def SetStatusText(self, text):  # noqa
         pass
 
+    def SetTitleSuffix(self, suffix):  # noqa
+        pass
+
     def Show(self):  # noqa
         pass
 
