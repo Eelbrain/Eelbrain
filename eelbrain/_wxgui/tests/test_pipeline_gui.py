@@ -1,5 +1,7 @@
 import contextlib
+import json
 import logging
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -485,35 +487,46 @@ def test_coreg_actions(tmp_path):
     assert opened == [(0, 'fsaverage'), (1, 'R02')]
 
 
-def _browse_raw_frame(monkeypatch, tmp_path, pipe, cached: bool):
-    "Bad channels table whose pipeline serves raw pipe 'raw' (the source, at tmp_path/'R01_raw.fif') and 'filt' (cached at tmp_path/'cache-raw.fif' or not)"
+def _browse_raw_frame(monkeypatch, tmp_path, caches: bool):
+    "Bad channels table whose pipeline serves raw pipe 'raw' (the source, at tmp_path/'R01_raw.fif') and 'filt' (a pipe that caches at tmp_path/'cache-raw.fif', or one that does not cache)"
     frame = _table_frame('bad_chs', [('R01', 'done', '3')])
     source = SimpleNamespace(node=SimpleNamespace(path=lambda ctx: tmp_path / 'R01_raw.fif'))
-    cache = SimpleNamespace(is_valid=lambda: cached, artifact_path=tmp_path / 'cache-raw.fif')
-    saved = []
+    cache_policy = pipeline_gui.CachePolicy.REQUIRED if caches else pipeline_gui.CachePolicy.NEVER
+    cache = SimpleNamespace(node=SimpleNamespace(cache_policy=cache_policy), artifact_path=tmp_path / 'cache-raw.fif')
+    loaded, saved = [], []
+
+    def save(path):
+        path.touch()
+        saved.append(path)
+
+    def load_raw():
+        loaded.append(True)
+        return SimpleNamespace(save=save)
+
     pipeline = SimpleNamespace(
         _temporary_state=contextlib.nullcontext(),
         set=lambda **state: None,
-        _raw={'raw': pipeline_gui.RawSource(), 'filt': pipe},
+        _raw={'raw': pipeline_gui.RawSource(), 'filt': SimpleNamespace()},
         _resolve_derivative=lambda name: {pipeline_gui.raw_input_name('raw'): source, pipeline_gui.raw_node_name('filt'): cache}[name],
         load_bad_channels=lambda: ['MEG 0111'],
-        load_raw=lambda: SimpleNamespace(save=lambda path: (path.touch(), saved.append(path))),
+        load_raw=load_raw,
     )
     launched = []
     monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', lambda *args: launched.append(args) or 'proc')
     monkeypatch.setattr(pipeline_gui.wx, 'BusyCursor', contextlib.nullcontext)
     frame.__dict__.update(_pipeline=pipeline, _n_loading=0, _subprocesses=[], _closed=False)
-    return frame, launched, saved
+    return frame, launched, loaded, saved
 
 
 def test_open_mne_browse_raw(monkeypatch, tmp_path):
     "The bad channels context menu opens the row's raw in the MNE raw browser, in a subprocess seeded with the current bad channels"
-    frame, launched, saved = _browse_raw_frame(monkeypatch, tmp_path, pipe=None, cached=False)
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=False)
     frame._raw_name = lambda: 'raw'
     assert [action.label for action in frame._row_actions(0)] == ["Plot continuous data…", "Set bad channels…", "Open in mne browse_raw…"]
     frame._run_row_action(0, frame._row_actions(0)[2])
     (path, bads, on_close), = launched
     assert (path, bads) == (str(tmp_path / 'R01_raw.fif'), ['MEG 0111'])
+    assert loaded == []  # the source file is shown as it is
     assert frame._subprocesses == [('raw browser', 'proc')]
     # closing the browser posts the result to the main thread
     posted = []
@@ -527,15 +540,14 @@ def test_open_mne_browse_raw(monkeypatch, tmp_path):
 
 
 def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
-    "A raw pipe is shown from its cache file when that is valid, and otherwise written to a temporary file that is removed when the browser closes"
-    pipe = SimpleNamespace()
-    frame, launched, saved = _browse_raw_frame(monkeypatch, tmp_path, pipe, cached=True)
+    "A raw pipe that caches is shown from its cache file, built by loading it; one that does not cache is written to a temporary file that is removed when the browser closes"
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=True)
     frame._raw_name = lambda: 'filt'
     frame._run_row_action(0, frame._row_actions(0)[2])
     assert launched[-1][0] == str(tmp_path / 'cache-raw.fif')
-    assert saved == []
+    assert loaded == [True] and saved == []
 
-    frame, launched, saved = _browse_raw_frame(monkeypatch, tmp_path, pipe, cached=False)
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=False)
     frame._raw_name = lambda: 'filt'
     frame._run_row_action(0, frame._row_actions(0)[2])
     (tmp_file,) = saved
@@ -546,13 +558,51 @@ def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
     assert not tmp_file.parent.exists()
 
 
+def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
+    "The temporary file for a raw pipe that does not cache is removed when writing it, or starting the browser, fails"
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=False)
+    frame._raw_name = lambda: 'filt'
+    errors = []
+    frame._show_error = lambda *args: errors.append(args)
+    tmp_dir = tmp_path / 'browse'
+
+    def mkdtemp(prefix):
+        tmp_dir.mkdir()
+        return str(tmp_dir)
+
+    monkeypatch.setattr(pipeline_gui.tempfile, 'mkdtemp', mkdtemp)
+    # writing the file fails
+    load_raw = frame._pipeline.load_raw
+
+    def save(path):
+        raise OSError("disk full")
+
+    frame._pipeline.load_raw = lambda: SimpleNamespace(save=save)
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    assert 'disk full' in errors[-1][0] and launched == []
+    assert not tmp_dir.exists()
+    # starting the browser fails
+    frame._pipeline.load_raw = load_raw
+
+    def launch(*args):
+        raise OSError("no python")
+
+    monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', launch)
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    assert 'no python' in errors[-1][0] and frame._subprocesses == []
+    assert not tmp_dir.exists()
+
+
 def test_close_terminates_subprocesses(monkeypatch):
-    "Closing the GUI closes the GUIs it opened in subprocesses, asking first when raw browser windows are open"
+    "Closing the GUI closes the GUIs it opened in subprocesses, asking first when any of them are still open"
     messages, terminated = [], []
     answer = wx.ID_NO
 
     def dialog(parent, message, title, style):
-        return SimpleNamespace(ShowModal=lambda: (messages.append(message), answer)[1], Destroy=lambda: None)
+        def show_modal():
+            messages.append(message)
+            return answer
+        return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
 
     def proc(running, name):
@@ -560,7 +610,7 @@ def test_close_terminates_subprocesses(monkeypatch):
     frame = _frame(_compute_token=None, _closed=False, _subprocesses=[('coregistration', proc(True, 'coreg')), ('raw browser', proc(False, 'browser 1')), ('raw browser', proc(True, 'browser 2'))])
     event = SimpleNamespace(Veto=lambda: messages.append('veto'), Skip=lambda: messages.append('skip'))
     frame._on_close(event)
-    assert messages == ["1 raw browser window(s) are open. Closing this window will close them, and bad channels set there will not be saved.\n\nClose anyway?", 'veto']
+    assert messages == ["2 window(s) opened from this one are still open (coregistration, raw browser). Closing this window will close them, and changes that were not saved there will be lost.\n\nClose anyway?", 'veto']
     assert terminated == [] and not frame._closed
     answer = wx.ID_YES
     frame._on_close(event)
@@ -568,8 +618,26 @@ def test_close_terminates_subprocesses(monkeypatch):
     assert terminated == ['coreg', 'browser 2']
 
 
+def test_browse_raw_script(monkeypatch, capsys):
+    "The browser script seeds the raw with the bad channels it contains, passes allow_maxshield only to the FIFF reader, and reports the bad channels it was closed with plus those it could not show"
+    calls = []
+
+    def read_raw(path, **kwargs):
+        calls.append((path, kwargs))
+        raw = SimpleNamespace(info={'bads': []}, ch_names=['MEG 0111', 'MEG 0112'])
+        raw.plot = lambda block: raw.info['bads'].append('MEG 0112')
+        return raw
+
+    monkeypatch.setitem(sys.modules, 'mne', SimpleNamespace(io=SimpleNamespace(read_raw=read_raw)))
+    for path in ('/data/raw.fif', '/data/raw.edf'):
+        monkeypatch.setattr(sys, 'argv', ['-c', path, '["MEG 0111", "EEG 001"]'])
+        exec(pipeline_gui._BROWSE_RAW_SCRIPT, {})
+        assert json.loads(capsys.readouterr().out.strip()) == ['MEG 0111', 'MEG 0112', 'EEG 001']
+    assert calls == [('/data/raw.fif', {'allow_maxshield': 'yes'}), ('/data/raw.edf', {})]
+
+
 def test_launch_browse_raw_subprocess(monkeypatch):
-    "The browser subprocess reports the bad channels it was closed with on its last line; a failed run reports None with stderr"
+    "The browser subprocess reports the bad channels it was closed with on its last line; a failed run, or one whose last line is not the result, reports None with stderr"
     results = []
 
     def popen(args, stdout, stderr, text):
@@ -580,7 +648,8 @@ def test_launch_browse_raw_subprocess(monkeypatch):
     done = threading.Event()
 
     def on_close(bads, stderr):
-        return (results.append((bads, stderr)), done.set())
+        results.append((bads, stderr))
+        done.set()
     popen.output, popen.returncode = ('Using qt as 2D backend.\n["MEG 0111", "MEG 0112"]\n', ''), 0
     pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
     assert done.wait(5)
@@ -588,19 +657,26 @@ def test_launch_browse_raw_subprocess(monkeypatch):
     popen.output, popen.returncode = ('', 'Traceback: boom'), 1
     pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
     assert done.wait(5)
-    assert results == [(['MEG 0111', 'MEG 0112'], ''), (None, 'Traceback: boom')]
+    done.clear()
+    popen.output, popen.returncode = ('["MEG 0111"]\nClosing\n', ''), 0
+    pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
+    assert done.wait(5)
+    assert results == [(['MEG 0111', 'MEG 0112'], ''), (None, 'Traceback: boom'), (None, 'Unexpected last line of output: Closing')]
 
 
 def test_on_browse_raw_closed(monkeypatch):
-    "Changed bad channels are saved after confirmation; unchanged ones and a declined dialog save nothing; a failed browser shows its stderr"
+    "Changed bad channels are saved after confirmation; unchanged ones and a declined dialog save nothing; a failed browser, or save, shows the error"
     saved, refreshed, errors, messages = [], [], [], []
     answer = wx.ID_YES
 
     def dialog(parent, message, title, style):
-        return SimpleNamespace(ShowModal=lambda: (messages.append(message), answer)[1], Destroy=lambda: None)
+        def show_modal():
+            messages.append(message)
+            return answer
+        return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
     pipeline = SimpleNamespace(make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state)))
-    frame = _frame(_pipeline=pipeline, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
+    frame = _frame(_pipeline=pipeline, _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0112', 'MEG 0113'], '')
     assert saved == [(['MEG 0112', 'MEG 0113'], True, 'raw', {'subject': 'R01'})]
     assert refreshed == [True]
@@ -616,6 +692,25 @@ def test_on_browse_raw_closed(monkeypatch):
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], None, 'Traceback: boom')
     assert errors == [('Traceback: boom', "Raw Browser Failed", "The MNE raw browser for R01 did not exit cleanly; bad channels were not updated.")]
     assert len(messages) == 2 and len(saved) == 1
+    # a save that fails for a reason that is not a user error
+
+    def fail(bads, redo, raw, **state):
+        raise ValueError("MEG 0112 not in raw")
+
+    pipeline.make_bad_channels = fail
+    answer = wx.ID_YES
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
+    assert 'MEG 0112 not in raw' in errors[-1][0]
+    assert len(saved) == 1 and refreshed == [True]
+    # posted while the GUI was closing
+    frame._closed = True
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
+    assert len(messages) == 3 and len(errors) == 2
+
+
+def test_start_refresh_after_close():
+    "A refresh posted by a subprocess that ended while the GUI was closing does not touch the destroyed window"
+    _frame(_closed=True)._start_refresh()
 
 
 def test_set_row_result_writes_status_details_and_colour():
