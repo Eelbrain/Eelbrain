@@ -40,6 +40,11 @@ def init_worker() -> None:
         os.nice(CONFIG['nice'])
 
 
+def n_workers() -> int:
+    "Number of worker processes configured for multiprocessing (see :func:`eelbrain.configure`; 0 when multiprocessing is disabled)"
+    return CONFIG['n_workers']
+
+
 def configure(
         n_workers: bool | int = None,
         frame: bool = None,

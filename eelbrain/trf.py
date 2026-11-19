@@ -3,11 +3,8 @@
 """Components for implementing TRF estimators
 
 Public to share with NCRF, but may change together with NCRF in the future.
+The components for cross-validation are in the main namespace
+(:func:`eelbrain.split_data`, :class:`eelbrain.Splits` and :class:`eelbrain.Split`).
 """
-from ._config import CONFIG, init_worker
-from ._trf.shared import DeconvolutionData, RowBlock, SegmentedArray, Split, Splits, lag_matrix, lag_window, package_values, split_data
-
-
-def n_workers() -> int:
-    "Number of worker processes configured for multiprocessing (see :func:`eelbrain.configure`; 0 when multiprocessing is disabled)"
-    return CONFIG['n_workers']
+from ._config import init_worker, n_workers
+from ._trf.shared import DeconvolutionData, RowBlock, SegmentedArray, lag_matrix, lag_window, package_values

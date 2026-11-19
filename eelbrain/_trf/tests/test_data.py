@@ -381,6 +381,7 @@ def test_trf_module():
     assert trf.DeconvolutionData is DeconvolutionData
     assert trf.lag_window is lag_window
     assert isinstance(trf.n_workers(), int)
+    assert not hasattr(trf, 'CONFIG')
 
 
 def test_split_data_walk_forward():
