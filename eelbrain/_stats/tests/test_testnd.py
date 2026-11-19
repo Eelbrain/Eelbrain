@@ -520,6 +520,61 @@ def test_ttest_1samp():
         testnd.TTestOneSample('utsnd', sub="A[:-1] == 'a0'", data=ds, samples=0)
 
 
+def test_tfce_e_h():
+    "tfce_e/tfce_h let users override the TFCE extent/height exponents"
+    ds = datasets.get_uts(True)
+    dss = ds.sub("A == 'a0'")
+
+    # without tfce, tfce_e/tfce_h stay unset (None), not the Smith & Nichols defaults
+    res_no_tfce = testnd.TTestOneSample('utsnd', data=dss, samples=0)
+    assert res_no_tfce.tfce_e is None
+    assert res_no_tfce.tfce_h is None
+
+    # defaults match Smith & Nichols (2009) once tfce is actually used
+    res_default = testnd.TTestOneSample('utsnd', data=dss, tfce=True, samples=0)
+    assert res_default.tfce_e == 0.5
+    assert res_default.tfce_h == 2.0
+    assert res_default._cdist.tfce_e == 0.5
+    assert res_default._cdist.tfce_h == 2.0
+    assert repr(res_default) == "<TTestOneSample 'utsnd', samples=0, tfce=True>"
+
+    # custom values are stored and change the resulting map
+    res_custom = testnd.TTestOneSample('utsnd', data=dss, tfce=True, tfce_e=0.4, tfce_h=1.5, samples=0)
+    assert res_custom.tfce_e == 0.4
+    assert res_custom.tfce_h == 1.5
+    assert res_custom._cdist.tfce_e == 0.4
+    assert res_custom._cdist.tfce_h == 1.5
+    assert not np.array_equal(res_default.tfce_map.x, res_custom.tfce_map.x)
+    assert repr(res_custom) == "<TTestOneSample 'utsnd', samples=0, tfce=True, tfce_e=0.4, tfce_h=1.5>"
+
+    # persistence
+    string = pickle.dumps(res_custom, pickle.HIGHEST_PROTOCOL)
+    res_custom_ = pickle.loads(string)
+    assert res_custom_.tfce_e == 0.4
+    assert res_custom_.tfce_h == 1.5
+    assert_array_equal(res_custom_.tfce_map.x, res_custom.tfce_map.x)
+
+    # backwards compatibility: old pickles without tfce_e/tfce_h default to 0.5/2.0
+    state = res_default.__getstate__()
+    del state['tfce_e']
+    del state['tfce_h']
+    cdist_state = state['_cdist'].__getstate__()
+    del cdist_state['tfce_e']
+    del cdist_state['tfce_h']
+    cdist_state['version'] = 3
+    old_cdist = NDPermutationDistribution.__new__(NDPermutationDistribution)
+    old_cdist.__setstate__(cdist_state)
+    state['_cdist'] = old_cdist
+    old_res = testnd.TTestOneSample.__new__(testnd.TTestOneSample)
+    old_res.__setstate__(state)
+    assert old_res.tfce_e == 0.5
+    assert old_res.tfce_h == 2.0
+
+    # accepted (and forwarded) by other test classes
+    testnd.ANOVA('utsnd', 'A*B', data=ds, tfce=True, tfce_e=0.4, tfce_h=1.5, samples=0)
+    testnd.Correlation('utsnd', 'Y', data=ds, tfce=True, tfce_e=0.4, tfce_h=1.5, samples=0)
+
+
 def test_ttest_ind():
     "Test testnd.TTestIndependent()"
     ds = datasets.get_uts(True)
