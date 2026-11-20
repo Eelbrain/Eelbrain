@@ -58,6 +58,9 @@ It is created with the MNE-Python coregistration utility, most conveniently thro
 double-clicking a subject row opens the MNE coregistration GUI pre-loaded with the subject's raw file and, if one already exists, the current transformation.
 For subjects without a FreeSurfer reconstruction the GUI opens against the template brain, so that MNE's "Scale MRI" feature can be used to create a scaled copy.
 
+A coregistration is specific to the MRI subject: the ``trans-file`` is stored in the subject's ``{root}/derivatives/mne/sub-{subject}/[ses-{session}/]{datatype}`` directory and named ``{mrisubject}[_ses-{session}]_trans.fif``, where :ref:`state-mrisubject` is the name of the FreeSurfer directory.
+With the default identity mapping this is ``sub-{subject}_trans.fif``; a subject that :attr:`Pipeline.mri_subjects` maps to different MRI subjects needs one ``trans-file`` for each of them (for example, ``fsaverage_trans.fif`` for the unscaled template brain).
+
 
 Noise covariance
 ================

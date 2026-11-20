@@ -98,7 +98,7 @@ def _identity_source_morph(
 
 class TransInput(Input):
     name = 'trans-input'
-    key_fields = ('subject', 'session')
+    key_fields = ('subject', 'session', 'mrisubject')
 
     def path(self, ctx: Request) -> Path:
         return ctx.root / trans_file_path(ctx.state, datatype=ctx.datatype)

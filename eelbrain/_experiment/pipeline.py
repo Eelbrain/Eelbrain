@@ -3114,8 +3114,9 @@ class Pipeline(StateModel):
         self.set(**state)
         with self._temporary_state:
             raw = self.load_raw(raw='raw')
-        state_ = self._fields
-        fig = mne.viz.plot_alignment(raw.info, self.root / trans_file_path(state_, datatype=self._datatype), self._mrisubject(), self.root / MRI_SDIR, surfaces, meg=meg, dig=dig, interaction='terrain')
+        mrisubject = self._mrisubject()
+        trans = self.root / trans_file_path(self._fields, datatype=self._datatype)
+        fig = mne.viz.plot_alignment(raw.info, trans, mrisubject, self.root / MRI_SDIR, surfaces, meg=meg, dig=dig, interaction='terrain')
         if parallel:
             fig.plotter.enable_parallel_projection()
         return fig

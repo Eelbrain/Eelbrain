@@ -3693,6 +3693,23 @@ def test_mri_subjects(samples_experiment):
     assert list(ds['mrisubject']) == ['sub-R0000-scaled', 'sub-R0001-scaled', 'sub-R0002-scaled']
     assert e.get('mri') == 'scaled'
 
+    # the trans-file is stored with the subject's recordings, but named after the MRI subject it coregisters them with
+    from eelbrain._experiment.pathing import trans_file_path
+    trans_paths = {}
+    with e._temporary_state:
+        for mri in ('', 'prefixed', 'scaled', 'fsaverage'):
+            e.set(mri=mri, subject='R0001')
+            ctx = e._resolve_derivative('trans-input')
+            assert ctx.node.key_fields == ('subject', 'session', 'mrisubject')
+            trans_paths[mri] = ctx.node.path(ctx).relative_to(root).as_posix()
+    assert trans_paths[''] == 'derivatives/mne/sub-R0001/meg/sub-R0001_trans.fif'
+    assert trans_paths['prefixed'] == trans_paths['']
+    assert trans_paths['scaled'] == 'derivatives/mne/sub-R0001/meg/sub-R0001-scaled_trans.fif'
+    assert trans_paths['fsaverage'] == 'derivatives/mne/sub-R0001/meg/fsaverage_trans.fif'
+    assert trans_file_path({'subject': 'R0001', 'session': '1', 'mrisubject': 'fsaverage'}, datatype='meg').as_posix() == 'derivatives/mne/sub-R0001/ses-1/meg/fsaverage_ses-1_trans.fif'
+    with pytest.raises(ValueError, match="mrisubject"):
+        trans_file_path({'subject': 'R0001', 'session': '', 'mrisubject': ''}, datatype='meg')
+
     # a group-level artifact is keyed on the mapping, not on the MRI subject of the subject that happens to be current
     e.set(raw='1-40', epoch='target', inv='free-3-dSPM')
     options = {'data': DataSpec('source'), 'samples': 0, 'test': 'left=right', 'tstart': None, 'tstop': None, 'pmin': None, 'disconnect_labels': True, 'baseline': True, 'src_baseline': None, 'smooth': None, 'samplingrate': None}
