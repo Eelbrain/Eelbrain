@@ -1809,9 +1809,6 @@ class EelFigure(MatplotlibFigure):
         if need_redraw:
             self.draw()
 
-        if self._has_frame and not self.canvas._background:
-            self._frame.store_canvas()
-
         if CONFIG['show'] and self._layout.show:
             self._frame.Show()
             if self._has_frame and do_autorun(self._layout.run):
