@@ -710,7 +710,7 @@ class GlassBrain(TimeSlicerEF, ColorBarMixin, EelFigure):
         if name is None:
             name = brain_data.name
 
-        p = Butterfly(bfly_data, vmin=vmin, vmax=vmax, xlim=xlim, h=h, w=w, columns=1, name=name, color='black', ylabel=hemis, axtitle=False)
+        p = Butterfly(bfly_data, vmin=vmin, vmax=vmax, xlim=xlim, h=h, w=w, columns=1, name=name, color='black', ylabel=hemis, axtitle=False, interactive=kwargs.get('interactive'))
 
         # Give wxPython a chance to initialize the menu before pyplot
         if jumpstart:
