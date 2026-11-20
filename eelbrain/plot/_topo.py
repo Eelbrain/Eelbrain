@@ -650,8 +650,8 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
             self._t_label.remove()
             self._t_label = None
             self.canvas.draw()  # otherwise time label does not get redrawn
-        elif hasattr(self.canvas, 'redraw'):
-            self.canvas.redraw(self.topo_axes)
+        else:
+            self._redraw(self.topo_axes)
 
 
 class PltTopomap(PltIm):

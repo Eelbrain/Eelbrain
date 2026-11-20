@@ -88,11 +88,12 @@ import os
 import re
 import time
 from typing import Any, Literal
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 import weakref
 
 import matplotlib as mpl
 import matplotlib.axes
+import matplotlib.backend_bases
 import matplotlib.font_manager
 import matplotlib.patches
 import matplotlib.text
@@ -1482,6 +1483,7 @@ class FigureFrame:
         self.figure = figure
         self.canvas = self.figure.canvas
         self._background = None
+        self._background_size = None
 
     def Close(self):  # noqa
         pass
@@ -1489,18 +1491,27 @@ class FigureFrame:
     def SetStatusText(self, text):  # noqa
         pass
 
+    def SetTitleSuffix(self, suffix):  # noqa
+        pass
+
     def Show(self):  # noqa
         pass
 
-    def redraw(self, axes=()):
-        "Adapted duplicate of mpl_canvas.FigureCanvasPanel"
-        self.canvas.restore_region(self._background)
-        for ax in axes:
-            ax.draw_artist(ax)
-        self.canvas.blit(self.figure)
+    def redraw(self, axes: Collection[matplotlib.axes.Axes]):
+        "Redraw ``axes`` through blitting (cf. mpl_canvas.FigureCanvasPanel)"
+        if self._background_size == self.canvas.get_width_height(physical=True):
+            self.canvas.restore_region(self._background)
+            for ax in axes:
+                ax.draw_artist(ax)
+            self.canvas.blit(self.figure.bbox)
+        else:
+            self.canvas.draw_idle()  # no background for the current canvas size (e.g., after a resize); the full draw stores a new one
 
-    def store_canvas(self):
-        self._background = self.canvas.copy_from_bbox(self.figure.bbox)
+    def store_canvas(self, event: matplotlib.backend_bases.DrawEvent = None):
+        "Store the background for blitting (connected to draw events, to keep up with resizes and other full draws)"
+        if not self.figure.canvas.is_saving():
+            self._background = self.canvas.copy_from_bbox(self.figure.bbox)
+            self._background_size = self.canvas.get_width_height(physical=True)
 
 
 class MatplotlibFrame(FigureFrame):
@@ -1684,14 +1695,21 @@ class EelFigure(MatplotlibFigure):
         self._crosshair_lines = None
         self._crosshair_axes = None
 
-        # add callbacks
-        if use_inline_backend():
+        # static notebook figures are rendered on demand, so they need neither callbacks nor redraws
+        self._static = use_inline_backend() and not layout.interactive
+        if self._static:
             return
         self.canvas.mpl_connect('motion_notify_event', self._on_motion)
         self.canvas.mpl_connect('axes_leave_event', self._on_leave_axes)
         self.canvas.mpl_connect('resize_event', self._on_resize)
         self.canvas.mpl_connect('key_press_event', self._on_key_press)
         self.canvas.mpl_connect('key_release_event', self._on_key_release)
+        if not self._has_frame:
+            self.canvas.mpl_connect('draw_event', frame.store_canvas)
+            # matplotlib only keeps weak references to callbacks, so without an Eelbrain frame the figure has to keep the plot alive (plots can share a figure through the axes parameter)
+            if not hasattr(figure, '_eelfigures'):
+                figure._eelfigures = []
+            figure._eelfigures.append(self)
 
     def __repr__(self):
         title = self._frame.GetTitle() if self._has_frame else self._title
@@ -1704,7 +1722,13 @@ class EelFigure(MatplotlibFigure):
 
     def _mime_(self) -> tuple[str, str]:
         "Display protocol of marimo, which renders the figure like its own matplotlib figures (marimo adds ``_mime_`` to all matplotlib artists)"
-        return self.figure._mime_()
+        if not self._layout.interactive:
+            return self.figure._mime_()
+        import marimo
+        element = marimo.mpl.interactive(self.figure)
+        # marimo binds the figure to a new canvas; redraws only reach the browser through that canvas
+        self.canvas = self._frame.canvas = self.figure.canvas
+        return element._mime_()
 
     def _repr_png_(self) -> bytes:
         "PNG representation for notebooks that use neither IPython nor marimo"
@@ -1785,9 +1809,6 @@ class EelFigure(MatplotlibFigure):
         if need_redraw:
             self.draw()
 
-        if self._has_frame and not self.canvas._background:
-            self._frame.store_canvas()
-
         if CONFIG['show'] and self._layout.show:
             self._frame.Show()
             if self._has_frame and do_autorun(self._layout.run):
@@ -1811,12 +1832,14 @@ class EelFigure(MatplotlibFigure):
     def _on_key_press(self, event):
         if event.key in self.__callback_key_press:
             self.__callback_key_press[event.key](event)
-            event.guiEvent.Skip(False)  # Matplotlib Skip()s all events
+            if self._has_frame:
+                event.guiEvent.Skip(False)  # Matplotlib Skip()s all events
 
     def _on_key_release(self, event):
         if event.key in self.__callback_key_release:
             self.__callback_key_release[event.key](event)
-            event.guiEvent.Skip(False)
+            if self._has_frame:
+                event.guiEvent.Skip(False)
 
     def _on_leave_axes(self, event):
         "Update the status bar when the cursor leaves axes"
@@ -1850,7 +1873,7 @@ class EelFigure(MatplotlibFigure):
         # update status bar
         self._frame.SetStatusText(self._on_motion_status_text(event))
         # redraw
-        self.canvas.redraw(redraw_axes)
+        self._redraw(redraw_axes)
 
     @staticmethod
     def _on_motion_status_text(event):
@@ -1869,6 +1892,15 @@ class EelFigure(MatplotlibFigure):
         if self._layout.tight:
             self._tight()
 
+    def _redraw(self, axes: Collection[matplotlib.axes.Axes]):
+        "Redraw ``axes`` after an interactive update"
+        if not axes or self._static:
+            return
+        elif self._has_frame:
+            self.canvas.redraw(axes)
+        else:
+            self._frame.redraw(axes)
+
     def _register_key(self, key, press=None, release=None):
         if press:
             if key in self.__callback_key_press:
@@ -1886,7 +1918,7 @@ class EelFigure(MatplotlibFigure):
                 vline.remove()
             self._crosshair_lines = None
             if draw:
-                self.canvas.redraw(self._crosshair_axes)
+                self._redraw(self._crosshair_axes)
 
     def _fill_toolbar(self, tb):
         """
@@ -2253,7 +2285,11 @@ class BaseLayout:
             right_of: EelFigure | int = None,
             below: EelFigure | int = None,
             axes: matplotlib.axes.Axes | list[matplotlib.axes.Axes] = None,
+            interactive: bool = None,
     ):
+        if interactive is None:
+            interactive = CONFIG['interactive']
+        self.interactive = interactive
         self.h = h
         self.w = w
         self.dpi = dpi or mpl.rcParams['figure.dpi']
@@ -3486,7 +3522,7 @@ class TimeSlicerEF(TimeSlicer):
                 self.__time_lines.pop().remove()
 
         if self.__redraw and redraw and self._frame is not None:
-            self.canvas.redraw(self.__axes)
+            self._redraw(self.__axes)
 
     def save_movie(
             self,
@@ -3532,6 +3568,8 @@ class TimeSlicerEF(TimeSlicer):
         imageio.mimwrite(filename, ims, **kwargs)
 
     def _im_array(self):
+        if not self._has_frame and self.figure.stale:
+            self.figure.canvas.draw()  # without an Eelbrain frame, time updates are not rendered immediately
         # private attr usage is official: https://matplotlib.org/gallery/misc/agg_buffer_to_array.html
         return np.array(self.figure.canvas.renderer._renderer)
 
