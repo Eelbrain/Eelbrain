@@ -93,6 +93,7 @@ import weakref
 
 import matplotlib as mpl
 import matplotlib.axes
+import matplotlib.backend_bases
 import matplotlib.font_manager
 import matplotlib.patches
 import matplotlib.text
@@ -1482,6 +1483,7 @@ class FigureFrame:
         self.figure = figure
         self.canvas = self.figure.canvas
         self._background = None
+        self._background_size = None
 
     def Close(self):  # noqa
         pass
@@ -1495,15 +1497,21 @@ class FigureFrame:
     def Show(self):  # noqa
         pass
 
-    def redraw(self, axes=()):
-        "Adapted duplicate of mpl_canvas.FigureCanvasPanel"
-        self.canvas.restore_region(self._background)
-        for ax in axes:
-            ax.draw_artist(ax)
-        self.canvas.blit(self.figure)
+    def redraw(self, axes: Collection[matplotlib.axes.Axes]):
+        "Redraw ``axes`` through blitting (cf. mpl_canvas.FigureCanvasPanel)"
+        if self._background_size == self.canvas.get_width_height(physical=True):
+            self.canvas.restore_region(self._background)
+            for ax in axes:
+                ax.draw_artist(ax)
+            self.canvas.blit(self.figure.bbox)
+        else:
+            self.canvas.draw_idle()  # no background for the current canvas size (e.g., after a resize); the full draw stores a new one
 
-    def store_canvas(self):
-        self._background = self.canvas.copy_from_bbox(self.figure.bbox)
+    def store_canvas(self, event: matplotlib.backend_bases.DrawEvent = None):
+        "Store the background for blitting (connected to draw events, to keep up with resizes and other full draws)"
+        if not self.figure.canvas.is_saving():
+            self._background = self.canvas.copy_from_bbox(self.figure.bbox)
+            self._background_size = self.canvas.get_width_height(physical=True)
 
 
 class MatplotlibFrame(FigureFrame):
@@ -1697,6 +1705,7 @@ class EelFigure(MatplotlibFigure):
         self.canvas.mpl_connect('key_press_event', self._on_key_press)
         self.canvas.mpl_connect('key_release_event', self._on_key_release)
         if not self._has_frame:
+            self.canvas.mpl_connect('draw_event', frame.store_canvas)
             # matplotlib only keeps weak references to callbacks, so without an Eelbrain frame the figure has to keep the plot alive (plots can share a figure through the axes parameter)
             if not hasattr(figure, '_eelfigures'):
                 figure._eelfigures = []
@@ -1893,7 +1902,7 @@ class EelFigure(MatplotlibFigure):
         elif self._has_frame:
             self.canvas.redraw(axes)
         else:
-            self.canvas.draw_idle()
+            self._frame.redraw(axes)
 
     def _register_key(self, key, press=None, release=None):
         if press:
