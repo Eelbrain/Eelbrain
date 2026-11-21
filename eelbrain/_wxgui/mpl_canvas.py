@@ -132,6 +132,11 @@ class FigureCanvasPanel(FigureCanvasWxAgg):
         y = (self.GetSize().GetHeight() - event.GetY()) * self.hidpi
         return MouseEvent('wx-event', self.figure.canvas, x, y, guiEvent=event)
 
+    def draw(self, drawDC: wx.DC = None) -> None:
+        "Store the background after every full draw, so that blitting keeps up with changes outside of the blitted axes (zoom, resize, ...)"
+        super().draw(drawDC)
+        self.store_canvas()
+
     def redraw(self, axes: tuple[Axes, ...] = ()) -> None:
         # https://matplotlib.org/stable/users/explain/animations/blitting.html
         if not axes:
