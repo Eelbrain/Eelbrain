@@ -14,7 +14,7 @@ sessions = ['ImageNet01']
 for subject in subjects:
     for session in sessions:
         raw = mne.io.read_raw_fif(RAW_FILE.format(subject=subject, session=session), preload=False)
-        coreg = mne.coreg.Coregistration(raw.info, subject=subject, subjects_dir=MRI_SDIR)
+        coreg = mne.coreg.Coregistration(raw.info, subject=f'sub-{subject}', subjects_dir=MRI_SDIR)
         coreg.fit_fiducials()
         coreg.fit_icp()
         trans_file = TRANS_FILE.format(subject=subject, session=session)

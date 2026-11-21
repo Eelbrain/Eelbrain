@@ -13,9 +13,10 @@ subjects = ['sm04', 'sm06', 'sm07', 'sm09', 'sm12']
 
 mne.datasets.fetch_fsaverage(subjects_dir=Path(MRI_SDIR))
 for subject in subjects:
-    mne.scale_mri('fsaverage', subject, 1., subjects_dir=MRI_SDIR, labels=False)
+    mrisubject = f'sub-{subject}'
+    mne.scale_mri('fsaverage', mrisubject, 1., subjects_dir=MRI_SDIR, labels=False)
     raw = mne.io.read_raw_fif(RAW_FILE.format(subject=subject), preload=False)
-    coreg = mne.coreg.Coregistration(raw.info, subject=subject, subjects_dir=MRI_SDIR)
+    coreg = mne.coreg.Coregistration(raw.info, subject=mrisubject, subjects_dir=MRI_SDIR)
     coreg.fit_fiducials()
     coreg.fit_icp()
     trans_file = TRANS_FILE.format(subject=subject)
