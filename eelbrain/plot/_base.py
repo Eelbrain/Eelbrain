@@ -1494,12 +1494,9 @@ class FigureFrame:
     def Show(self):  # noqa
         pass
 
-    def store_canvas(self) -> None:
-        pass  # the Blitter stores the background on every full draw
-
 
 class Blitter:
-    """Update single axes of a figure without Eelbrain frame through blitting (cf. mpl_canvas.FigureCanvasPanel)
+    """Update single axes of a figure through blitting
 
     The state belongs to the figure rather than a plot, because plots can share a figure through the ``axes`` parameter. The canvas is always retrieved from the figure, because it can be replaced (e.g., by ``marimo.mpl.interactive``).
     """
@@ -1729,10 +1726,9 @@ class EelFigure(MatplotlibFigure):
         self.canvas.mpl_connect('resize_event', self._on_resize)
         self.canvas.mpl_connect('key_press_event', self._on_key_press)
         self.canvas.mpl_connect('key_release_event', self._on_key_release)
-        if not self._has_frame:
-            if not hasattr(figure, '_eelbrain_blitter'):
-                figure._eelbrain_blitter = Blitter(figure)
-            figure._eelbrain_blitter.plots.append(self)
+        if not hasattr(figure, '_eelbrain_blitter'):
+            figure._eelbrain_blitter = Blitter(figure)
+        figure._eelbrain_blitter.plots.append(self)
 
     def __repr__(self):
         title = self._frame.GetTitle() if self._has_frame else self._title
@@ -1919,11 +1915,7 @@ class EelFigure(MatplotlibFigure):
 
     def _redraw(self, axes: Collection[matplotlib.axes.Axes]) -> None:
         "Redraw ``axes`` after an interactive update"
-        if not axes or self._static:
-            return
-        elif hasattr(self.canvas, 'redraw'):  # Eelbrain canvas, which also applies to plots in the axes of another Eelbrain figure
-            self.canvas.redraw(axes)
-        else:
+        if axes and not self._static:
             self.figure._eelbrain_blitter.redraw(axes)
 
     def _register_key(self, key, press=None, release=None):

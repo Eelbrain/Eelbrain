@@ -197,9 +197,6 @@ class CanvasFrame(EelbrainFrame):
         self._eelfigure = eelfigure
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
-    def store_canvas(self) -> None:
-        self.canvas.store_canvas()
-
     def FillToolBar(self, tb: wx.ToolBar, eelfigure: EelFigure | None) -> None:
         "Subclass should call this after adding their own items"
         if hasattr(self.Parent, 'attach'):
