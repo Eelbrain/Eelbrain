@@ -711,7 +711,6 @@ class Frame(NavigableFrame, FileFrame):
                 self._mark_bad_on_topo(p)
                 topo_list.append(p)
 
-        self.canvas.store_canvas()
         self.canvas.draw()
 
     def _plot_topo(
@@ -818,11 +817,10 @@ class Frame(NavigableFrame, FileFrame):
             self._events_ax.set_xlim(t_start, t_end)
             self._draw_events()
 
-        # Full redraw + re-capture the blit background: the new window changed
+        # Full redraw (which stores the blit background): the new window changed
         # the butterfly/events axes, so a stale background would otherwise be
         # restored (showing the previous page) on the next cursor-topo blit.
         self.canvas.draw()
-        self.canvas.store_canvas()
 
     def _draw_events(self):
         """Redraw event markers for the current time window."""
@@ -890,8 +888,6 @@ class Frame(NavigableFrame, FileFrame):
             self._mark_bad_on_topo(p)
 
         self.canvas.draw()
-        # Refresh the blit background so cursor-topo / window updates stay valid
-        self.canvas.store_canvas()
 
     def _update_cursor_topo(self, t: float):
         """Update cursor topomaps to show data at time t."""
@@ -924,7 +920,6 @@ class Frame(NavigableFrame, FileFrame):
             vlim_display = vlim_si_dict[ch_type] * scale
             self._butterfly_axes[i_type].set_ylim(-vlim_display, vlim_display)
         self.canvas.draw()
-        self.canvas.store_canvas()
 
     # --- Event handlers ---
 
