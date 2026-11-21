@@ -93,6 +93,7 @@ import weakref
 
 import matplotlib as mpl
 import matplotlib.axes
+import matplotlib.backend_bases
 import matplotlib.font_manager
 import matplotlib.patches
 import matplotlib.text
@@ -3453,10 +3454,15 @@ class TimeSlicerEF(TimeSlicer):
         self.canvas.mpl_connect('button_press_event', self._on_click)
         self._register_key('.', self._on_nudge_time)
         self._register_key(',', self._on_nudge_time)
+        self._register_key('escape', self._on_release_time)
 
     def _on_click(self, event):
         if self._time_controller and event.inaxes in self.__axes:
             self._set_time(event.xdata, fixate=event.button == 1)
+
+    def _on_release_time(self, event: matplotlib.backend_bases.KeyEvent) -> None:
+        if self._time_fixed:
+            self._set_time(self.get_time(), fixate=False)
 
     def _on_motion_sub(self, event):
         if not self._time_fixed and event.inaxes in self.__axes:

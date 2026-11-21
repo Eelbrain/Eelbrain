@@ -448,8 +448,8 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
     -----
     Topomap control:
      - LMB click in a butterfly plot fixates the topomap time
-     - RMB click in a butterfly plot removes the time point, the topomaps
-       follow the mouse pointer
+     - RMB click in a butterfly plot or ``esc`` removes the time point, the
+       topomaps follow the mouse pointer
      - ``.``: Increment the current topomap time (got right)
      - ``,``: Decrement the current topomap time (go left)
      - ``t``: open a ``Topomap`` plot for the time point under the mouse

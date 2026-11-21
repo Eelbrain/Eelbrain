@@ -77,6 +77,11 @@ def test_plot_topo_butterfly():
     p = plot.TopoButterfly('utsnd', data=ds, vmax=2, w=6, t=0.5)
     assert p.axes[0].get_ylim() == (-2.0, 2.0)
     assert p._time_fixed
+    # esc releases the time point
+    p._on_key_press(KeyEvent('test', p.canvas, 'escape', 0, 0, wx.KeyEvent()))
+    assert not p._time_fixed
+    assert p._t_label is None
+    assert p.get_time() == 0.5
     p.close()
 
     # multiple rows
