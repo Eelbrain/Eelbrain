@@ -29,7 +29,7 @@ The pipeline expects the input dataset in BIDS format. (To convert your data int
     subject folder                             /sub-{subject}
     session folder                                /ses-{session}
     datatype folder                                  /{datatype}
-    trans file                                          /sub-{subject}_ses-{session}_trans.fif
+    trans file                                          /{mrisubject}_ses-{session}_trans.fif
     ICA decomposition                                   /sub-{subject}_ses-{session}_acq-{acquisition}_run-{run}_desc-{raw}_ica.fif
     FreeSurfer SUBJECTS_DIR                 /freesurfer
     mri for each subject                       /sub-{subject}
@@ -46,7 +46,7 @@ The pipeline expects the input dataset in BIDS format. (To convert your data int
 ``{subject}``, ``{session}``, ``{task}``, ``{acquisition}``, and ``{run}`` are `BIDS entities <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html>`_. ``{session}``, ``{acquisition}``, and ``{run}`` are optional. ``{datatype}`` is inferred by the pipeline from the data files, and can be ``'meg'`` or ``'eeg'``. There can be other entities depending on the dataset, such as `split <https://bids-specification.readthedocs.io/en/stable/appendices/entities.html#split>`_.
 
 
-``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``{root}/derivatives/freesurfer`` directory is a `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directory. See :doc:`source` for how these files are created and used.
+``MRI`` files (including ``trans-file``) are optional and only needed for source localization. The ``trans-file`` is stored with the subject's recordings, but named after the MRI subject it coregisters them with (``{mrisubject}``, the name of the FreeSurfer directory; ``sub-{subject}`` by default, see :attr:`Pipeline.mri_subjects`). The ``{root}/derivatives/freesurfer`` directory is a `FreeSurfer <https://surfer.nmr.mgh.harvard.edu>`_ subject directory. See :doc:`source` for how these files are created and used.
 
 The ``{root}/derivatives/predictors`` and ``{root}/derivatives/subject-predictors`` directories hold predictor files for TRF analysis; see :doc:`trf` for their naming conventions.
 

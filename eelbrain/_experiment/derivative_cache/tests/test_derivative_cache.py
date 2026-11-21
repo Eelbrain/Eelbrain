@@ -1642,6 +1642,41 @@ def test_quick_fingerprint_skips_full_fingerprint_when_unchanged():
     assert source.full_calls == 1
 
 
+def test_stored_dependency_without_fingerprint_is_refreshed():
+    "A stored entry whose full fingerprint was dropped (see normalize_stored_dependencies) is vouched for by its quick fingerprint"
+    import os
+
+    root, registry = make_empty_registry()
+    source = CountingQuickInput(root)
+    registry.register(source)
+    registry.register(CountingValueDerivative(root))
+    source_path = source.path(registry.resolve('counting', state={'subject': 's1'}))
+    source_path.write_text('hello')
+    handle = registry.resolve('counting-value', state={'subject': 's1'})
+    assert handle.load() == 'hello'
+
+    def drop_stored_fingerprint():
+        manifest = json.loads(handle.manifest_path.read_text())
+        del manifest['dependencies']['counting']['fingerprint']
+        handle.manifest_path.write_text(json.dumps(manifest))
+
+    # the matching quick fingerprint keeps the artifact valid, and the current full fingerprint is stored
+    drop_stored_fingerprint()
+    source.full_calls = 0
+    assert handle.is_valid()
+    assert source.full_calls == 1
+    assert json.loads(handle.manifest_path.read_text())['dependencies']['counting']['fingerprint'] == {'content': 'hello'}
+    source.full_calls = 0
+    assert handle.is_valid()
+    assert source.full_calls == 0
+
+    # with a changed quick fingerprint there is nothing left to compare the input with
+    drop_stored_fingerprint()
+    mtime = source_path.stat().st_mtime_ns + 1_000_000_000
+    os.utime(source_path, ns=(mtime, mtime))
+    assert not handle.is_valid()
+
+
 # ---------------------------------------------------------------------------
 # Input key_fields + edge key-coverage validation
 # ---------------------------------------------------------------------------

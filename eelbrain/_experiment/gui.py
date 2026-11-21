@@ -34,19 +34,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         action='store_true',
         help='Print debug output at --log-level debug, and log how long each step of a table refresh takes and which node each artifact load spends its time in',
     )
-    parser.add_argument(
-        '--migrate',
-        action='store_true',
-        help='Migrate legacy derivative files (ICA, trans, bad channels, epoch rejection) to the current BIDS-style layout and exit without opening the GUI',
-    )
-    parser.add_argument(
-        '--overwrite',
-        action='store_true',
-        help='With --migrate, explicitly replace files that already exist in the current layout',
-    )
     args = parser.parse_args(argv)
-    if args.overwrite and not args.migrate:
-        parser.error('--overwrite requires --migrate')
 
     from .load_pipeline import load_pipeline
 
@@ -54,18 +42,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.debug:
         # attribute a slow table row to the node whose load took the time
         pipeline._derivatives.profile_loads = True
-
-    if args.migrate:
-        from .migration import migrate_derivatives
-
-        moved = migrate_derivatives(pipeline.root, overwrite=args.overwrite)
-        if moved:
-            print(f"Migrated {len(moved)} derivative file(s):")
-            for old, new in moved:
-                print(f"  {old.relative_to(pipeline.root)} -> {new.relative_to(pipeline.root)}")
-        else:
-            print("No legacy derivative files to migrate.")
-        return
 
     from .._wxgui.app import get_app
     from .._wxgui.pipeline_gui import PipelineFrame

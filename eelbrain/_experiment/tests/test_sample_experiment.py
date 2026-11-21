@@ -4,7 +4,7 @@ import itertools
 import json
 import logging
 from os.path import join, exists, relpath
-from os import remove
+from os import remove, utime
 from pathlib import Path
 import shutil
 import tomllib
@@ -3659,6 +3659,54 @@ def test_load_trfs_source(samples_experiment):
     assert ds[0, 'imp'].source == ds[1, 'imp'].source
 
 
+@pytest.mark.slow
+def test_trans_file(samples_experiment):
+    "The forward solution depends on the content of the trans-file for the MRI subject"
+    set_log_level('warning', 'mne')
+    from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+    root = samples_experiment(n_subjects=2, n_segments=1, mris=True)
+
+    class Experiment(SampleExperiment):
+        mri_subjects = {'swapped': {'R0000': 'R0001', 'R0001': 'R0000'}}
+
+    # the trans-file is specific to the MRI subject
+    e = Experiment(root)
+    e.set(subject='R0000', mri='swapped', src='ico-2')
+    trans_ctx = e._resolve_derivative('trans-input')
+    trans_path = trans_ctx.node.path(trans_ctx)
+    assert trans_path.name == 'sub-R0001_trans.fif'
+    assert not trans_ctx.exists()
+    trans = mne.read_trans(trans_path.with_name('sub-R0000_trans.fif'))
+    trans['trans'][0, 3] += 0.001
+    mne.write_trans(trans_path, trans)
+    fwd = e.load_fwd()
+    assert_allclose(fwd['mri_head_t']['trans'], np.linalg.inv(trans['trans']), atol=1e-6)
+    fwd_ctx = e._resolve_derivative('fwd')
+
+    def touch_trans_file():
+        mtime = trans_path.stat().st_mtime_ns + 1_000_000_000
+        utime(trans_path, ns=(mtime, mtime))
+
+    # a trans-file that is saved again without changes leaves the forward solution valid
+    touch_trans_file()
+    assert fwd_ctx.is_valid()
+    manifest = json.loads(fwd_ctx.manifest_path.read_text())
+    entry = manifest['dependencies']['trans-input']
+    assert entry['fingerprint'] == {'from': 4, 'to': 5, 'trans': mne.read_trans(trans_path)['trans'].tolist()}
+    # a manifest from 0.43 development, when the fingerprint was the file fingerprint, is updated as long as the file is unchanged
+    manifest['dependencies']['trans-input'] = {'name': 'trans-input', 'fingerprint': entry['quick_fingerprint'], 'dependencies': {}}
+    fwd_ctx.manifest_path.write_text(json.dumps(manifest))
+    assert fwd_ctx.is_valid()
+    assert json.loads(fwd_ctx.manifest_path.read_text())['dependencies']['trans-input'] == entry
+    touch_trans_file()
+    assert fwd_ctx.is_valid()
+    # a different coregistration invalidates the forward solution
+    trans['trans'][0, 3] += 0.001
+    mne.write_trans(trans_path, trans, overwrite=True)
+    assert not fwd_ctx.is_valid()
+
+
 def test_mri_subjects(samples_experiment):
     "Subject → MRI-subject mappings (Pipeline.mri_subjects and the mri state)"
     from eelbrain._exceptions import ConfigurationError
@@ -3692,6 +3740,23 @@ def test_mri_subjects(samples_experiment):
     ds = e.show_subjects(mri='scaled', mrisubject=True, asds=True)
     assert list(ds['mrisubject']) == ['sub-R0000-scaled', 'sub-R0001-scaled', 'sub-R0002-scaled']
     assert e.get('mri') == 'scaled'
+
+    # the trans-file is stored with the subject's recordings, but named after the MRI subject it coregisters them with
+    from eelbrain._experiment.pathing import trans_file_path
+    trans_paths = {}
+    with e._temporary_state:
+        for mri in ('', 'prefixed', 'scaled', 'fsaverage'):
+            e.set(mri=mri, subject='R0001')
+            ctx = e._resolve_derivative('trans-input')
+            assert ctx.node.key_fields == ('subject', 'session', 'mrisubject')
+            trans_paths[mri] = ctx.node.path(ctx).relative_to(root).as_posix()
+    assert trans_paths[''] == 'derivatives/mne/sub-R0001/meg/sub-R0001_trans.fif'
+    assert trans_paths['prefixed'] == trans_paths['']
+    assert trans_paths['scaled'] == 'derivatives/mne/sub-R0001/meg/sub-R0001-scaled_trans.fif'
+    assert trans_paths['fsaverage'] == 'derivatives/mne/sub-R0001/meg/fsaverage_trans.fif'
+    assert trans_file_path({'subject': 'R0001', 'session': '1', 'mrisubject': 'fsaverage'}, datatype='meg').as_posix() == 'derivatives/mne/sub-R0001/ses-1/meg/fsaverage_ses-1_trans.fif'
+    with pytest.raises(ValueError, match="mrisubject"):
+        trans_file_path({'subject': 'R0001', 'session': '', 'mrisubject': ''}, datatype='meg')
 
     # a group-level artifact is keyed on the mapping, not on the MRI subject of the subject that happens to be current
     e.set(raw='1-40', epoch='target', inv='free-3-dSPM')

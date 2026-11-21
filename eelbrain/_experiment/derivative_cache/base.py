@@ -707,6 +707,12 @@ class DependencyNode(Generic[T]):
         the artifact) without invalidating existing caches. The default does
         nothing.
 
+        When the full fingerprint of a dependency changed its form, removing
+        the stored ``fingerprint`` from an entry that has a
+        ``quick_fingerprint`` keeps the entry valid for as long as the quick
+        fingerprint matches; the next validity check then stores the current
+        full fingerprint.
+
         Parameters
         ----------
         dependencies
@@ -1685,13 +1691,16 @@ class Request(Generic[T]):
         When it is given and the cheap ``quick_fingerprint`` still matches, the
         stored full fingerprint and sub-dependencies are reused instead of being
         recomputed, so a validity check does not pay for the expensive walk.
+        A stored entry without a full fingerprint (see
+        :meth:`DependencyNode.normalize_stored_dependencies`) is always
+        recomputed.
         """
         out: dict[str, Any] = {'name': self.node.name}
         if fingerprint_override is None:
             quick = self.current_dependency_fingerprint_quick(view)
             if quick is not None:
                 out['quick_fingerprint'] = quick
-            if stored is not None and quick is not None and stored.get('quick_fingerprint') == quick:
+            if stored is not None and quick is not None and stored.get('quick_fingerprint') == quick and 'fingerprint' in stored:
                 out['fingerprint'] = stored.get('fingerprint')
                 out['dependencies'] = stored.get('dependencies', {})
             else:

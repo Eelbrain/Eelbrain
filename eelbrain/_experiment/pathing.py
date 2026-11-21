@@ -102,7 +102,12 @@ def ica_file_path(
 
 
 def trans_file_path(state: dict[str, Any], *, datatype: str) -> Path:
-    basename = _bids_name(state, ('subject', 'session'), suffix='', datatype=datatype)
+    mrisubject = state['mrisubject']
+    if not mrisubject:
+        raise ValueError(f"{mrisubject=}: the trans-file requires an MRI subject")
+    basename = mrisubject
+    if session := _state_value(state, 'session'):
+        basename += f"_ses-{session}"
     return DERIV_DIR / 'mne' / raw_dir(state, datatype=datatype) / f"{basename}_trans.fif"
 
 
