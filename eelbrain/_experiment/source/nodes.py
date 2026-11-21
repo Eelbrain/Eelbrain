@@ -98,12 +98,17 @@ def _identity_source_morph(
 
 class TransInput(Input):
     name = 'trans-input'
-    key_fields = ('subject', 'session')
+    key_fields = ('subject', 'session', 'mrisubject')
 
     def path(self, ctx: Request) -> Path:
         return ctx.root / trans_file_path(ctx.state, datatype=ctx.datatype)
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
+        if not self.exists(ctx):
+            return {'trans': None}
+        return dict(self.load(ctx))
+
+    def dependency_fingerprint_quick(self, ctx: Request, view: str | None = None) -> dict[str, Any] | None:
         return file_fingerprint(ctx.root, self.path(ctx))
 
     def load(self, ctx: Request) -> mne.transforms.Transform:
@@ -330,6 +335,12 @@ class FwdDerivative(Derivative[mne.Forward]):
         if ctx.state['mrisubject'] != 'fsaverage':
             deps.append(Dependency('bem-input'))
         return tuple(deps)
+
+    def normalize_stored_dependencies(self, dependencies: dict[str, Any]) -> None:
+        # during 0.43 development, the trans-file's fingerprint was the file fingerprint, which now is the quick fingerprint; the content is fingerprinted at the next validity check
+        trans = dependencies.get('trans-input')
+        if isinstance(trans, dict) and 'mtime' in (trans.get('fingerprint') or ()):
+            trans['quick_fingerprint'] = trans.pop('fingerprint')
 
     def fingerprint(self, ctx: Request) -> dict[str, Any]:
         out = {'source_reference_add': self._references['average'].add}
