@@ -17,6 +17,7 @@ CONFIG: dict[str, Any] = {
     'eelbrain': True,
     'autorun': None,
     'show': True,
+    'interactive': False,
     'format': 'svg',
     'figure_background': 'white',
     'prompt_toolkit': 'wx' if IS_WINDOWS else 'eelbrain',
@@ -50,6 +51,7 @@ def configure(
         frame: bool = None,
         autorun: bool = None,
         show: bool = None,
+        interactive: bool = None,
         format: str = None,
         figure_background: Any = None,
         prompt_toolkit: Literal[False, 'eelbrain', 'wx'] = None,
@@ -79,6 +81,10 @@ def configure(
     show
         Show plots on the screen when they're created (disable this to create
         plots and save them without showing them on the screen).
+    interactive
+        Default for the ``interactive`` parameter of plots: make figures that
+        are displayed in a notebook interactive (default ``False``; see
+        :ref:`general-layout-parameters`).
     format
         Default format for plots (for example "png", "svg", ...).
     figure_background
@@ -133,6 +139,8 @@ def configure(
         new['autorun'] = bool(autorun)
     if show is not None:
         new['show'] = bool(show)
+    if interactive is not None:
+        new['interactive'] = bool(interactive)
     if format is not None:
         new['format'] = format.lower()
     if figure_background is not None:

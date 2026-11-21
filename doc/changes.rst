@@ -139,6 +139,9 @@ New in 0.43
 
 * Source space: :func:`morph_source_space` now supports volume source spaces
   (:class:`VolumeSourceSpace`).
+* Plotting: new ``interactive`` parameter to make figures interactive in
+  `marimo <https://marimo.io>`_ notebooks (see
+  :ref:`general-layout-parameters`; set the default with :func:`configure`).
 
 
 New in 0.41

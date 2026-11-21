@@ -1721,7 +1721,7 @@ class EelFigure(MatplotlibFigure):
         self._crosshair_axes = None
 
         # static notebook figures are rendered on demand, so they need neither callbacks nor redraws
-        self._static = use_inline_backend()
+        self._static = use_inline_backend() and not layout.interactive
         if self._static:
             return
         self.canvas.mpl_connect('motion_notify_event', self._on_motion)
@@ -1750,7 +1750,10 @@ class EelFigure(MatplotlibFigure):
 
     def _mime_(self) -> tuple[str, str]:
         "Display protocol of marimo, which renders the figure like its own matplotlib figures (marimo adds ``_mime_`` to all matplotlib artists)"
-        return self.figure._mime_()
+        if not self._layout.interactive:
+            return self.figure._mime_()
+        import marimo
+        return marimo.mpl.interactive(self.figure)._mime_()
 
     def _repr_png_(self) -> bytes:
         "PNG representation for notebooks that use neither IPython nor marimo"
@@ -2307,7 +2310,11 @@ class BaseLayout:
             right_of: EelFigure | int = None,
             below: EelFigure | int = None,
             axes: matplotlib.axes.Axes | list[matplotlib.axes.Axes] = None,
+            interactive: bool = None,
     ):
+        if interactive is None:
+            interactive = CONFIG['interactive']
+        self.interactive = interactive
         self.h = h
         self.w = w
         self.dpi = dpi or mpl.rcParams['figure.dpi']
