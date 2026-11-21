@@ -1523,7 +1523,7 @@ class Blitter:
     def redraw(self, axes: Collection[matplotlib.axes.Axes]) -> None:
         "Redraw ``axes``; only the area inside the axes is updated"
         canvas = self.figure.canvas
-        if self._background_size != canvas.get_width_height(physical=True):
+        if not canvas.supports_blit or self._background_size != canvas.get_width_height(physical=True):
             canvas.draw()  # no background for the current canvas (e.g., after a resize, or a canvas that does not support blitting); a full draw stores a new one where possible
             return
         canvas.restore_region(self._background)
