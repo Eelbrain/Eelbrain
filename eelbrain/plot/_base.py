@@ -3608,6 +3608,8 @@ class TopoMapKey:
 
     def __init__(self, data_func):
         self.__topo_data = data_func
+        if use_inline_backend():
+            return  # a figure that is created in a key press handler is not displayed in a notebook
         self._register_key('t', self.__on_topo)
         self._register_key('T', self.__on_topo)
 
