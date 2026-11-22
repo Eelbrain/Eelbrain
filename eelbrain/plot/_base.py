@@ -1520,21 +1520,52 @@ class Blitter:
     def redraw(self, axes: Collection[matplotlib.axes.Axes]) -> None:
         "Redraw ``axes``; only the area inside the axes is updated"
         canvas = self.figure.canvas
-        if not canvas.supports_blit or self._background_size != canvas.get_width_height(physical=True):
-            canvas.draw()  # no background for the current canvas (e.g., after a resize, or a canvas that does not support blitting); a full draw stores a new one where possible
+        backgrounds = []
+        for ax in axes:
+            background = next((artist for artist in ax.artists if isinstance(artist, AxesBackground)), None)
+            if background is None:
+                background = ax.add_artist(AxesBackground())
+            backgrounds.append(background)
+        if not canvas.supports_blit or self._background_size != canvas.get_width_height(physical=True) or any(background.region is None for background in backgrounds):
+            canvas.draw()  # no background for the current canvas or for some of the axes (e.g., after a resize, the first time axes are redrawn, or a canvas that does not support blitting); a full draw stores them where possible
             return
         canvas.restore_region(self._background)
+        for background in backgrounds:
+            canvas.restore_region(background.region)
         for ax in axes:
             ax.draw_artist(ax)
         for ax in axes:
-            x0, y0, x1, y1 = ax.bbox.extents
-            inside = matplotlib.transforms.Bbox.from_extents(math.floor(x0 + 0.5), math.ceil(y0 - 0.5), math.floor(x1 + 0.5), math.ceil(y1 - 0.5))  # the pixels that the axes background covers: Agg snaps rectangles to whole pixels, with y measured from the top
-            self._regions[ax] = canvas.copy_from_bbox(inside)
+            self._regions[ax] = canvas.copy_from_bbox(axes_area(ax))
         # Compose the canvas from the background and the area inside of all axes that changed since the last full draw: the background alone would revert other axes to the last full draw, and artists outside of the axes area (tick labels, ...) would otherwise be drawn on top of themselves
         canvas.restore_region(self._background)
         for region in self._regions.values():
             canvas.restore_region(region)
         canvas.blit(self.figure.bbox)
+
+
+def axes_area(ax: matplotlib.axes.Axes) -> matplotlib.transforms.Bbox:
+    "The pixels that the background patch of ``ax`` covers: Agg snaps rectangles to whole pixels, with y measured from the top"
+    x0, y0, x1, y1 = ax.bbox.extents
+    return matplotlib.transforms.Bbox.from_extents(math.floor(x0 + 0.5), math.ceil(y0 - 0.5), math.floor(x1 + 0.5), math.ceil(y1 - 0.5))
+
+
+class AxesBackground(matplotlib.artist.Artist):
+    """Store the canvas behind the artists of an axes during a full draw
+
+    Blitting draws axes on top of what is behind them. The canvas after a full draw can not be used for this, because axes without background patch (e.g., topomaps) do not cover their previous state.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.set_zorder(-math.inf)  # draw before the other artists of the axes
+        self.set_in_layout(False)
+        self.region = None
+
+    def draw(self, renderer: matplotlib.backend_bases.RendererBase) -> None:
+        canvas = self.axes.figure.canvas
+        if canvas.supports_blit and not canvas.is_saving():
+            self.region = canvas.copy_from_bbox(axes_area(self.axes))
+        self.stale = False
 
 
 class MatplotlibFrame(FigureFrame):

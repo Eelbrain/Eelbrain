@@ -551,10 +551,7 @@ class TopoButterfly(ColorMapMixin, TimeSlicerEF, TopoMapKey, YLimMixin, XAxisMix
         self._n_cols = n_cols
         self.bfly_axes = self.axes[0::n_cols]
         self.topo_axes = [ax for i, ax in enumerate(self.axes) if i % n_cols != 0]
-        # Hide topo axes immediately so the background captured by _show() is already clean
-        # (lazy AxTopomap creation via _init_controller would otherwise leave format_axes
-        # ticks visible in the blitted background, showing through the topomap clip region)
-        for ax in self.topo_axes:
+        for ax in self.topo_axes:  # the topomaps are created in _init_controller(); until then the axes should be empty
             ax.set_axis_off()
         self.bfly_plots = []
         self.topo_plots = []
