@@ -1532,8 +1532,11 @@ class Blitter:
         canvas.restore_region(self._background)
         for background in backgrounds:
             canvas.restore_region(background.region)
-        for ax in axes:
-            ax.draw_artist(ax)
+        # Like a full draw: axes and the artists that belong to the figure (legend, title, ...) in the order of their zorder; artists below the axes are part of the axes backgrounds
+        min_zorder = min(ax.get_zorder() for ax in axes)
+        figure_artists = [artist for artist in self.figure.get_children() if artist is not self.figure.patch and not isinstance(artist, (matplotlib.axes.Axes, matplotlib.figure.FigureBase)) and artist.get_zorder() >= min_zorder]
+        for artist in sorted([*axes, *figure_artists], key=lambda artist: artist.get_zorder()):
+            self.figure.draw_artist(artist)
         for ax in axes:
             self._regions[ax] = canvas.copy_from_bbox(axes_area(ax))
         # Compose the canvas from the background and the area inside of all axes that changed since the last full draw: the background alone would revert other axes to the last full draw, and artists outside of the axes area (tick labels, ...) would otherwise be drawn on top of themselves
