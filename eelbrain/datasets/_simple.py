@@ -707,7 +707,7 @@ def setup_samples_experiment(
     # copy rudimentary fsaverage
     surf_names = ['inflated', 'white', 'orig', 'orig_avg', 'curv', 'sphere']
     files = {
-        'bem': ['fsaverage-head.fif', 'fsaverage-inner_skull-bem.fif'],
+        'bem': ['fsaverage-head.fif'],
         'label': ['lh.aparc.annot', 'rh.aparc.annot'],
         'surf': [f'{hemi}.{name}' for hemi, name in product(['lh', 'rh'], surf_names)],
         'mri': [],
@@ -721,6 +721,9 @@ def setup_samples_experiment(
         dst_dir.mkdir()
         for file_name in file_names:
             shutil.copy(src_dir / file_name, dst_dir / file_name)
+    # low-resolution BEM (1280 triangles): the fsaverage dataset's inner skull BEM has 20480 triangles, for which the BEM solution (computed for each subject) takes about a minute
+    bem = mne.make_bem_model('fsaverage', ico=3, conductivity=(0.3,), subjects_dir=fsaverage_path.parent, verbose=False)
+    mne.write_bem_surfaces(dst_s_dir / 'bem' / 'fsaverage-inner_skull-bem.fif', bem, verbose=False)
     # source space
     src_src = fsaverage_path / 'bem' / 'fsaverage-ico-3-src.fif'
     src_dst = dst_s_dir / 'bem' / 'fsaverage-ico-3-src.fif'
