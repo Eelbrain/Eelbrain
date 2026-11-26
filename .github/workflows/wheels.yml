@@ -80,7 +80,9 @@ jobs:
           name: ${{ matrix.buildplat[1] }}-dist
           path: ./wheelhouse/*.whl
 
+      # Linux wheels are tested inside a container, so there is no coverage.xml on the runner; keep after_n_builds in .github/codecov.yml in sync with the number of uploads
       - name: Upload coverage to Codecov
+        if: runner.os != 'Linux'
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
