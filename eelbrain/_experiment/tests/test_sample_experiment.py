@@ -86,13 +86,30 @@ def _samples_template(
         mris: bool = False,
         pick: str = 'mag',
 ) -> Path:
-    "Session-cached bare dataset template for one setup configuration"
+    """Session-cached dataset template for one setup configuration
+
+    Templates for the standard single-task dataset additionally contain the
+    cached ``tsss`` and ``1-40`` raw derivatives of :class:`SampleExperiment`,
+    which most tests start from, and with ``mris`` the ``ico-2`` source space.
+    The derivative cache is root-relative and ``copytree`` preserves mtimes, so
+    each test's copy starts with cache hits.
+    """
     key = (n_subjects, n_tasks, n_segments, n_runs, mris, pick)
     if key not in cache:
         template = template_dir / f'template-{len(cache)}'
         template.mkdir()
         datasets.setup_samples_experiment(template, n_subjects, n_tasks, n_segments, n_runs, mris, pick=pick)
-        cache[key] = template / 'SampleExperiment'
+        root = template / 'SampleExperiment'
+        if (n_tasks, n_runs, pick) == (1, 1, 'mag'):
+            from eelbrain._experiment.tests.sample_experiment import SampleExperiment
+
+            set_log_level('warning', 'mne')
+            e = SampleExperiment(root)
+            for _ in e:
+                e.load_raw(raw='1-40')
+                if mris:
+                    e.load_src(src='ico-2')
+        cache[key] = root
     return cache[key]
 
 
