@@ -15,6 +15,7 @@ import numpy as np
 
 from ..._data_obj import Dataset, Datalist, NDVar, Var
 from ..._ndvar import concatenate
+from ..._text import enumeration
 from ..._trf._boosting import boosting
 from ..._trf.shared import split_data
 from ..configuration import Configuration, typed_arg
@@ -361,20 +362,37 @@ class NCRF(Estimator):
         Refine the cross-validated ``mu`` with the estimation stability criterion.
     basis_std
         Standard deviation of the Gaussian basis atoms (in seconds).
+    solver_args
+        Experimental: additional keyword arguments for the
+        :class:`ncrf.ChampLasso` solver (see Notes).
+    fit_args
+        Experimental: additional keyword arguments for
+        :meth:`ncrf.NCRFEstimator.fit` (see Notes).
 
     Notes
     -----
     The fit-quality metrics (see :meth:`Pipeline.load_trfs`) are the selected
     ``mu`` and the training-set scores of the :class:`ncrf.NCRFFit`.
+
+    ``solver_args`` and ``fit_args`` provide access to ``ncrf`` parameters that
+    the pipeline does not manage, such as experimental parameters (parameters
+    that correspond to an :class:`NCRF` parameter can not be set this way).
+    Cached results are identified by the names and values of these arguments,
+    not by what the arguments do: if the meaning of an argument changes in
+    ``ncrf``, results that were cached with it are not invalidated, and have to
+    be deleted manually. Likewise, results cached without an argument assume
+    that its default in ``ncrf`` does not change.
     """
     extra_inputs = ('fwd', 'cov')
     extra_input_fields = ('cov', 'mrisubject', 'src')
     requires_sensor_space = True
     DICT_ATTRS = ('mu', 'basis_stride', 'n_iter', 'n_iterc', 'n_iterf', 'partitions', 'split', 'scheme', 'validate', 'min_section', 'tol', 'use_ES', 'basis_std')
+    DICT_DEFAULTS = {'solver_args': None, 'fit_args': None}
     metric_keys = ('mu', 'explained_variance', 'l2_error', 'cross_fit', 'weighted_l2_error')
 
     def __init__(
             self,
+            *,
             mu: str | float | Sequence[float] = 'auto',
             basis_stride: int = 1,
             n_iter: int = 10,
@@ -388,6 +406,8 @@ class NCRF(Estimator):
             tol: float = 0.001,
             use_ES: bool = False,
             basis_std: float = 0.0085,
+            solver_args: dict[str, Any] = None,
+            fit_args: dict[str, Any] = None,
     ):
         self.mu = mu
         self.basis_stride = typed_arg(basis_stride, int)
@@ -402,6 +422,24 @@ class NCRF(Estimator):
         self.tol = typed_arg(tol, float)
         self.use_ES = use_ES
         self.basis_std = typed_arg(basis_std, float)
+        self.solver_args = self._extra_args('solver_args', solver_args, ('mu', 'n_iter', 'n_iterc', 'n_iterf', 'tol', 'use_es'))
+        self.fit_args = self._extra_args('fit_args', fit_args, ('data', 'solver', 'cv', 'compute_explained_variance'))
+
+    @staticmethod
+    def _extra_args(
+            name: str,
+            args: dict[str, Any] | None,
+            managed: tuple[str, ...],
+    ) -> dict[str, Any] | None:
+        "Check additional keyword arguments (``managed``: arguments that the estimator sets itself); ``None`` if there are none, so that results cached before the parameter existed stay valid"
+        if not args:
+            return None
+        args = dict(args)
+        if invalid := [key for key in args if not isinstance(key, str)]:
+            raise TypeError(f"{name}={args!r}: argument names need to be strings, got {enumeration(invalid)}")
+        elif conflicts := [key for key in args if key in managed]:
+            raise ValueError(f"{name}={args!r}: {enumeration(conflicts)} can not be set through {name}, use the corresponding NCRF parameter")
+        return args
 
     @property
     def _split_args(self) -> dict[str, Any]:
@@ -427,8 +465,8 @@ class NCRF(Estimator):
         else:
             splits = split_data(data.data.segments, tstep=data.data.time.tstep, **self._split_args)
         estimator = NCRFEstimator.from_lead_field(fwd, cov)
-        solver = ChampLasso(mu=self.mu, n_iter=self.n_iter, n_iterc=self.n_iterc, n_iterf=self.n_iterf, tol=self.tol, use_es=self.use_ES)
-        return estimator.fit(data, solver, cv=splits, compute_explained_variance=True)
+        solver = ChampLasso(mu=self.mu, n_iter=self.n_iter, n_iterc=self.n_iterc, n_iterf=self.n_iterf, tol=self.tol, use_es=self.use_ES, **(self.solver_args or {}))
+        return estimator.fit(data, solver, cv=splits, compute_explained_variance=True, **(self.fit_args or {}))
 
     # ``result`` is an :class:`ncrf.NCRFFit` report; the kernels and TRF timing live on its ``model``
     def _result_metrics(self, result) -> dict[str, NDVar | float]:

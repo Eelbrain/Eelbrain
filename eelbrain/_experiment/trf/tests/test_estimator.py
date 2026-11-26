@@ -3,6 +3,7 @@ import pickle
 import pytest
 
 from eelbrain import NDVar, concatenate, datasets, boosting
+from eelbrain._experiment.derivative_cache import DerivativeRegistry
 from eelbrain._experiment.trf.estimator import Boosting, Estimator, NCRF
 from eelbrain._experiment.trf.nodes import TRFDerivative
 
@@ -74,6 +75,21 @@ def test_ncrf():
     assert NCRF(mu=0.5, partitions=6) == fingerprint['estimator']
     assert est != fingerprint['estimator']
     assert pickle.loads(pickle.dumps(est)) == est
+    # additional arguments: part of the definition only when set, so that results cached before the parameters existed stay valid
+    assert NCRF(mu=0.5, solver_args={}, fit_args={}) == est
+    extra = NCRF(mu=0.5, solver_args={'store': ('objective',)}, fit_args={'verbose': True})
+    assert extra != est
+    assert extra != NCRF(mu=0.5, solver_args={'store': ('theta',)}, fit_args={'verbose': True})
+    assert extra._as_dict() == {**d, 'solver_args': {'store': ('objective',)}, 'fit_args': {'verbose': True}}
+    assert DerivativeRegistry.canonicalize(extra)['solver_args'] == {'store': ['objective']}
+    assert repr(extra) == "NCRF(mu=0.5, solver_args={'store': ('objective',)}, fit_args={'verbose': True})"
+    assert pickle.loads(pickle.dumps(extra)) == extra
+    with pytest.raises(ValueError, match='n_iter can not be set through solver_args'):
+        NCRF(solver_args={'n_iter': 5})
+    with pytest.raises(ValueError, match='cv can not be set through fit_args'):
+        NCRF(fit_args={'cv': 3})
+    with pytest.raises(TypeError):
+        NCRF(solver_args={1: 5})
 
 
 def test_boosting_fit():
