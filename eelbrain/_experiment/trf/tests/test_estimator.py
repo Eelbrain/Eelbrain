@@ -84,6 +84,11 @@ def test_ncrf():
     assert DerivativeRegistry.canonicalize(extra)['solver_args'] == {'store': ['objective']}
     assert repr(extra) == "NCRF(mu=0.5, solver_args={'store': ('objective',)}, fit_args={'verbose': True})"
     assert pickle.loads(pickle.dumps(extra)) == extra
+    # version: changes the definition (to invalidate cached results) without changing the fit
+    assert NCRF(mu=0.5, version=None) == est
+    assert NCRF(mu=0.5, version=1) != est
+    assert NCRF(mu=0.5, version=1) != NCRF(mu=0.5, version=2)
+    assert NCRF(mu=0.5, version=1)._as_dict() == {**d, 'version': 1}
     with pytest.raises(ValueError, match='n_iter can not be set through solver_args'):
         NCRF(solver_args={'n_iter': 5})
     with pytest.raises(ValueError, match='cv can not be set through fit_args'):

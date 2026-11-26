@@ -368,6 +368,10 @@ class NCRF(Estimator):
     fit_args
         Experimental: additional keyword arguments for
         :meth:`ncrf.NCRFEstimator.fit` (see Notes).
+    version
+        Experimental: arbitrary version of the estimator definition. Cached
+        results are only used if they were computed with the same ``version``,
+        so changing it forces a new fit (see Notes).
 
     Notes
     -----
@@ -379,15 +383,17 @@ class NCRF(Estimator):
     that correspond to an :class:`NCRF` parameter can not be set this way).
     Cached results are identified by the names and values of these arguments,
     not by what the arguments do: if the meaning of an argument changes in
-    ``ncrf``, results that were cached with it are not invalidated, and have to
-    be deleted manually. Likewise, results cached without an argument assume
-    that its default in ``ncrf`` does not change.
+    ``ncrf``, results that were cached with it are not automatically
+    invalidated. In that case, change ``version`` (e.g., ``version=1``):
+    ``version`` is not used for fitting, but it is part of the definition of
+    the estimator, so existing results are replaced with new fits when they
+    are requested (use :meth:`Pipeline.clean_cache` to delete them right away).
     """
     extra_inputs = ('fwd', 'cov')
     extra_input_fields = ('cov', 'mrisubject', 'src')
     requires_sensor_space = True
     DICT_ATTRS = ('mu', 'basis_stride', 'n_iter', 'n_iterc', 'n_iterf', 'partitions', 'split', 'scheme', 'validate', 'min_section', 'tol', 'use_ES', 'basis_std')
-    DICT_DEFAULTS = {'solver_args': None, 'fit_args': None}
+    DICT_DEFAULTS = {'solver_args': None, 'fit_args': None, 'version': None}
     metric_keys = ('mu', 'explained_variance', 'l2_error', 'cross_fit', 'weighted_l2_error')
 
     def __init__(
@@ -408,6 +414,7 @@ class NCRF(Estimator):
             basis_std: float = 0.0085,
             solver_args: dict[str, Any] = None,
             fit_args: dict[str, Any] = None,
+            version: int = None,
     ):
         self.mu = mu
         self.basis_stride = typed_arg(basis_stride, int)
@@ -424,6 +431,7 @@ class NCRF(Estimator):
         self.basis_std = typed_arg(basis_std, float)
         self.solver_args = self._extra_args('solver_args', solver_args, ('mu', 'n_iter', 'n_iterc', 'n_iterf', 'tol', 'use_es'))
         self.fit_args = self._extra_args('fit_args', fit_args, ('data', 'solver', 'cv', 'compute_explained_variance'))
+        self.version = typed_arg(version, float, allow_none=True)
 
     @staticmethod
     def _extra_args(
