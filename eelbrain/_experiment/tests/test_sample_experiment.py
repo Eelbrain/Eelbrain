@@ -2819,6 +2819,7 @@ def test_trf_ncrf_dependencies(samples_trf_experiment):
 
 
 @requires_mne_sample_data
+@pytest.mark.slow
 def test_trf_ncrf_job(samples_experiment):
     "NCRF job: sensor data with the forward operator as fixed-orientation (sensor, source) NDVar"
     set_log_level('warning', 'mne')
@@ -2972,7 +2973,6 @@ def test_predictor_subset_fingerprint(samples_trf_experiment):
 
 
 @requires_mne_sample_data
-@pytest.mark.slow
 def test_load_trf_source(samples_experiment):
     "load_trf in source space"
     from eelbrain import BoostingResult
@@ -3545,6 +3545,7 @@ def test_show_model_test(samples_experiment):
 
 
 @requires_mne_sample_data
+@pytest.mark.slow
 def test_load_model_test_xhemi(samples_experiment):
     "load_model_test with xhemi: hemispheres projected onto fsaverage_sym and masked by the test of predictive power"
     root = samples_experiment(mris=True)
@@ -3667,7 +3668,6 @@ def test_load_trfs_source(samples_experiment):
     assert ds[0, 'imp'].source == ds[1, 'imp'].source
 
 
-@pytest.mark.slow
 def test_trans_file(samples_experiment):
     "The forward solution depends on the content of the trans-file for the MRI subject"
     set_log_level('warning', 'mne')
