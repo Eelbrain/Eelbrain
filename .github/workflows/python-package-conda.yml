@@ -68,6 +68,7 @@ jobs:
       timeout-minutes: 30
       run: |
         pytest eelbrain --cov --cov-branch --cov-report=xml -v -rfEXs --durations=15
+    # Keep after_n_builds in .github/codecov.yml in sync with the number of uploads
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v7
       with:
