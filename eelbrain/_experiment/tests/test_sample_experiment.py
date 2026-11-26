@@ -147,7 +147,7 @@ def samples_experiment(_samples_templates, tmp_path):
 def samples_trf_experiment(_samples_templates, tmp_path):
     """Configured :class:`SampleTRF` experiments backed by a warmed session template.
 
-    Like ``samples_experiment()``, but the
+    Like ``samples_experiment(n_subjects=1)``, but the
     session-cached template additionally contains the ``{stim}~env.pickle``
     UTS predictor files (one 60-sample random time series per ``modality``
     stimulus, at the epochs' native tstep) and the derived raw/epoch artifacts
@@ -169,7 +169,7 @@ def samples_trf_experiment(_samples_templates, tmp_path):
             pytest.skip("mne sample data unavailable")
         set_log_level('warning', 'mne')
         if 'trf' not in cache:
-            base = _samples_template(template_dir, cache)
+            base = _samples_template(template_dir, cache, n_subjects=1)
             template = template_dir / f'template-{len(cache)}' / 'SampleExperiment'
             shutil.copytree(base, template)
             e = SampleTRF(template)
@@ -805,7 +805,7 @@ def test_scaled_mri_from_cfg(samples_experiment):
     """A subject directory holding only MRI scaling parameters is scaled on demand"""
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment(mris=True)
+    root = samples_experiment(n_subjects=1, mris=True)
     e = SampleExperiment(root)
     mri_dir = Path(root) / 'derivatives' / 'freesurfer' / 'sub-R0000'
     cfg_path = mri_dir / 'MRI scaling parameters.cfg'
@@ -1101,7 +1101,7 @@ def test_make_ica_job(samples_experiment):
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
     set_log_level('warning', 'mne')
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     class Experiment(SampleExperiment):
         raw = {
@@ -1295,7 +1295,7 @@ def test_head_pos_without_chpi(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     class Experiment(SampleExperiment):
         raw = {
@@ -1376,7 +1376,7 @@ def test_maxwell_st_only_destination(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
     e = SampleExperiment(root)
     e.set('R0000', raw='1-40')
     e.load_raw()
@@ -1409,7 +1409,7 @@ def test_covariance_max_condition(samples_experiment):
     from eelbrain._experiment.covariance import RawCovariance
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     def experiment(max_condition):
         class Experiment(SampleExperiment):
@@ -1541,7 +1541,7 @@ def test_epoch_reference(samples_experiment):
 
     # MEG-only data: a reference with no EEG to apply raises (rather than
     # silently producing a duplicate cache entry); reference='' works
-    meg_root = samples_experiment()
+    meg_root = samples_experiment(n_subjects=1)
     e_meg = Experiment(meg_root)
     e_meg.set(subject='R0000', epoch='target', epoch_rejection='', raw='raw')
     with pytest.raises(ConfigurationError):
@@ -1555,7 +1555,7 @@ def test_interpolate_bads(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
     bad = 'MEG 0111'
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', epoch_rejection='', raw='raw')
@@ -1626,7 +1626,7 @@ def test_variable_length_epochs(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     class Experiment(SampleExperiment):
         epochs = {
@@ -1747,7 +1747,7 @@ def test_channel_model_rejection(samples_experiment):
     assert_dataobj_equal(job(), rej_ds)
 
     # MEG-only data: ChannelModelRejection has no EEG to model -> raises
-    meg_root = samples_experiment()
+    meg_root = samples_experiment(n_subjects=1)
     e_meg = Experiment(meg_root)
     e_meg.set(subject='R0000', epoch='target', raw='raw', epoch_rejection='auto')
     with pytest.raises(ConfigurationError):
@@ -1906,7 +1906,7 @@ def test_raw_reader_warnings_are_summarized(monkeypatch, samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
     e = SampleExperiment(root)
 
     original = mne.io.read_raw_fif
@@ -2076,7 +2076,7 @@ def test_evoked_cache_stales_on_model_change(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', epoch_rejection='')
@@ -2116,7 +2116,7 @@ def test_epochs_dependency_distinguishes_model_sensitivity(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     class CachedEpochsExperiment(SampleExperiment):
         cache_epochs = True
@@ -2212,7 +2212,7 @@ def test_recording_epochs_factor_valued_trigger(samples_experiment):
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
     from eelbrain._data_obj import Factor
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     class BaseExperiment(SampleExperiment):
         epochs = {
@@ -2336,7 +2336,7 @@ def test_selected_events_manifest_uses_real_dependencies(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', epoch_rejection='')
@@ -2364,7 +2364,7 @@ def test_labeled_events_sidecar_copies_raw_info_from_raw(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', epoch_rejection='')
@@ -2389,7 +2389,7 @@ def test_events_input(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     # Add a numeric-looking column with n/a values to the events.tsv sidecar
     path = Path(root) / 'sub-R0000' / 'meg' / 'sub-R0000_task-sample_events.tsv'
@@ -2450,7 +2450,7 @@ def test_raw_cache_identity_ignores_view_options(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     e = SampleExperiment(root)
     e.set(subject='R0000')
@@ -2470,7 +2470,7 @@ def test_raw_info_view_matches_source_and_processed_raws(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     e = SampleExperiment(root)
     e.set(subject='R0000')
@@ -2493,7 +2493,7 @@ def test_raw_filter_elliptic_info_view_matches_artifact(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     class Experiment(SampleExperiment):
         raw = {
@@ -2517,7 +2517,7 @@ def test_selected_events_vardef_is_local(samples_experiment):
     set_log_level('warning', 'mne')
     from eelbrain._experiment.tests.sample_experiment import SampleExperiment
 
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
 
     e = SampleExperiment(root)
     e.set(subject='R0000', epoch='target', epoch_rejection='')
@@ -2828,7 +2828,7 @@ def test_trf_ncrf_job(samples_experiment):
     class Experiment(SampleTRF):
         estimators = {**SampleTRF.estimators, 'ncrf': NCRF(n_iter=2, n_iterc=2, n_iterf=5)}
 
-    root = samples_experiment(mris=True)
+    root = samples_experiment(n_subjects=1, mris=True)
     e = Experiment(root)
     e.set(epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac', inv='')
     job = e.load_trf_job('imp', 0, 0.1, estimator='ncrf')
@@ -2979,7 +2979,7 @@ def test_load_trf_source(samples_experiment):
     from eelbrain._experiment.tests.sample_experiment import SampleTRF
 
     set_log_level('warning', 'mne')
-    root = samples_experiment(mris=True)
+    root = samples_experiment(n_subjects=1, mris=True)
     e = SampleTRF(root)
     e.set(subject='R0000', epoch='target', epoch_rejection='', raw='1-40', src='ico-2', parc='ac')
     res = e.load_trf('imp', 0, 0.1)
@@ -3119,7 +3119,7 @@ def test_load_trf_continuous_predictor(samples_experiment):
     from eelbrain._experiment.tests.sample_experiment import SampleTRF
 
     set_log_level('warning', 'mne')
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
     e = SampleTRF(root)
     e.set(subject='R0000', epoch='cont', epoch_rejection='', raw='1-40', inv='')
 
@@ -3629,7 +3629,7 @@ def test_load_trfs_collection(samples_experiment):
         epochs = {**SampleExperiment.epochs, 'avc': EpochCollection(('auditory', 'visual'))}
 
     set_log_level('warning', 'mne')
-    root = samples_experiment()
+    root = samples_experiment(n_subjects=1)
     e = SampleTRFCollection(root)
     e.set(subject='R0000', epoch='avc', epoch_rejection='', raw='1-40', inv='')
 
