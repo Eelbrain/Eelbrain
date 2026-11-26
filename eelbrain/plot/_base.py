@@ -74,6 +74,7 @@ Figure components
 from __future__ import annotations
 import __main__
 
+import asyncio
 from collections.abc import Iterable
 from collections import defaultdict
 from dataclasses import dataclass, replace
@@ -3540,6 +3541,7 @@ class TimeSlicerEF(TimeSlicer):
         self.__axes = self.axes if axes is None else axes
         self.__time_lines = []
         self.__redraw = redraw
+        self.__motion_time = None  # time of the most recent mouse position that is not displayed yet
         self.canvas.mpl_connect('button_press_event', self._on_click)
         self._register_key('.', self._on_nudge_time)
         self._register_key(',', self._on_nudge_time)
@@ -3547,6 +3549,7 @@ class TimeSlicerEF(TimeSlicer):
 
     def _on_click(self, event):
         if self._time_controller and event.inaxes in self.__axes:
+            self.__motion_time = None  # the click replaces earlier mouse positions
             self._set_time(event.xdata, fixate=event.button == 1)
 
     def _on_release_time(self, event: matplotlib.backend_bases.KeyEvent) -> None:
@@ -3555,8 +3558,26 @@ class TimeSlicerEF(TimeSlicer):
 
     def _on_motion_sub(self, event):
         if not self._time_fixed and event.inaxes in self.__axes:
-            self._set_time(event.xdata)
+            if use_inline_backend():
+                # A notebook kernel receives every mouse position; delay redraw until the kernel has handled the events that are waiting
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    pass
+                else:
+                    if self.__motion_time is None:
+                        loop.call_soon(self._on_motion_idle)
+                    self.__motion_time = event.xdata
+            else:
+                self._set_time(event.xdata)
         return set()
+
+    def _on_motion_idle(self) -> None:
+        "Display the time of the most recent mouse position"
+        t = self.__motion_time
+        self.__motion_time = None
+        if t is not None and not self._time_fixed:
+            self._set_time(t)
 
     def _on_nudge_time(self, event):
         self._nudge_time(1 if event.key == '.' else -1)
