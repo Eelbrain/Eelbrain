@@ -1,7 +1,7 @@
 # Wait for all coverage uploads before reporting, because the wheel builds upload partial coverage
-# Uploads per commit: 2 from "Tests" (ubuntu, macos) + 3 from "Build wheels" (macosx_arm64, macosx_x86_64, win_amd64; Linux wheels are tested inside a container and do not upload).
+# Uploads per commit: 3 from "Tests" (ubuntu, macos, ubuntu slow tests) + 3 from "Build wheels" (macosx_arm64, macosx_x86_64, win_amd64; Linux wheels are tested inside a container and do not upload).
 codecov:
   notify:
-    after_n_builds: 5
+    after_n_builds: 6
 comment:
-  after_n_builds: 5
+  after_n_builds: 6
