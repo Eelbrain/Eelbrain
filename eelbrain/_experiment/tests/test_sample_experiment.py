@@ -2826,7 +2826,7 @@ def test_trf_ncrf_job(samples_experiment):
     from eelbrain._experiment.tests.sample_experiment import SampleTRF
 
     class Experiment(SampleTRF):
-        estimators = {**SampleTRF.estimators, 'ncrf': NCRF(n_iter=2, n_iterc=2, n_iterf=5)}
+        estimators = {**SampleTRF.estimators, 'ncrf': NCRF(n_iter=2, n_iterc=2, n_iterf=5, solver_args={'store': ('objective',)})}
 
     root = samples_experiment(n_subjects=1, mris=True)
     e = Experiment(root)
@@ -2843,6 +2843,7 @@ def test_trf_ncrf_job(samples_experiment):
     fit = job()
     assert fit.cv_info() is not None
     assert fit.solver.mu > 0
+    assert fit.solver.store == ('objective',)  # from solver_args
 
 
 @requires_mne_sample_data
