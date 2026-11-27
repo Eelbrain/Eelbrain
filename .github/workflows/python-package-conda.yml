@@ -72,7 +72,9 @@ jobs:
       run: |
         pytest eelbrain ${{ matrix.slow && '-m slow --runslow' || '' }} --cov --cov-branch --cov-report=xml -v -rfEXs --durations=15
     # Keep after_n_builds in .github/codecov.yml in sync with the number of uploads
+    # A branch in this repository with an open pull request triggers this workflow for push and for pull_request; upload only once, so that after_n_builds is not reached before the wheel uploads arrive
     - name: Upload coverage to Codecov
+      if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
       uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
