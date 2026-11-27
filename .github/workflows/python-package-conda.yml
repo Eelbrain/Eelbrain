@@ -8,7 +8,7 @@ concurrency:
 
 jobs:
   build-posix:
-    name: build-${{ matrix.os }}
+    name: build-${{ matrix.os }}${{ matrix.slow && '-slow' || '' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -20,6 +20,9 @@ jobs:
             python: "3.11"  # Lowest version supported on conda-forge w/dipy
           - os: macos-latest
             python: "3.13"
+          - os: ubuntu-latest
+            python: "3.11"
+            slow: true  # only the tests marked as slow, which the other jobs skip
     defaults:
       run:
         shell: bash -el {0}
@@ -67,9 +70,11 @@ jobs:
     - name: Run tests
       timeout-minutes: 30
       run: |
-        pytest eelbrain --cov --cov-branch --cov-report=xml -v -rfEXs --durations=15
+        pytest eelbrain ${{ matrix.slow && '-m slow --runslow' || '' }} --cov --cov-branch --cov-report=xml -v -rfEXs --durations=15
     # Keep after_n_builds in .github/codecov.yml in sync with the number of uploads
+    # A branch in this repository with an open pull request triggers this workflow for push and for pull_request; upload only once, so that after_n_builds is not reached before the wheel uploads arrive
     - name: Upload coverage to Codecov
+      if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
       uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
