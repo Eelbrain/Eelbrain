@@ -1690,14 +1690,13 @@ class PipelineFrame(EelbrainFrame):
         return -1
 
     def _set_row_colour(self, idx: int, row: tuple[str, ...]) -> None:
-        """Apply the task's colour rule to a row, clearing it when none applies.
+        """Apply the task's colour rule to a row, resetting it to the default colour when none applies.
 
-        Rows without a rule are left with no explicit colour rather than being
-        painted the default one, so that the list can still invert them when they
-        are selected.
+        The default is set as an explicit colour because ``wx.NullColour`` does not
+        clear a colour once one was set.
         """
         colour = wx.RED if row[self._layout.status_col] == ERROR else self._current_task().row_colour(row, self._layout)
-        self._list.SetItemTextColour(idx, wx.NullColour if colour is None else colour)
+        self._list.SetItemTextColour(idx, self._list.GetTextColour() if colour is None else colour)
 
     def _set_row_result(
             self,

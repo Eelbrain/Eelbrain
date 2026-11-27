@@ -230,6 +230,9 @@ def test_result_columns():
         assert len(task.result_columns(result)) == len(task.detail_columns)
 
 
+DEFAULT_COLOUR = wx.Colour(1, 2, 3)  # text colour of the fake list
+
+
 class _FakeList:
     "Minimal wx.ListCtrl stand-in recording the cells that were written"
 
@@ -269,6 +272,9 @@ class _FakeList:
     def SetItem(self, row, col, value):
         assert col < len(self.columns), f"{col=} beyond the installed columns"
         self.rows[row] = self.rows[row][:col] + (value,) + self.rows[row][col + 1:]
+
+    def GetTextColour(self):
+        return DEFAULT_COLOUR
 
     def SetItemTextColour(self, row, colour):
         self.colours[row] = colour
@@ -391,7 +397,7 @@ def test_populate_table_fits_the_rows_to_the_columns():
     assert frame._job_specs == {}  # the previous table's specs are gone
     assert frame._n_loading == 3  # every row is still to be filled in
     # only the ICA with no rejected component is coloured
-    assert frame._list.colours == {0: wx.NullColour, 1: wx.RED, 2: wx.NullColour}
+    assert frame._list.colours == {0: DEFAULT_COLOUR, 1: wx.RED, 2: DEFAULT_COLOUR}
 
     # a table arriving for a stale token is dropped
     frame._populate_table([], 'OTHER')
@@ -994,13 +1000,13 @@ def test_set_row_result_writes_status_details_and_colour():
     task = TASKS_BY_NAME['ica']
     frame._set_row_result(0, task.done_status, task.result_columns(ica))
     assert frame._list.rows == [('R01', 'selected', '30', '2')]
-    assert frame._list.colours == {0: wx.NullColour}
+    assert frame._list.colours == {0: DEFAULT_COLOUR}
 
     # the Status column sits further right for Coregistration
     frame = _table_frame('coreg', [('R01', 's1', 'R01', 'missing')])
     frame._set_row_result(0, TASKS_BY_NAME['coreg'].done_status, ())
     assert frame._list.rows == [('R01', 's1', 'R01', 'ok')]
-    assert frame._list.colours == {0: wx.NullColour}
+    assert frame._list.colours == {0: DEFAULT_COLOUR}
 
 
 def test_displayed_row_requires_a_matching_scope():
@@ -1045,7 +1051,7 @@ def test_queue_jobs_dedupes_within_one_scope_only():
     # only the row of the table on display is marked, and only for its own scope
     assert frame._list.rows == [('R0000', 'queued', PLACEHOLDER, PLACEHOLDER)]
     # the row was red for having no rejected component; queueing it clears that
-    assert frame._list.colours == {0: wx.NullColour}
+    assert frame._list.colours == {0: DEFAULT_COLOUR}
     assert started == [True]
 
 
