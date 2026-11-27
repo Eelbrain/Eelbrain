@@ -724,13 +724,6 @@ def setup_samples_experiment(
     # low-resolution BEM (1280 triangles): the fsaverage dataset's inner skull BEM has 20480 triangles, for which the BEM solution (computed for each subject) takes about a minute
     bem = mne.make_bem_model('fsaverage', ico=3, conductivity=(0.3,), subjects_dir=fsaverage_path.parent, verbose=False)
     mne.write_bem_surfaces(dst_s_dir / 'bem' / 'fsaverage-inner_skull-bem.fif', bem, verbose=False)
-    # source space
-    src_src = fsaverage_path / 'bem' / 'fsaverage-ico-3-src.fif'
-    src_dst = dst_s_dir / 'bem' / 'fsaverage-ico-3-src.fif'
-    if not src_src.exists():
-        src = mne.setup_source_space('fsaverage', 'ico1', subjects_dir=fsaverage_path.parent)
-        src.save(src_src)
-    shutil.copy(src_src, src_dst)
 
     # trans
     m = [[ 0.9998371,  -0.00766024,  0.01634169,  0.00289569],
