@@ -264,14 +264,15 @@ def mcp_adjust(ps: Sequence[float], method: Literal['hochberg', 'bonferroni', 'h
         ps_asc = np.array(ps)[ascsort]
         iout_asc = np.arange(n)[ascsort]
         ps_adjusted = [-1] * n
-        p_buffer = 1
         if method_ == 'holm':
+            p_buffer = 0.0
             for i in range(n):
                 p = ps_asc[i]
                 p_adj = (n - i) * p
-                p_buffer = max(p_buffer, p_adj)
+                p_buffer = min(1.0, max(p_buffer, p_adj))
                 ps_adjusted[iout_asc[i]] = p_buffer
         elif method_ == 'hochberg':
+            p_buffer = 1.0
             for i in range(1, n + 1):
                 p = ps_asc[-i]
                 p_adj = (i) * p
