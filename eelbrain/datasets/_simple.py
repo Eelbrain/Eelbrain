@@ -588,7 +588,9 @@ def setup_samples_experiment(
         Number of runs per subject/task (default 1, i.e. no run entity).
         When >1, each run receives the same data segment.
     mris
-        Set up MRIs.
+        Set up MRIs: ``fsaverage`` and an unscaled copy of it for each subject.
+        To keep forward solutions fast, the inner skull BEM has a low resolution
+        (1280 triangles, compared to 20480 in the MNE ``fsaverage`` dataset).
     name
         Name for the directory for the new experiment (default
         ``'SampleExperiment'``).
