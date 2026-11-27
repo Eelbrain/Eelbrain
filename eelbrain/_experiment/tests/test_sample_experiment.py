@@ -7,6 +7,7 @@ from os.path import join, exists, relpath
 from os import remove, utime
 from pathlib import Path
 import shutil
+from tempfile import mkdtemp
 import tomllib
 from unittest.mock import patch
 import pytest
@@ -96,8 +97,7 @@ def _samples_template(
     """
     key = (n_subjects, n_tasks, n_segments, n_runs, mris, pick)
     if key not in cache:
-        template = template_dir / f'template-{len(cache)}'
-        template.mkdir()
+        template = Path(mkdtemp(prefix='template-', dir=template_dir))  # unique, so that a failed build does not block later templates
         datasets.setup_samples_experiment(template, n_subjects, n_tasks, n_segments, n_runs, mris, pick=pick)
         root = template / 'SampleExperiment'
         if (n_tasks, n_runs, pick) == (1, 1, 'mag'):
@@ -170,7 +170,7 @@ def samples_trf_experiment(_samples_templates, tmp_path):
         set_log_level('warning', 'mne')
         if 'trf' not in cache:
             base = _samples_template(template_dir, cache, n_subjects=1)
-            template = template_dir / f'template-{len(cache)}' / 'SampleExperiment'
+            template = Path(mkdtemp(prefix='template-', dir=template_dir)) / 'SampleExperiment'
             shutil.copytree(base, template)
             e = SampleTRF(template)
             e.set(**state)
