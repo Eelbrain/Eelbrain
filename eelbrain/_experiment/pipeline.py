@@ -191,7 +191,8 @@ class Pipeline(StateModel):
     # with Reference('average', add='Cz')).
     references = {}
 
-    # groups can be defined as subject lists: {'group': ('member1', 'member2', ...)}
+    # groups can be defined as subject lists: {'group': ('member1', 'member2', ...)},
+    # as expression based on participants.tsv columns: {'group': "hand == 'R'"}
     # or by exclusion: {'group': {'base': 'all', 'exclude': ('member1', 'member2')}}
     groups = {}
 
@@ -359,7 +360,7 @@ class Pipeline(StateModel):
         # Experiment arguments
         ######################
         # groups
-        self._groups = ConfigurationDict('group', assemble_groups(self.groups, set(self._subjects)))
+        self._groups = ConfigurationDict('group', assemble_groups(self.groups, set(self._subjects), root))
 
         # preprocessing
         self._raw = assemble_raw_pipes({'raw': RawSource(), **self.raw}, self._tasks)

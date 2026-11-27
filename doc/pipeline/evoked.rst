@@ -61,6 +61,14 @@ Example::
         'bad': Group(['R0013', 'R0666']),
     }
 
+A :class:`Group` can also be defined through the subject variables in the BIDS dataset's ``participants.tsv`` file, with an expression that is true for the group members.
+Such groups follow the file, i.e., they are updated whenever ``participants.tsv`` changes::
+
+    groups = {
+        'right-handed': Group("hand == 'R'"),
+        'right-handed-good': SubGroup('right-handed', ['R0013', 'R0666']),
+    }
+
 The current group is selected through the :ref:`state-group` state, and restricts group-level analysis to the group's subjects.
 Groups are used the same way in :doc:`trf` (e.g., the ``subjects`` argument of :meth:`Pipeline.load_trfs` and the ``group`` state in :meth:`Pipeline.load_model_test`).
 
