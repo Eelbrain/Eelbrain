@@ -300,7 +300,7 @@ def test_sample(samples_experiment):
     assert_dataobj_equal(res.c1_mean, meg_mean, decimal=21)
     res = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False)
     assert res.p.min() == 0
-    assert res.difference.max() == pytest.approx(4.47e-13, 1e-15)
+    assert res.difference.max() == pytest.approx(4.47e-13, abs=1e-15)
     # return_data: the data underlying the (cached) test
     ds, res_with_data = e.load_test('a>v', 0.05, 0.2, 0.05, samples=20, inv='', baseline=False, return_data=True)
     assert isinstance(ds, Dataset)
