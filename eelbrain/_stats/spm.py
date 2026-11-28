@@ -75,6 +75,10 @@ class LM(MultiEffectNDTest):
     tfce
         Use threshold-free cluster enhancement. Use a scalar to specify the
         step of TFCE levels (for ``tfce is True``, 0.1 is used).
+    tfce_e
+        TFCE extent exponent (default 0.5, as in Smith & Nichols, 2009).
+    tfce_h
+        TFCE height exponent (default 2.0, as in Smith & Nichols, 2009).
     tstart
         Start of the time window for the permutation test (default is the
         beginning of ``y``).
@@ -120,6 +124,8 @@ class LM(MultiEffectNDTest):
             pmin: float = None,
             tmin: float = None,
             tfce: float | bool = False,
+            tfce_e: float = None,
+            tfce_h: float = None,
             tstart: float = None,
             tstop: float = None,
             force_permutation: bool = False,
@@ -162,7 +168,7 @@ class LM(MultiEffectNDTest):
             else:
                 thresholds = tuple(repeat(None, n_effects))
 
-            cdists = [NDPermutationDistribution(y, samples, thresh, tfce, 0, 't', name, tstart, tstop, criteria, None, force_permutation) for name, thresh in zip(parametrization.column_names, thresholds)]
+            cdists = [NDPermutationDistribution(y, samples, thresh, tfce, 0, 't', name, tstart, tstop, criteria, None, force_permutation, tfce_e, tfce_h) for name, thresh in zip(parametrization.column_names, thresholds)]
 
             # Find clusters in the actual data
             do_permutation = 0
@@ -175,7 +181,7 @@ class LM(MultiEffectNDTest):
                 run_permutation_me(LMMapper(parametrization), cdists, iterator)
 
         x_desc = x if isinstance(x, str) else model.name  # TODO: x.name should use * when appropriate
-        MultiEffectNDTest.__init__(self, x_desc, parametrization.column_names, y, None, sub_arg, samples, tfce, pmin, cdists, tstart, tstop)
+        MultiEffectNDTest.__init__(self, x_desc, parametrization.column_names, y, None, sub_arg, samples, tfce, pmin, cdists, tstart, tstop, tfce_e, tfce_h)
         self.coding = coding
         self._coeffs_flat = ß_maps.reshape((len(ß_maps), -1))
         self._se_flat = se_maps.reshape((len(se_maps), -1))

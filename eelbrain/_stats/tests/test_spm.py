@@ -41,6 +41,16 @@ def test_lm(n_workers):
     assert lm.find_clusters(0.05).n_cases == 7
 
 
+def test_lm_tfce_e_h():
+    "tfce_e/tfce_h are accepted and change the resulting TFCE map"
+    ds = datasets.get_uts(utsnd=True)
+    lm_default = LM('utsnd', 'A*B*Y', data=ds, coding='effect', tfce=True, samples=0)
+    lm_custom = LM('utsnd', 'A*B*Y', data=ds, coding='effect', tfce=True, tfce_e=0.4, tfce_h=1.5, samples=0)
+    assert lm_custom.tfce_e == 0.4
+    assert lm_custom.tfce_h == 1.5
+    assert not np.array_equal(lm_default.tfce_maps[0].x, lm_custom.tfce_maps[0].x)
+
+
 def test_random_lm():
     np.random.seed(0)
 
