@@ -6,6 +6,7 @@ import pytest
 from eelbrain._data_obj import Dataset, Factor, Interaction, Var
 from eelbrain._experiment.configuration import Configuration, ConfigurationError, find_dependent_epochs, find_epoch_vars, find_epochs_vars, sequence_arg
 from eelbrain._experiment.derivative_cache import DerivativeRegistry
+from eelbrain._experiment.groups import Group, SubGroup, assemble_groups
 from eelbrain._experiment.preprocessing import RawApplyICA, RawFilter, RawICA, RawMaxwell, RawPipeGraph, RawReReference, RawSource, assemble_raw_pipes
 from eelbrain._experiment.statistics import config as test_def
 from eelbrain._experiment.variable_def import EvalVar, GroupVar, LabelVar, Variables, _find_unresolvable_columns
@@ -129,6 +130,68 @@ def test_canonicalize_data_objects():
     assert registry.canonicalize(Factor(['a', 'b'], random=True)) == ['a', 'b']
     assert registry.canonicalize({'x': frozenset({'b', 'a'})}) == {'x': ['a', 'b']}
     assert registry.canonicalize(Interaction([Factor(['a', 'b']), Factor(['x', 'y'])])) == [['a', 'x'], ['b', 'y']]
+
+
+def test_groups(tmp_path):
+    "Groups defined through subject lists and participants.tsv expressions"
+    subjects = {'01', '02', '03', '04'}
+    # no participants.tsv is needed for groups defined through subject lists
+    groups = assemble_groups({'a': ['02', '01'], 'b': SubGroup('a', ['01']), 'c': {'exclude': '04'}}, subjects, tmp_path)
+    assert groups == {'a': ('01', '02'), 'b': ('02',), 'c': ('01', '02', '03'), 'all': ('01', '02', '03', '04')}
+    with pytest.raises(ConfigurationError, match='does not exist'):
+        assemble_groups({'right': Group("hand == 'R'")}, subjects, tmp_path)
+
+    # byte order mark, n/a values, unsorted rows, and a participant that is not an experiment subject
+    rows = [
+        'participant_id\tage\tsex\thand\tpatient',
+        'sub-02\t35\tF\tR\tTrue',
+        'sub-01\t25\tM\tR\tFalse',
+        'sub-03\tn/a\tF\tL\tTrue',
+        'sub-04\t45\tn/a\tn/a\tFalse',
+        'sub-emptyroom\tn/a\tn/a\tn/a\tFalse',
+    ]
+    (tmp_path / 'participants.tsv').write_text('\n'.join(rows) + '\n', encoding='utf-8-sig')
+    groups = assemble_groups({
+        'right': Group("hand == 'R'"),
+        'right-1': SubGroup('right', ['01']),
+        'not-right': "hand != 'R'",
+        'older': "age > 30",
+        'older-female': "(age > 30) & (sex == 'F')",
+        'patient': "patient",
+        'listed': ['03', '01'],
+    }, subjects, tmp_path)
+    assert groups == {
+        'right': ('01', '02'),
+        'right-1': ('02',),
+        'not-right': ('03', '04'),
+        'older': ('02', '04'),
+        'older-female': ('02',),
+        'patient': ('02', '03'),
+        'listed': ('01', '03'),
+        'all': ('01', '02', '03', '04'),
+    }
+    assert repr(Group("hand == 'R'")) == 'Group("hand == \'R\'")'
+
+    # invalid expressions
+    with pytest.raises(ConfigurationError, match="can't evaluate"):
+        assemble_groups({'bad': "handedness == 'R'"}, subjects, tmp_path)
+    with pytest.raises(ConfigurationError, match="boolean"):
+        assemble_groups({'bad': "age"}, subjects, tmp_path)
+    with pytest.raises(ConfigurationError, match=r"Group\(\['01'\]\)"):
+        assemble_groups({'bad': "01"}, subjects, tmp_path)
+    # subject without participants.tsv entry
+    with pytest.raises(ConfigurationError, match="no entry for 05"):
+        assemble_groups({'right': "hand == 'R'"}, {*subjects, '05'}, tmp_path)
+    assert assemble_groups({'listed': ['05']}, {*subjects, '05'}, tmp_path)['listed'] == ('05',)
+
+    # a subject column in participants.tsv is not replaced with the subject names
+    rows = ['participant_id\tsubject', 'sub-01\tx', 'sub-02\ty', 'sub-03\tx', 'sub-04\ty']
+    (tmp_path / 'participants.tsv').write_text('\n'.join(rows) + '\n')
+    assert assemble_groups({'x': "subject == 'x'"}, subjects, tmp_path)['x'] == ('01', '03')
+    # more than one entry for a subject
+    (tmp_path / 'participants.tsv').write_text('\n'.join([*rows, 'sub-03\ty']) + '\n')
+    with pytest.raises(ConfigurationError, match="more than one entry for 03"):
+        assemble_groups({'x': "subject == 'x'"}, subjects, tmp_path)
 
 
 def test_vardef_semantic_identity():
