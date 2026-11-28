@@ -528,6 +528,34 @@ def test_mri_actions(tmp_path):
     assert frame._row_actions(0) == [RowAction(f"No FreeSurfer reconstruction for mybrain in {tmp_path / MRI_SDIR}")]
 
 
+def test_ica_actions():
+    "A missing ICA is queued for the compute worker instead of being estimated on the main thread by the ICA GUI"
+    rows = [
+        ('R01', 'no ICA', PLACEHOLDER, PLACEHOLDER),
+        ('R02', 'queued', PLACEHOLDER, PLACEHOLDER),
+        ('R03', '⟳', PLACEHOLDER, PLACEHOLDER),
+        ('R04', 'selected', '30', '0'),
+        ('R05', 'stale', '30', '2'),
+    ]
+    frame = _table_frame('ica', rows)
+    scope = frame._table_scope()
+    spec = object()
+    queued, opened = [], []
+    frame.__dict__.update(_n_loading=0, _job_specs={(scope, ('R01',)): spec}, _queue_jobs=lambda scope, jobs: queued.append((scope, jobs)), _open_ica_gui=opened.append)
+    labels = [[(action.label, action.run is not None) for action in frame._row_actions(i)] for i in range(len(rows))]
+    assert labels == [
+        [("Make ICA", True)],
+        [("Wait for the ICA to be computed", False)],
+        [("Wait for the ICA to be computed", False)],
+        [("Open ICA selection…", True)],
+        [("Open ICA selection…", True)],
+    ]
+    for i in range(len(rows)):
+        frame._activate_row(i)
+    assert queued == [(scope, [(('R01',), spec)])]
+    assert opened == [3, 4]
+
+
 def test_coreg_actions(tmp_path):
     "A subject without a FreeSurfer reconstruction is coregistered to the template brain"
     frame = _table_frame('coreg', [('R01', 's1', 'R01', 'missing'), ('R02', 's1', 'R02', 'ok'), ('R03', 's1', PLACEHOLDER, pipeline_gui.ERROR)])
@@ -1031,6 +1059,7 @@ def test_queue_jobs_dedupes_within_one_scope_only():
         started.append(True)
         frame._compute_token = object()
 
+    hints = []
     frame = _table_frame('ica', [('R0000', 'selected', '30', '0')])
     frame.__dict__.update(
         _job_queue=[],
@@ -1041,9 +1070,14 @@ def test_queue_jobs_dedupes_within_one_scope_only():
         _table_scope=lambda: _ICA_SCOPE,
         _start_compute=start_compute,
         _update_progress=lambda: None,
+        _n_loading=0,
+        SetStatusText=lambda text, field: hints.append(text),
     )
+    frame._list.selected = 0
     spec = object()
     frame._queue_jobs(_ICA_SCOPE, [(('R0000',), spec)])
+    # the selected row's hint follows its new status
+    assert hints == ["Wait for the ICA to be computed"]
     frame._queue_jobs(_ICA_SCOPE, [(('R0000',), spec)])  # already queued
     frame._queue_jobs(_OTHER_SCOPE, [(('R0000',), spec)])  # a different table
     assert [entry[0] for entry in frame._job_queue] == [_ICA_SCOPE, _OTHER_SCOPE]

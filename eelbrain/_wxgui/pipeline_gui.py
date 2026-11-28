@@ -1200,7 +1200,7 @@ class PipelineFrame(EelbrainFrame):
                 RowAction("Open in mne browse_raw…", partial(self._open_mne_browse_raw, idx)),
             ]
         elif task.name == 'ica':
-            return [RowAction("Open ICA selection…", partial(self._open_ica_gui, idx))]
+            return self._ica_actions(idx)
         elif task.name == 'epoch_rej':
             return self._epoch_rejection_actions(idx)
         elif task.name == 'mri':
@@ -1376,6 +1376,16 @@ class PipelineFrame(EelbrainFrame):
                 self._save_bad_channels(raw_name, state, new_bads)
 
         self._use_pipeline(partial(self._pipeline.load_bad_channels, raw=raw_name, **state), confirm)
+
+    def _ica_actions(self, idx: int) -> list[RowAction]:
+        status = self._list.GetItemText(idx, self._layout.status_col)
+        if status in TRANSIENT_STATUS:
+            return [RowAction("Wait for the ICA to be computed")]
+        elif status == ICATask.missing_status:
+            # the ICA GUI would estimate the ICA on the main thread, which blocks the window for as long as that takes
+            scope, combo = self._table_scope(), self._row_combo(idx)
+            return [RowAction("Make ICA", partial(self._queue_jobs, scope, [(combo, self._job_specs[scope, combo])]))]
+        return [RowAction("Open ICA selection…", partial(self._open_ica_gui, idx))]
 
     def _open_ica_gui(self, idx: int) -> None:
         raw_name = self._raw_name()
@@ -2002,6 +2012,7 @@ class PipelineFrame(EelbrainFrame):
             i = self._displayed_row(scope, combo)
             if i != -1:
                 self._set_row_result(i, 'queued', (PLACEHOLDER,) * n_detail)
+        self._update_row_hint()  # a queued row offers a different action
         if self._compute_token is None:
             self._start_compute()
         else:
@@ -2059,6 +2070,7 @@ class PipelineFrame(EelbrainFrame):
         for i in range(self._list.GetItemCount()):
             if self._list.GetItemText(i, self._layout.status_col) in TRANSIENT_STATUS:
                 self._list.SetItem(i, self._layout.status_col, missing)
+        self._update_row_hint()
         self._finish_compute_ui()
 
     def _compute_thread(self, token):
