@@ -1,5 +1,5 @@
 # Author: Christian Brodbeck <christianbrodbeck@nyu.edu>
-from numpy.testing import assert_array_equal
+from numpy.testing import assert_allclose, assert_array_equal
 import numpy as np
 import pytest
 import scipy.stats
@@ -87,6 +87,20 @@ def test_star():
     "Test the star function"
     assert_array_equal(_test.star([0.1, 0.04, 0.01], int), [0, 1, 2])
     assert_array_equal(_test.star([0.001, 0.04, 0.1], int), [3, 1, 0])
+
+
+def test_mcp_adjust():
+    "Test multiple-comparison p-value adjustment"
+    # Holm (1979) step-down: unsorted inputs, step-down monotonicity, cap at 1.0
+    assert_allclose(_test.mcp_adjust([0.001, 0.01, 0.04, 0.2], 'holm'), [0.004, 0.03, 0.08, 0.2])
+    assert_allclose(_test.mcp_adjust([0.04, 0.001, 0.2, 0.01], 'Holm'), [0.08, 0.004, 0.2, 0.03])
+    # Monotonicity: sorted raw [0.001, 0.04, 0.35, 0.6] -> [0.004, 0.12, 0.7, max(0.7, 0.6)=0.7]
+    assert_allclose(_test.mcp_adjust([0.6, 0.04, 0.35, 0.001], 'holm'), [0.7, 0.12, 0.7, 0.004])
+    # Cap at 1.0 when (n - i) * p > 1
+    assert_allclose(_test.mcp_adjust([0.4, 0.5, 0.6], 'holm'), [1.0, 1.0, 1.0])
+    # Hochberg step-up and Bonferroni
+    assert_allclose(_test.mcp_adjust([0.04, 0.001, 0.2, 0.01], 'hochberg'), [0.08, 0.004, 0.2, 0.03])
+    assert_allclose(_test.mcp_adjust([0.001, 0.01, 0.04, 0.2], 'bonferroni'), [0.004, 0.04, 0.16, 0.8])
 
 
 def test_ttest():
