@@ -184,6 +184,15 @@ def test_groups(tmp_path):
         assemble_groups({'right': "hand == 'R'"}, {*subjects, '05'}, tmp_path)
     assert assemble_groups({'listed': ['05']}, {*subjects, '05'}, tmp_path)['listed'] == ('05',)
 
+    # a subject column in participants.tsv is not replaced with the subject names
+    rows = ['participant_id\tsubject', 'sub-01\tx', 'sub-02\ty', 'sub-03\tx', 'sub-04\ty']
+    (tmp_path / 'participants.tsv').write_text('\n'.join(rows) + '\n')
+    assert assemble_groups({'x': "subject == 'x'"}, subjects, tmp_path)['x'] == ('01', '03')
+    # more than one entry for a subject
+    (tmp_path / 'participants.tsv').write_text('\n'.join([*rows, 'sub-03\ty']) + '\n')
+    with pytest.raises(ConfigurationError, match="more than one entry for 03"):
+        assemble_groups({'x': "subject == 'x'"}, subjects, tmp_path)
+
 
 def test_vardef_semantic_identity():
     assert EvalVar('a + b', task='task-a') != EvalVar('a + b', task='task-b')

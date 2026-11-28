@@ -91,8 +91,8 @@ class SubGroup(GroupBase):
         self.exclude = {exclude} if isinstance(exclude, str) else set(exclude)
 
 
-def load_participants(root: Path, subjects: set[str]) -> Dataset:
-    "Subject variables from the BIDS ``participants.tsv`` file, with one row for each of ``subjects``"
+def load_participants(root: Path, subjects: set[str]) -> tuple[Dataset, Factor]:
+    "Subject variables from the BIDS ``participants.tsv`` file, with one row for each of ``subjects``, and the subject of each row"
     path = root / 'participants.tsv'
     if not path.exists():
         raise ConfigurationError(f"A group is defined through an expression, which requires subject variables, but {path} does not exist")
@@ -106,15 +106,19 @@ def load_participants(root: Path, subjects: set[str]) -> Dataset:
                 participants[key] = Var([float('nan' if value == 'n/a' else value) for value in column])
             except ValueError:
                 pass
-    participants['subject'] = Factor([participant.removeprefix('sub-') for participant in participants['participant_id']])
-    if missing := subjects.difference(participants['subject'].cells):
+    # not stored in participants, which could have its own subject column
+    subject = Factor([participant.removeprefix('sub-') for participant in participants['participant_id']])
+    if missing := subjects.difference(subject.cells):
         raise ConfigurationError(f"A group is defined through an expression, which requires subject variables for all subjects, but {path} has no entry for {enumeration(sorted(missing))}")
-    return participants.sub(participants['subject'].isin(subjects))
+    if duplicates := [name for name in sorted(subjects) if (subject == name).sum() > 1]:
+        raise ConfigurationError(f"A group is defined through an expression, which requires one entry for each subject, but {path} has more than one entry for {enumeration(duplicates)}")
+    index = subject.isin(subjects)
+    return participants.sub(index), subject[index]
 
 
 def assemble_groups(
-    groups: dict, 
-    subjects: set[str], 
+    groups: dict,
+    subjects: set[str],
     root: Path,
 ) -> dict:
     if 'all' in groups:  # Pipeline needs access to all subjects
@@ -126,11 +130,11 @@ def assemble_groups(
     assert len(base_groups) + len(sub_groups) == len(all_groups)
     # check base-groups
     groups = {}
-    participants = None
+    participants = participant_subjects = None
     for key, group in base_groups.items():
         if isinstance(group.subjects, str):
             if participants is None:
-                participants = load_participants(root, subjects)
+                participants, participant_subjects = load_participants(root, subjects)
             if group.subjects in subjects:
                 hint = f" To define a group with a single subject, use Group([{group.subjects!r}])."
             else:
@@ -143,7 +147,7 @@ def assemble_groups(
                 index = index.x
             if not (isinstance(index, np.ndarray) and index.dtype.kind == 'b' and index.shape == (participants.n_cases,)):
                 raise ConfigurationError(f"Group {key}: {group.subjects!r} does not evaluate to a boolean value for each subject, but to {index!r}.{hint}")
-            groups[key] = tuple(sorted(participants[index, 'subject']))
+            groups[key] = tuple(sorted(participant_subjects[index]))
         else:
             missing = group.subjects - subjects
             if missing:
