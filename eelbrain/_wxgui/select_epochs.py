@@ -1685,7 +1685,6 @@ class Frame(NavigableFrame, FileFrame):
         for key in self._vlims:
             self._vlims[key] = vlim
         self.canvas.draw()
-        self.canvas.store_canvas()
 
     def _page_change(self, page):
         "Perform operations common to page change events"
@@ -1754,7 +1753,6 @@ class Frame(NavigableFrame, FileFrame):
                         topo.set_vlim(self._bfly_vlim * self._type_display_vlims[ch_type])
 
         self.canvas.draw()
-        self.canvas.store_canvas()
 
     def _get_display_epoch(self, case_by_type):
         """Build a combined ``sensor × time`` NDVar for butterfly display.
@@ -1870,7 +1868,6 @@ class Frame(NavigableFrame, FileFrame):
             self._create_topomaps(bboxes)
 
         self.canvas.draw()
-        self.canvas.store_canvas()
 
         dt = time.time() - t0
         logger.debug('Page draw took %.1f seconds.', dt)
@@ -2003,7 +2000,6 @@ class Frame(NavigableFrame, FileFrame):
             self._create_topomaps(bboxes)
 
         self.canvas.draw()
-        self.canvas.store_canvas()
         logger.debug('Page draw took %.1f seconds.', time.time() - t0)
         wx.EndBusyCursor()
 

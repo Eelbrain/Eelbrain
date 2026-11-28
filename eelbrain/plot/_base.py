@@ -74,6 +74,7 @@ Figure components
 from __future__ import annotations
 import __main__
 
+import asyncio
 from collections.abc import Iterable
 from collections import defaultdict
 from dataclasses import dataclass, replace
@@ -88,11 +89,12 @@ import os
 import re
 import time
 from typing import Any, Literal
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 import weakref
 
 import matplotlib as mpl
 import matplotlib.axes
+import matplotlib.backend_bases
 import matplotlib.font_manager
 import matplotlib.patches
 import matplotlib.text
@@ -1478,10 +1480,8 @@ def aggregate(y, agg):
 class FigureFrame:
     """Stand in for a wx.Frame with other backends"""
 
-    def __init__(self, figure):
+    def __init__(self, figure: matplotlib.figure.Figure):
         self.figure = figure
-        self.canvas = self.figure.canvas
-        self._background = None
 
     def Close(self):  # noqa
         pass
@@ -1489,25 +1489,94 @@ class FigureFrame:
     def SetStatusText(self, text):  # noqa
         pass
 
+    def SetTitleSuffix(self, suffix: str) -> None:  # noqa
+        pass
+
     def Show(self):  # noqa
         pass
 
-    def redraw(self, axes=()):
-        "Adapted duplicate of mpl_canvas.FigureCanvasPanel"
-        self.canvas.restore_region(self._background)
-        for ax in axes:
-            ax.draw_artist(ax)
-        self.canvas.blit(self.figure)
 
-    def store_canvas(self):
-        self._background = self.canvas.copy_from_bbox(self.figure.bbox)
+class Blitter:
+    """Update single axes of a figure through blitting
+
+    The state belongs to the figure rather than a plot, because plots can share a figure through the ``axes`` parameter. The canvas is always retrieved from the figure, because it can be replaced (e.g., by ``marimo.mpl.interactive``).
+    """
+
+    def __init__(self, figure: matplotlib.figure.Figure):
+        self.figure = figure
+        self.plots = []  # matplotlib only keeps weak references to callbacks, so the figure has to keep its plots alive
+        self._background = None  # the canvas after the last full draw
+        self._background_size = None
+        self._regions = {}  # {axes: region} for the axes that were redrawn since the last full draw
+        figure.canvas.mpl_connect('draw_event', self._on_draw)
+
+    def _on_draw(self, event: matplotlib.backend_bases.DrawEvent) -> None:
+        "Store the background after every full draw, to keep up with resizes and changes outside of the redrawn axes"
+        canvas = self.figure.canvas
+        if canvas.supports_blit and not canvas.is_saving():
+            self._background = canvas.copy_from_bbox(self.figure.bbox)
+            self._background_size = canvas.get_width_height(physical=True)
+            self._regions.clear()
+
+    def redraw(self, axes: Collection[matplotlib.axes.Axes]) -> None:
+        "Redraw ``axes``; only the area inside the axes is updated"
+        canvas = self.figure.canvas
+        backgrounds = []
+        for ax in axes:
+            background = next((artist for artist in ax.artists if isinstance(artist, AxesBackground)), None)
+            if background is None:
+                background = ax.add_artist(AxesBackground())
+            backgrounds.append(background)
+        if not canvas.supports_blit or self._background_size != canvas.get_width_height(physical=True) or any(background.region is None for background in backgrounds):
+            canvas.draw()  # no background for the current canvas or for some of the axes (e.g., after a resize, the first time axes are redrawn, or a canvas that does not support blitting); a full draw stores them where possible
+            return
+        canvas.restore_region(self._background)
+        for background in backgrounds:
+            canvas.restore_region(background.region)
+        # Like a full draw: axes and the artists that belong to the figure (legend, title, ...) in the order of their zorder; artists below the axes are part of the axes backgrounds
+        min_zorder = min(ax.get_zorder() for ax in axes)
+        figure_artists = [artist for artist in self.figure.get_children() if artist is not self.figure.patch and not isinstance(artist, (matplotlib.axes.Axes, matplotlib.figure.FigureBase)) and artist.get_zorder() >= min_zorder]
+        for artist in sorted([*axes, *figure_artists], key=lambda artist: artist.get_zorder()):
+            self.figure.draw_artist(artist)
+        for ax in axes:
+            self._regions[ax] = canvas.copy_from_bbox(axes_area(ax))
+        # Compose the canvas from the background and the area inside of all axes that changed since the last full draw: the background alone would revert other axes to the last full draw, and artists outside of the axes area (tick labels, ...) would otherwise be drawn on top of themselves
+        canvas.restore_region(self._background)
+        for region in self._regions.values():
+            canvas.restore_region(region)
+        canvas.blit(self.figure.bbox)
+
+
+def axes_area(ax: matplotlib.axes.Axes) -> matplotlib.transforms.Bbox:
+    "The pixels that the background patch of ``ax`` covers: Agg snaps rectangles to whole pixels, with y measured from the top"
+    x0, y0, x1, y1 = ax.bbox.extents
+    return matplotlib.transforms.Bbox.from_extents(math.floor(x0 + 0.5), math.ceil(y0 - 0.5), math.floor(x1 + 0.5), math.ceil(y1 - 0.5))
+
+
+class AxesBackground(matplotlib.artist.Artist):
+    """Store the canvas behind the artists of an axes during a full draw
+
+    Blitting draws axes on top of what is behind them. The canvas after a full draw can not be used for this, because axes without background patch (e.g., topomaps) do not cover their previous state.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.set_zorder(-math.inf)  # draw before the other artists of the axes
+        self.set_in_layout(False)
+        self.region = None
+
+    def draw(self, renderer: matplotlib.backend_bases.RendererBase) -> None:
+        canvas = self.axes.figure.canvas
+        if canvas.supports_blit and not canvas.is_saving():
+            self.region = canvas.copy_from_bbox(axes_area(self.axes))
+        self.stale = False
 
 
 class MatplotlibFrame(FigureFrame):
     "Cf. _wxgui.mpl_canvas"
 
     def __init__(self, **fig_kwargs):
-        "Create self.figure and self.canvas attributes and return the figure"
+        "Create the figure through pyplot"
         from matplotlib import pyplot
 
         figure = pyplot.figure(**fig_kwargs)
@@ -1669,7 +1738,6 @@ class EelFigure(MatplotlibFigure):
         MatplotlibFigure.__init__(self, figure)
         self._frame = frame
         self.axes = axes
-        self.canvas = frame.canvas
         self._layout = layout
         self._last_draw_time = 1.
         self.__callback_key_press = {}
@@ -1684,18 +1752,27 @@ class EelFigure(MatplotlibFigure):
         self._crosshair_lines = None
         self._crosshair_axes = None
 
-        # add callbacks
-        if use_inline_backend():
+        # static notebook figures are rendered on demand, so they need neither callbacks nor redraws
+        self._static = use_inline_backend() and not layout.interactive
+        if self._static:
             return
         self.canvas.mpl_connect('motion_notify_event', self._on_motion)
         self.canvas.mpl_connect('axes_leave_event', self._on_leave_axes)
         self.canvas.mpl_connect('resize_event', self._on_resize)
         self.canvas.mpl_connect('key_press_event', self._on_key_press)
         self.canvas.mpl_connect('key_release_event', self._on_key_release)
+        if not hasattr(figure, '_eelbrain_blitter'):
+            figure._eelbrain_blitter = Blitter(figure)
+        figure._eelbrain_blitter.plots.append(self)
 
     def __repr__(self):
         title = self._frame.GetTitle() if self._has_frame else self._title
         return f'<{title}>'
+
+    @property
+    def canvas(self) -> matplotlib.backend_bases.FigureCanvasBase:
+        "The canvas the figure is currently bound to (it can be replaced, e.g., by ``marimo.mpl.interactive``)"
+        return self.figure.canvas
 
     def _ipython_display_(self):
         # Use the figure's own display path so that InlineBackend settings (figure_format, print_figure_kwargs) apply
@@ -1704,7 +1781,10 @@ class EelFigure(MatplotlibFigure):
 
     def _mime_(self) -> tuple[str, str]:
         "Display protocol of marimo, which renders the figure like its own matplotlib figures (marimo adds ``_mime_`` to all matplotlib artists)"
-        return self.figure._mime_()
+        if not self._layout.interactive:
+            return self.figure._mime_()
+        import marimo
+        return marimo.mpl.interactive(self.figure)._mime_()
 
     def _repr_png_(self) -> bytes:
         "PNG representation for notebooks that use neither IPython nor marimo"
@@ -1785,9 +1865,6 @@ class EelFigure(MatplotlibFigure):
         if need_redraw:
             self.draw()
 
-        if self._has_frame and not self.canvas._background:
-            self._frame.store_canvas()
-
         if CONFIG['show'] and self._layout.show:
             self._frame.Show()
             if self._has_frame and do_autorun(self._layout.run):
@@ -1811,12 +1888,14 @@ class EelFigure(MatplotlibFigure):
     def _on_key_press(self, event):
         if event.key in self.__callback_key_press:
             self.__callback_key_press[event.key](event)
-            event.guiEvent.Skip(False)  # Matplotlib Skip()s all events
+            if hasattr(event.guiEvent, 'Skip'):
+                event.guiEvent.Skip(False)  # wx: Matplotlib Skip()s all events
 
     def _on_key_release(self, event):
         if event.key in self.__callback_key_release:
             self.__callback_key_release[event.key](event)
-            event.guiEvent.Skip(False)
+            if hasattr(event.guiEvent, 'Skip'):
+                event.guiEvent.Skip(False)
 
     def _on_leave_axes(self, event):
         "Update the status bar when the cursor leaves axes"
@@ -1850,7 +1929,7 @@ class EelFigure(MatplotlibFigure):
         # update status bar
         self._frame.SetStatusText(self._on_motion_status_text(event))
         # redraw
-        self.canvas.redraw(redraw_axes)
+        self._redraw(redraw_axes)
 
     @staticmethod
     def _on_motion_status_text(event):
@@ -1869,6 +1948,11 @@ class EelFigure(MatplotlibFigure):
         if self._layout.tight:
             self._tight()
 
+    def _redraw(self, axes: Collection[matplotlib.axes.Axes]) -> None:
+        "Redraw ``axes`` after an interactive update"
+        if axes and not self._static:
+            self.figure._eelbrain_blitter.redraw(axes)
+
     def _register_key(self, key, press=None, release=None):
         if press:
             if key in self.__callback_key_press:
@@ -1886,7 +1970,7 @@ class EelFigure(MatplotlibFigure):
                 vline.remove()
             self._crosshair_lines = None
             if draw:
-                self.canvas.redraw(self._crosshair_axes)
+                self._redraw(self._crosshair_axes)
 
     def _fill_toolbar(self, tb):
         """
@@ -2034,7 +2118,7 @@ class EelFigure(MatplotlibFigure):
         if self._frame is None:
             return
         t0 = time.time()
-        self._frame.canvas.draw()
+        self.canvas.draw()
         self._last_draw_time = time.time() - t0
 
     def draw_crosshairs(self, enable: bool = True):
@@ -2253,7 +2337,11 @@ class BaseLayout:
             right_of: EelFigure | int = None,
             below: EelFigure | int = None,
             axes: matplotlib.axes.Axes | list[matplotlib.axes.Axes] = None,
+            interactive: bool = None,
     ):
+        if interactive is None:
+            interactive = CONFIG['interactive']
+        self.interactive = interactive
         self.h = h
         self.w = w
         self.dpi = dpi or mpl.rcParams['figure.dpi']
@@ -3453,18 +3541,43 @@ class TimeSlicerEF(TimeSlicer):
         self.__axes = self.axes if axes is None else axes
         self.__time_lines = []
         self.__redraw = redraw
+        self.__motion_time = None  # time of the most recent mouse position that is not displayed yet
         self.canvas.mpl_connect('button_press_event', self._on_click)
         self._register_key('.', self._on_nudge_time)
         self._register_key(',', self._on_nudge_time)
+        self._register_key('escape', self._on_release_time)
 
     def _on_click(self, event):
         if self._time_controller and event.inaxes in self.__axes:
+            self.__motion_time = None  # the click replaces earlier mouse positions
             self._set_time(event.xdata, fixate=event.button == 1)
+
+    def _on_release_time(self, event: matplotlib.backend_bases.KeyEvent) -> None:
+        if self._time_fixed:
+            self._set_time(self.get_time(), fixate=False)
 
     def _on_motion_sub(self, event):
         if not self._time_fixed and event.inaxes in self.__axes:
-            self._set_time(event.xdata)
+            if use_inline_backend():
+                # A notebook kernel receives every mouse position; delay redraw until the kernel has handled the events that are waiting
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    pass
+                else:
+                    if self.__motion_time is None:
+                        loop.call_soon(self._on_motion_idle)
+                    self.__motion_time = event.xdata
+            else:
+                self._set_time(event.xdata)
         return set()
+
+    def _on_motion_idle(self) -> None:
+        "Display the time of the most recent mouse position"
+        t = self.__motion_time
+        self.__motion_time = None
+        if t is not None and not self._time_fixed:
+            self._set_time(t)
 
     def _on_nudge_time(self, event):
         self._nudge_time(1 if event.key == '.' else -1)
@@ -3486,7 +3599,7 @@ class TimeSlicerEF(TimeSlicer):
                 self.__time_lines.pop().remove()
 
         if self.__redraw and redraw and self._frame is not None:
-            self.canvas.redraw(self.__axes)
+            self._redraw(self.__axes)
 
     def save_movie(
             self,
@@ -3532,6 +3645,8 @@ class TimeSlicerEF(TimeSlicer):
         imageio.mimwrite(filename, ims, **kwargs)
 
     def _im_array(self):
+        if self._static and self.figure.stale:
+            self.figure.canvas.draw()  # static figures are not redrawn for time updates
         # private attr usage is official: https://matplotlib.org/gallery/misc/agg_buffer_to_array.html
         return np.array(self.figure.canvas.renderer._renderer)
 
@@ -3540,6 +3655,8 @@ class TopoMapKey:
 
     def __init__(self, data_func):
         self.__topo_data = data_func
+        if use_inline_backend():
+            return  # a figure that is created in a key press handler is not displayed in a notebook
         self._register_key('t', self.__on_topo)
         self._register_key('T', self.__on_topo)
 

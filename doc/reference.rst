@@ -483,6 +483,13 @@ specified manually by supplying them as keyword arguments.
    Figure title (displayed on the figure).
 ``tight`` : :class:`bool`
     Use matplotlib's ``tight_layout`` to resize all axes to fill the figure.
+``interactive`` : :class:`bool`
+    Make the figure interactive when it is displayed in a notebook (e.g.,
+    click on a time axis to update a topography). In `marimo
+    <https://marimo.io>`_, this displays the figure with
+    ``marimo.mpl.interactive``. No effect with static backends such as the
+    Jupyter inline backend. The default is ``False`` and can be changed with
+    :func:`configure`.
 ``right_of`` : eelbrain plot
    Position the new figure to the right of this figure.
 ``below`` : eelbrain plot
