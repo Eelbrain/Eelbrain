@@ -1,9 +1,16 @@
 import contextlib
+import json
 import logging
+import queue
+import sys
 import threading
+from concurrent.futures import Future
+from pathlib import Path
 from types import SimpleNamespace
 
+import mne
 import numpy as np
+import pytest
 import wx
 
 from eelbrain import Dataset, Var
@@ -223,6 +230,9 @@ def test_result_columns():
         assert len(task.result_columns(result)) == len(task.detail_columns)
 
 
+DEFAULT_COLOUR = wx.Colour(1, 2, 3)  # text colour of the fake list
+
+
 class _FakeList:
     "Minimal wx.ListCtrl stand-in recording the cells that were written"
 
@@ -263,12 +273,63 @@ class _FakeList:
         assert col < len(self.columns), f"{col=} beyond the installed columns"
         self.rows[row] = self.rows[row][:col] + (value,) + self.rows[row][col + 1:]
 
+    def GetTextColour(self):
+        return DEFAULT_COLOUR
+
     def SetItemTextColour(self, row, colour):
         self.colours[row] = colour
 
     def DeleteAllItems(self):
         self.rows = []
         self.cleared = True
+
+
+@pytest.fixture(autouse=True)
+def call_after_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    "There is no main loop, so wx.CallAfter calls at once; tests that examine what is posted replace it"
+    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda func, *args: func(*args))
+
+
+class _FakePipelineThread:
+    "Stand-in for the pipeline thread that calls on the calling thread: at once, or in :meth:`run` while ``held`` (the pipeline is in use)"
+
+    def __init__(self, held: bool = False):
+        self.held = held
+        self.calls = []  # [(func, future), ...] waiting
+        self.running = False  # whether a call is in progress
+
+    def submit(self, func) -> Future:
+        future = Future()
+        self.calls.append((func, future))
+        if not self.held:
+            self.run()
+        return future
+
+    def run(self) -> None:
+        while self.calls:
+            func, future = self.calls.pop(0)
+            self.running = True
+            try:
+                result = func()
+            except Exception as error:
+                self.running = False
+                future.set_exception(error)
+            else:
+                self.running = False
+                future.set_result(result)
+
+
+class _MainLoop:
+    "Stand-in for the wx main loop on the test's thread: wx.CallAfter queues, :meth:`process` runs what was queued"
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch):
+        self.events = queue.SimpleQueue()
+        monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda func, *args: self.events.put((func, args)))
+
+    def process(self, n: int = 1) -> None:
+        for _ in range(n):
+            func, args = self.events.get(timeout=5)
+            func(*args)
 
 
 def _frame(**attrs) -> PipelineFrame:
@@ -289,7 +350,7 @@ def _table_frame(name: str, rows: list[tuple] = (), **kwargs) -> PipelineFrame:
         idx = fake.InsertItem(len(fake.rows), row[0])
         for col, value in enumerate(row[1:], 1):
             fake.SetItem(idx, col, value)
-    return _frame(_list=fake, _layout=layout, _current_task=lambda: task)
+    return _frame(_list=fake, _layout=layout, _current_task=lambda: task, _table_scope=lambda: (task, None, None, None, layout), _pipeline_thread=_FakePipelineThread(), _closed=False)
 
 
 # see PipelineFrame._table_scope
@@ -336,7 +397,7 @@ def test_populate_table_fits_the_rows_to_the_columns():
     assert frame._job_specs == {}  # the previous table's specs are gone
     assert frame._n_loading == 3  # every row is still to be filled in
     # only the ICA with no rejected component is coloured
-    assert frame._list.colours == {0: wx.NullColour, 1: wx.RED, 2: wx.NullColour}
+    assert frame._list.colours == {0: DEFAULT_COLOUR, 1: wx.RED, 2: DEFAULT_COLOUR}
 
     # a table arriving for a stale token is dropped
     frame._populate_table([], 'OTHER')
@@ -407,7 +468,7 @@ def test_compute_button_waits_for_the_table_but_stop_does_not():
 
 
 def test_row_actions_wait_for_the_table_to_load():
-    "While the refresh thread is still filling rows in, a row offers no action, even one that is in"
+    "While the refresh is still filling rows in, a row offers no action, even one that is in"
     layout = _layout('coreg')
     frame = _table_frame('coreg', [TASKS_BY_NAME['coreg'].missing_row(('R01', 's1'), layout, pipeline_gui.LOADING), ('R02', 's1', 'R02', 'missing')])
     activated = []
@@ -467,6 +528,34 @@ def test_mri_actions(tmp_path):
     assert frame._row_actions(0) == [RowAction(f"No FreeSurfer reconstruction for mybrain in {tmp_path / MRI_SDIR}")]
 
 
+def test_ica_actions():
+    "A missing ICA is queued for the compute worker instead of being estimated on the main thread by the ICA GUI"
+    rows = [
+        ('R01', 'no ICA', PLACEHOLDER, PLACEHOLDER),
+        ('R02', 'queued', PLACEHOLDER, PLACEHOLDER),
+        ('R03', '⟳', PLACEHOLDER, PLACEHOLDER),
+        ('R04', 'selected', '30', '0'),
+        ('R05', 'stale', '30', '2'),
+    ]
+    frame = _table_frame('ica', rows)
+    scope = frame._table_scope()
+    spec = object()
+    queued, opened = [], []
+    frame.__dict__.update(_n_loading=0, _job_specs={(scope, ('R01',)): spec}, _queue_jobs=lambda scope, jobs: queued.append((scope, jobs)), _open_ica_gui=opened.append)
+    labels = [[(action.label, action.run is not None) for action in frame._row_actions(i)] for i in range(len(rows))]
+    assert labels == [
+        [("Make ICA", True)],
+        [("Wait for the ICA to be computed", False)],
+        [("Wait for the ICA to be computed", False)],
+        [("Open ICA selection…", True)],
+        [("Open ICA selection…", True)],
+    ]
+    for i in range(len(rows)):
+        frame._activate_row(i)
+    assert queued == [(scope, [(('R01',), spec)])]
+    assert opened == [3, 4]
+
+
 def test_coreg_actions(tmp_path):
     "A subject without a FreeSurfer reconstruction is coregistered to the template brain"
     frame = _table_frame('coreg', [('R01', 's1', 'R01', 'missing'), ('R02', 's1', 'R02', 'ok'), ('R03', 's1', PLACEHOLDER, pipeline_gui.ERROR)])
@@ -485,122 +574,394 @@ def test_coreg_actions(tmp_path):
     assert opened == [(0, 'fsaverage'), (1, 'R02')]
 
 
-def _browse_raw_frame(monkeypatch, tmp_path, pipe, cached: bool):
-    "Bad channels table whose pipeline serves raw pipe 'raw' (the source, at tmp_path/'R01_raw.fif') and 'filt' (cached at tmp_path/'cache-raw.fif' or not)"
+def _browse_raw_frame(monkeypatch, tmp_path, caches: bool):
+    "Bad channels table whose pipeline serves raw pipe 'raw' (the source, at tmp_path/'R01_raw.fif') and 'filt' (a pipe that caches at tmp_path/'cache-raw.fif', or one that does not cache)"
     frame = _table_frame('bad_chs', [('R01', 'done', '3')])
     source = SimpleNamespace(node=SimpleNamespace(path=lambda ctx: tmp_path / 'R01_raw.fif'))
-    cache = SimpleNamespace(is_valid=lambda: cached, artifact_path=tmp_path / 'cache-raw.fif')
-    saved = []
+    cache_policy = pipeline_gui.CachePolicy.REQUIRED if caches else pipeline_gui.CachePolicy.NEVER
+    loaded, saved = [], []  # loaded: how the pipe's request was used ('load' reads the data, 'ensure' only builds the cache file)
+
+    def save(path: Path) -> None:
+        path.touch()
+        saved.append(path)
+
+    def load() -> SimpleNamespace:
+        loaded.append('load')
+        return SimpleNamespace(save=save)
+
+    cache = SimpleNamespace(node=SimpleNamespace(cache_policy=cache_policy), artifact_path=tmp_path / 'cache-raw.fif', load=load, ensure=lambda: loaded.append('ensure'))
     pipeline = SimpleNamespace(
         _temporary_state=contextlib.nullcontext(),
         set=lambda **state: None,
-        _raw={'raw': pipeline_gui.RawSource(), 'filt': pipe},
+        _raw={'raw': pipeline_gui.RawSource(), 'filt': SimpleNamespace()},
         _resolve_derivative=lambda name: {pipeline_gui.raw_input_name('raw'): source, pipeline_gui.raw_node_name('filt'): cache}[name],
         load_bad_channels=lambda: ['MEG 0111'],
-        load_raw=lambda: SimpleNamespace(save=lambda path: (path.touch(), saved.append(path))),
     )
-    launched = []
-    monkeypatch.setattr(pipeline_gui, '_launch_browse_raw_subprocess', lambda *args: launched.append(args) or 'proc')
+    launched = []  # [(path, bads, on_close, options), ...]
+
+    def subprocess_window(kind: str, script: str, args: list[str], on_close, **options) -> str:
+        assert (kind, script) == ('raw browser', pipeline_gui._BROWSE_RAW_SCRIPT)
+        launched.append((args[0], json.loads(args[1]), on_close, options))
+        return 'window'
+
+    monkeypatch.setattr(pipeline_gui, '_SubprocessWindow', subprocess_window)
     monkeypatch.setattr(pipeline_gui.wx, 'BusyCursor', contextlib.nullcontext)
-    frame.__dict__.update(_pipeline=pipeline, _n_loading=0, _subprocesses=[], _closed=False)
-    return frame, launched, saved
+    frame.__dict__.update(_pipeline=pipeline, _n_loading=0, _subprocess_windows=[])
+    return frame, launched, loaded, saved
 
 
 def test_open_mne_browse_raw(monkeypatch, tmp_path):
     "The bad channels context menu opens the row's raw in the MNE raw browser, in a subprocess seeded with the current bad channels"
-    frame, launched, saved = _browse_raw_frame(monkeypatch, tmp_path, pipe=None, cached=False)
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=False)
     frame._raw_name = lambda: 'raw'
     assert [action.label for action in frame._row_actions(0)] == ["Plot continuous data…", "Set bad channels…", "Open in mne browse_raw…"]
     frame._run_row_action(0, frame._row_actions(0)[2])
-    (path, bads, on_close), = launched
+    (path, bads, on_close, options), = launched
     assert (path, bads) == (str(tmp_path / 'R01_raw.fif'), ['MEG 0111'])
-    assert frame._subprocesses == [('raw browser', 'proc')]
-    # closing the browser posts the result to the main thread
+    assert options == {'capture': True, 'tmp_dir': None}
+    assert loaded == []  # the source file is shown as it is
+    assert frame._subprocess_windows == ['window']
+    # closing the browser posts the bad channels it reported on its marked line, whatever is printed around it, to the main thread
     posted = []
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
-    on_close(['MEG 0111', 'MEG 0112'], '')
+    on_close(True, 'Using qt as 2D backend.\neelbrain-bad-channels: ["MEG 0111", "MEG 0112"]\nClosing\n0\n', '')
     assert posted == [(frame._on_browse_raw_closed, 'raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0111', 'MEG 0112'], '')]
-    # but not after the GUI was closed
+    # a browser that failed, or reported nothing, has no bad channels
+    on_close(False, 'eelbrain-bad-channels: ["MEG 0111"]\n', 'Traceback: boom')
+    on_close(True, '', '')
+    assert [args[4:] for args in posted[1:]] == [(None, 'Traceback: boom'), (None, '')]
+    # nothing is posted after the GUI was closed
     frame._closed = True
-    on_close(['MEG 0111', 'MEG 0112'], '')
-    assert len(posted) == 1
+    on_close(True, 'eelbrain-bad-channels: ["MEG 0111"]\n', '')
+    assert len(posted) == 3
 
 
 def test_open_mne_browse_raw_pipe(monkeypatch, tmp_path):
-    "A raw pipe is shown from its cache file when that is valid, and otherwise written to a temporary file that is removed when the browser closes"
-    pipe = SimpleNamespace()
-    frame, launched, saved = _browse_raw_frame(monkeypatch, tmp_path, pipe, cached=True)
+    "A raw pipe that caches is shown from its cache file, built if needed but not read; one that does not cache is written to a temporary file that the browser's window removes"
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=True)
     frame._raw_name = lambda: 'filt'
     frame._run_row_action(0, frame._row_actions(0)[2])
     assert launched[-1][0] == str(tmp_path / 'cache-raw.fif')
-    assert saved == []
+    assert loaded == ['ensure'] and saved == []
 
-    frame, launched, saved = _browse_raw_frame(monkeypatch, tmp_path, pipe, cached=False)
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=False)
     frame._raw_name = lambda: 'filt'
     frame._run_row_action(0, frame._row_actions(0)[2])
     (tmp_file,) = saved
+    assert loaded == ['load']
     assert launched[-1][0] == str(tmp_file)
     assert tmp_file.name == 'R01_filt-raw.fif' and tmp_file.exists()
-    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: None)
-    launched[-1][2](['MEG 0111'], '')
-    assert not tmp_file.parent.exists()
+    assert launched[-1][3] == {'capture': True, 'tmp_dir': tmp_file.parent}
+
+
+def test_pipeline_thread():
+    "Calls run one at a time, in the order submitted, in a thread of their own; the future holds what a call returned or raised"
+    thread = pipeline_gui._PipelineThread()
+    order = []
+    gate = threading.Event()
+
+    def first() -> threading.Thread:
+        gate.wait(5)
+        order.append('first')
+        return threading.current_thread()
+
+    def second() -> None:
+        order.append('second')
+        raise DataError("no positions")
+
+    futures = [thread.submit(first), thread.submit(second)]
+    assert order == []
+    gate.set()
+    assert futures[0].result(5) is not threading.current_thread()
+    with pytest.raises(DataError):
+        futures[1].result(5)
+    assert order == ['first', 'second']
+    assert thread.submit(lambda: 'next').result(5) == 'next'  # a call that raised does not end the thread
+
+
+def test_use_pipeline(monkeypatch):
+    "The main thread gets the outcome of a call in the pipeline thread as an event, unless the window closed; with main_thread the call itself is an event, for which the pipeline thread waits"
+    loop = _MainLoop(monkeypatch)
+    frame = _frame(_pipeline_thread=pipeline_gui._PipelineThread(), _closed=False)
+    main = threading.current_thread()
+    outcomes = []
+
+    def then(future: Future) -> None:
+        outcomes.append((future.exception() or future.result(), threading.current_thread() is main))
+
+    frame._use_pipeline(threading.current_thread, then)
+    loop.process()
+    (thread, on_main), = outcomes
+    assert thread is not main and on_main
+
+    def fail() -> None:
+        raise DataError("no positions")
+
+    frame._use_pipeline(fail, then)
+    loop.process()
+    assert isinstance(outcomes[-1][0], DataError)
+    # on the main thread, as its turn: the pipeline thread does nothing else until the call returned
+    after = frame._pipeline_thread.submit(lambda: outcomes.append('after the turn'))
+    frame._use_pipeline(threading.current_thread, then, main_thread=True)
+    after.result(5)
+    queued = frame._pipeline_thread.submit(lambda: outcomes.append('queued behind the turn'))
+    assert outcomes[-1] == 'after the turn'
+    loop.process()  # the call
+    queued.result(5)
+    loop.process()  # its outcome
+    assert outcomes[-2:] == ['queued behind the turn', (main, True)]
+    # the window closed before the outcome arrived
+    frame._use_pipeline(lambda: None, then)
+    frame._closed = True
+    loop.process()
+    assert len(outcomes) == 5
+
+
+def test_row_action_takes_its_turn(monkeypatch, tmp_path):
+    "A row action waits for the pipeline; it is dropped if its row is gone or the window closed by then"
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=True)
+    frame._raw_name = lambda: 'filt'
+    thread = frame._pipeline_thread = _FakePipelineThread(held=True)
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    assert launched == [] and loaded == []
+    thread.run()
+    assert [args[0] for args in launched] == [str(tmp_path / 'cache-raw.fif')]
+    # the table was refreshed while the action was waiting
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    rows = frame._list.rows
+    frame._list.rows = []
+    thread.run()
+    assert len(launched) == 1
+    # the window closed while the action was waiting
+    frame._list.rows = rows
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    frame._closed = True
+    thread.run()
+    assert len(launched) == 1
+
+
+def test_row_action_incorporates_a_stale_ica():
+    "When an action meets a stale ICA and the user incorporates it, the ICA is re-indexed and the action run again, both in a turn of their own; the dialog is asked between the turns"
+    frame = _table_frame('ica', [('R01', 'selected', '30', '2')])
+    thread = frame._pipeline_thread
+    events = []
+
+    def run() -> None:
+        events.append(('run', thread.running))
+        if 'load_ica' not in [event[0] for event in events]:
+            raise ProtectedArtifactError('ica', 'path')
+
+    def ask(subject: str, error: ProtectedArtifactError) -> tuple[str, bool]:
+        events.append(('ask', thread.running))
+        return pipeline_gui.StaleICADialog.INCORPORATE, False
+
+    pipeline = SimpleNamespace(load_ica=lambda raw, accept_stale: events.append(('load_ica', thread.running, raw, accept_stale)))
+    frame.__dict__.update(_pipeline=pipeline, _raw_name=lambda: '1-40', _ask_stale_ica=ask)
+    frame._run_row_action(0, RowAction("Open ICA selection…", run))
+    assert events == [('run', True), ('ask', False), ('load_ica', True, '1-40', True), ('run', True)]
+
+
+def test_set_bad_channels_dialog(monkeypatch):
+    "The bad channels dialog opens after the row action's turn, so the pipeline is free while it is open; the channels it is closed with are saved in the pipeline thread"
+    loop = _MainLoop(monkeypatch)
+    frame = _table_frame('bad_chs', [('R01', 'done', '1')])
+    thread = pipeline_gui._PipelineThread()
+    saved, refreshed, free = [], [], []
+    raw = SimpleNamespace(info='INFO')
+    pipeline = SimpleNamespace(
+        set=lambda **state: None,
+        _raw=SimpleNamespace(root_source_name=lambda name: 'raw', root_source_pipe=lambda name: SimpleNamespace(adjacency=None)),
+        _load_derivative=lambda name, options: raw,
+        load_bad_channels=lambda: ['MEG 0111'],
+        make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state, threading.current_thread())),
+    )
+
+    def show_modal() -> int:
+        free.append(thread.submit(lambda: True).result(5))  # times out while the pipeline thread waits for the main thread
+        return wx.ID_OK
+
+    monkeypatch.setattr(pipeline_gui.load.mne, 'sensor_dim', lambda info, adjacency: 'SENSOR')
+    monkeypatch.setattr(pipeline_gui, 'BadChannelsDialog', lambda parent, sensor, bads: SimpleNamespace(ShowModal=show_modal, get_bad_channels=lambda: [*bads, 'MEG 0112'], Destroy=lambda: None))
+    monkeypatch.setattr(pipeline_gui.wx, 'BusyCursor', contextlib.nullcontext)
+    frame.__dict__.update(_pipeline=pipeline, _pipeline_thread=thread, _n_loading=0, _raw_name=lambda: 'raw', _start_refresh=lambda: refreshed.append(True))
+    frame._run_row_action(0, frame._row_actions(0)[1])
+    loop.process()  # the action's turn: loads the sensors and the current bad channels
+    assert free == []
+    loop.process()  # the dialog
+    assert free == [True]
+    loop.process(2)  # the outcome of the action, then of the save
+    (bads, redo, raw_name, state, saved_in), = saved
+    assert (bads, redo, raw_name, state) == (['MEG 0111', 'MEG 0112'], True, 'raw', {'subject': 'R01'})
+    assert saved_in is not threading.current_thread()
+    assert refreshed == [True]
+
+
+def test_open_mne_browse_raw_failure(monkeypatch, tmp_path):
+    "The temporary file for a raw pipe that does not cache is removed when writing it, or starting the browser, fails"
+    frame, launched, loaded, saved = _browse_raw_frame(monkeypatch, tmp_path, caches=False)
+    frame._raw_name = lambda: 'filt'
+    errors = []
+    frame._show_error = lambda *args: errors.append(args)
+    tmp_dir = tmp_path / 'browse'
+
+    def mkdtemp(prefix: str) -> str:
+        tmp_dir.mkdir()
+        return str(tmp_dir)
+
+    monkeypatch.setattr(pipeline_gui.tempfile, 'mkdtemp', mkdtemp)
+    # writing the file fails
+    cache = frame._pipeline._resolve_derivative(pipeline_gui.raw_node_name('filt'))
+    load = cache.load
+
+    def save(path: Path) -> None:
+        raise OSError("disk full")
+
+    cache.load = lambda: SimpleNamespace(save=save)
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    assert 'disk full' in errors[-1][0] and launched == []
+    assert not tmp_dir.exists()
+    # starting the browser fails
+    cache.load = load
+
+    def launch(*args, **kwargs) -> None:
+        raise OSError("no python")
+
+    monkeypatch.setattr(pipeline_gui, '_SubprocessWindow', launch)
+    frame._run_row_action(0, frame._row_actions(0)[2])
+    assert 'no python' in errors[-1][0] and frame._subprocess_windows == []
+    assert not tmp_dir.exists()
 
 
 def test_close_terminates_subprocesses(monkeypatch):
-    "Closing the GUI closes the GUIs it opened in subprocesses, asking first when raw browser windows are open"
-    messages, terminated = [], []
+    "Closing the GUI closes the GUIs it opened in subprocesses, asking first when any of them are still open"
+    messages, closed = [], []
     answer = wx.ID_NO
 
     def dialog(parent, message, title, style):
-        return SimpleNamespace(ShowModal=lambda: (messages.append(message), answer)[1], Destroy=lambda: None)
+        def show_modal() -> int:
+            messages.append(message)
+            return answer
+        return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
 
-    def proc(running, name):
-        return SimpleNamespace(poll=lambda: None if running else 0, terminate=lambda: terminated.append(name))
-    frame = _frame(_compute_token=None, _closed=False, _subprocesses=[('coregistration', proc(True, 'coreg')), ('raw browser', proc(False, 'browser 1')), ('raw browser', proc(True, 'browser 2'))])
+    def window(kind: str, is_open: bool, name: str) -> SimpleNamespace:
+        return SimpleNamespace(kind=kind, is_open=lambda: is_open, close=lambda: closed.append(name))
+
+    frame = _frame(_compute_token=None, _refresh_token=object(), _closed=False, _subprocess_windows=[window('coregistration', True, 'coreg'), window('raw browser', False, 'browser 1'), window('raw browser', True, 'browser 2')])
     event = SimpleNamespace(Veto=lambda: messages.append('veto'), Skip=lambda: messages.append('skip'))
     frame._on_close(event)
-    assert messages == ["1 raw browser window(s) are open. Closing this window will close them, and bad channels set there will not be saved.\n\nClose anyway?", 'veto']
-    assert terminated == [] and not frame._closed
+    assert messages == ["2 window(s) opened from this one are still open (coregistration, raw browser). Closing this window will close them, and changes that were not saved there will be lost.\n\nClose anyway?", 'veto']
+    assert closed == [] and not frame._closed
     answer = wx.ID_YES
     frame._on_close(event)
-    assert messages[-1] == 'skip' and frame._closed
-    assert terminated == ['coreg', 'browser 2']
+    assert messages[-1] == 'skip' and frame._closed and frame._refresh_token is None
+    assert closed == ['coreg', 'browser 1', 'browser 2']  # also one that just closed: its temporary file may still be there
 
 
-def test_launch_browse_raw_subprocess(monkeypatch):
-    "The browser subprocess reports the bad channels it was closed with on its last line; a failed run reports None with stderr"
-    results = []
+def test_close_vetoed_keeps_computation(monkeypatch):
+    "A close that is declined because of open subprocess windows leaves the running computation alone, although cancelling it was confirmed first"
+    answers = [wx.ID_YES, wx.ID_NO]
 
-    def popen(args, stdout, stderr, text):
-        assert args[:2] == [pipeline_gui.sys.executable, '-c'] and args[3:] == ['/data/raw.fif', '["MEG 0111"]']
-        return SimpleNamespace(communicate=lambda: popen.output, returncode=popen.returncode)
+    def dialog(parent: object, message: str, title: str, style: int) -> SimpleNamespace:
+        return SimpleNamespace(ShowModal=lambda: answers.pop(0), Destroy=lambda: None)
 
-    monkeypatch.setattr(pipeline_gui.subprocess, 'Popen', popen)
+    monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
+    token = object()
+    frame = _frame(_compute_token=token, _closed=False, _subprocess_windows=[SimpleNamespace(kind='coregistration', is_open=lambda: True)])
+    vetoed = []
+    frame._on_close(SimpleNamespace(Veto=lambda: vetoed.append(True)))
+    assert vetoed == [True] and answers == []
+    assert frame._compute_token is token and not frame._closed
+
+
+def test_browse_raw_script(monkeypatch, capsys):
+    "The browser script reads the file the way the pipeline does, seeds the raw with the bad channels it contains, and reports the bad channels it was closed with plus those it could not show"
+    calls = []
+
+    def read_raw(path: str, **kwargs) -> SimpleNamespace:
+        calls.append((path, kwargs))
+        raw = SimpleNamespace(info={'bads': []}, ch_names=['MEG 0111', 'MEG 0112'])
+        raw.plot = lambda block: raw.info['bads'].append('MEG 0112')
+        return raw
+
+    monkeypatch.setattr(mne.io, 'read_raw', read_raw)
+    monkeypatch.setattr(sys, 'argv', ['-c', '/data/raw.fif', '["MEG 0111", "EEG 001"]'])
+    exec(pipeline_gui._BROWSE_RAW_SCRIPT, {})
+    assert capsys.readouterr().out == 'eelbrain-bad-channels: ["MEG 0111", "MEG 0112", "EEG 001"]\n'
+    monkeypatch.setattr(sys, 'argv', ['-c', '/data/raw.vhdr', '[]'])  # only the FIFF reader has allow_maxshield
+    exec(pipeline_gui._BROWSE_RAW_SCRIPT, {})
+    assert calls == [('/data/raw.fif', {'allow_maxshield': True}), ('/data/raw.vhdr', {})]
+
+
+def test_subprocess_window(monkeypatch, tmp_path):
+    "A subprocess window runs its script, reports how it closed, and removes its temporary directory; closing it terminates the GUI, and kills one that does not exit, before removing the directory"
+    calls, outcomes = [], []
     done = threading.Event()
 
-    def on_close(bads, stderr):
-        return (results.append((bads, stderr)), done.set())
-    popen.output, popen.returncode = ('Using qt as 2D backend.\n["MEG 0111", "MEG 0112"]\n', ''), 0
-    pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
+    def popen(args: list[str], stdout: int | None, stderr: int | None, text: bool) -> SimpleNamespace:
+        calls.append((args, stdout, stderr))
+        return proc
+
+    def wait(timeout: float | None = None) -> None:
+        calls.append(('wait', timeout))
+        if timeout and proc.hangs:
+            raise pipeline_gui.subprocess.TimeoutExpired('python', timeout)
+
+    def on_close(*outcome) -> None:
+        outcomes.append((*outcome, tmp_dir.exists()))
+        done.set()
+
+    exited = threading.Event()
+    proc = SimpleNamespace(communicate=lambda: exited.wait(5) and ('OUT', 'ERR'), returncode=0, poll=lambda: 0 if exited.is_set() else None, terminate=lambda: calls.append('terminate'), kill=lambda: calls.append('kill'), wait=wait, hangs=False)
+    monkeypatch.setattr(pipeline_gui.subprocess, 'Popen', popen)
+    tmp_dir = tmp_path / 'browse'
+    tmp_dir.mkdir()
+    window = pipeline_gui._SubprocessWindow('raw browser', 'SCRIPT', ['/data/raw.fif'], on_close, capture=True, tmp_dir=tmp_dir)
+    pipe = pipeline_gui.subprocess.PIPE
+    assert calls == [([pipeline_gui.sys.executable, '-c', 'SCRIPT', '/data/raw.fif'], pipe, pipe)]
+    assert window.kind == 'raw browser' and window.is_open() and outcomes == []
+    exited.set()
     assert done.wait(5)
+    assert outcomes == [(True, 'OUT', 'ERR', False)] and not window.is_open()  # the directory is gone before the close is reported
+    # a GUI that failed; its output is left to the terminal
     done.clear()
-    popen.output, popen.returncode = ('', 'Traceback: boom'), 1
-    pipeline_gui._launch_browse_raw_subprocess('/data/raw.fif', ['MEG 0111'], on_close)
+    proc.returncode = 1
+    pipeline_gui._SubprocessWindow('coregistration', 'SCRIPT', (), on_close)
     assert done.wait(5)
-    assert results == [(['MEG 0111', 'MEG 0112'], ''), (None, 'Traceback: boom')]
+    assert calls[-1][1:] == (None, None) and outcomes[-1][0] is False
+    # closing waits for the GUI to let go of its temporary file
+    calls.clear()
+    tmp_dir.mkdir()
+    window.close()
+    assert calls == ['terminate', ('wait', 5)] and not tmp_dir.exists()
+    # a GUI that does not exit is killed
+    calls.clear()
+    tmp_dir.mkdir()
+    proc.hangs = True
+    window.close()
+    assert calls == ['terminate', ('wait', 5), 'kill', ('wait', None)] and not tmp_dir.exists()
+    # without a temporary file there is nothing to wait for
+    calls.clear()
+    pipeline_gui._SubprocessWindow('coregistration', 'SCRIPT', (), lambda *outcome: None).close()
+    assert calls[1:] == ['terminate']
 
 
 def test_on_browse_raw_closed(monkeypatch):
-    "Changed bad channels are saved after confirmation; unchanged ones and a declined dialog save nothing; a failed browser shows its stderr"
-    saved, refreshed, errors, messages = [], [], [], []
+    "Changed bad channels are saved after confirmation, with a warning if they were also changed elsewhere; unchanged ones and a declined dialog save nothing; a failed browser, or save, shows the error; the pipeline is used in the pipeline thread, and not while the dialog is open"
+    saved, refreshed, errors, messages, in_use = [], [], [], [], []
     answer = wx.ID_YES
 
     def dialog(parent, message, title, style):
-        return SimpleNamespace(ShowModal=lambda: (messages.append(message), answer)[1], Destroy=lambda: None)
+        def show_modal() -> int:
+            messages.append(message)
+            in_use.append(thread.running)
+            return answer
+        return SimpleNamespace(ShowModal=show_modal, Destroy=lambda: None)
     monkeypatch.setattr(pipeline_gui.wx, 'MessageDialog', dialog)
-    pipeline = SimpleNamespace(make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state)))
-    frame = _frame(_pipeline=pipeline, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
+    current = ['MEG 0111']
+    pipeline = SimpleNamespace(load_bad_channels=lambda raw, **state: current, make_bad_channels=lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state)))
+    thread = _FakePipelineThread()
+    frame = _frame(_pipeline=pipeline, _pipeline_thread=thread, _closed=False, _start_refresh=lambda: refreshed.append(True), _show_error=lambda *args: errors.append(args))
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0112', 'MEG 0113'], '')
     assert saved == [(['MEG 0112', 'MEG 0113'], True, 'raw', {'subject': 'R01'})]
     assert refreshed == [True]
@@ -608,14 +969,56 @@ def test_on_browse_raw_closed(monkeypatch):
     # unchanged: no dialog
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0111'], '')
     assert len(messages) == 1 and len(saved) == 1
-    # declined
+    # changed elsewhere while the browser was open
+    current = ['MEG 0111', 'MEG 0114']
     answer = wx.ID_NO
-    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0111'], '')
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0112'], '')
+    assert messages[-1] == "Save the bad channels set in the raw browser for R01?\n\nAdded: MEG 0112\nRemoved: MEG 0111, MEG 0114\n\nThe bad channels were changed elsewhere while the raw browser was open; saving replaces them with the ones set in the browser."
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, ['MEG 0111'], ['MEG 0114', 'MEG 0111'], '')  # the same change
     assert len(messages) == 2 and len(saved) == 1
+    # declined
+    current = []
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0111'], '')
+    assert len(messages) == 3 and len(saved) == 1
     # failed browser
     frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], None, 'Traceback: boom')
     assert errors == [('Traceback: boom', "Raw Browser Failed", "The MNE raw browser for R01 did not exit cleanly; bad channels were not updated.")]
-    assert len(messages) == 2 and len(saved) == 1
+    assert len(messages) == 3 and len(saved) == 1
+    # a save that fails for a reason that is not a user error
+
+    def fail(bads: list[str], redo: bool, raw: str, **state: str) -> None:
+        raise ValueError("MEG 0112 not in raw")
+
+    pipeline.make_bad_channels = fail
+    answer = wx.ID_YES
+    frame._on_browse_raw_closed('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
+    assert 'MEG 0112 not in raw' in errors[-1][0]
+    assert len(saved) == 1 and refreshed == [True]
+    # a refresh pass or the compute worker is using the pipeline: nothing is asked until the current bad channels could be read
+    pipeline.make_bad_channels = lambda bads, redo, raw, **state: saved.append((bads, redo, raw, state))
+    args = ('raw', {'subject': 'R01'}, [], ['MEG 0112'], '')
+    thread.held = True
+    frame._on_browse_raw_closed(*args)
+    assert len(messages) == 4 and len(saved) == 1
+    thread.run()
+    assert len(messages) == 5 and len(saved) == 2
+    assert in_use == [False] * 5  # the dialog never keeps the pipeline waiting
+    # the window closed while the bad channels were read
+    frame._on_browse_raw_closed(*args)
+    frame._closed = True
+    thread.run()
+    assert len(messages) == 5
+    # posted while the GUI was closing
+    frame._on_browse_raw_closed(*args)
+    assert thread.calls == [] and len(errors) == 2
+
+
+def test_callbacks_after_close():
+    "A refresh or an error posted by a thread or subprocess that ended while the GUI was closing does not touch the destroyed window"
+    frame = _frame(_closed=True, _refresh_token=None)
+    frame._start_refresh()
+    frame._show_error('Traceback: boom')
+    frame._populate_table([('R01', 'done')], object())
 
 
 def test_set_row_result_writes_status_details_and_colour():
@@ -625,13 +1028,13 @@ def test_set_row_result_writes_status_details_and_colour():
     task = TASKS_BY_NAME['ica']
     frame._set_row_result(0, task.done_status, task.result_columns(ica))
     assert frame._list.rows == [('R01', 'selected', '30', '2')]
-    assert frame._list.colours == {0: wx.NullColour}
+    assert frame._list.colours == {0: DEFAULT_COLOUR}
 
     # the Status column sits further right for Coregistration
     frame = _table_frame('coreg', [('R01', 's1', 'R01', 'missing')])
     frame._set_row_result(0, TASKS_BY_NAME['coreg'].done_status, ())
     assert frame._list.rows == [('R01', 's1', 'R01', 'ok')]
-    assert frame._list.colours == {0: wx.NullColour}
+    assert frame._list.colours == {0: DEFAULT_COLOUR}
 
 
 def test_displayed_row_requires_a_matching_scope():
@@ -656,6 +1059,7 @@ def test_queue_jobs_dedupes_within_one_scope_only():
         started.append(True)
         frame._compute_token = object()
 
+    hints = []
     frame = _table_frame('ica', [('R0000', 'selected', '30', '0')])
     frame.__dict__.update(
         _job_queue=[],
@@ -666,9 +1070,14 @@ def test_queue_jobs_dedupes_within_one_scope_only():
         _table_scope=lambda: _ICA_SCOPE,
         _start_compute=start_compute,
         _update_progress=lambda: None,
+        _n_loading=0,
+        SetStatusText=lambda text, field: hints.append(text),
     )
+    frame._list.selected = 0
     spec = object()
     frame._queue_jobs(_ICA_SCOPE, [(('R0000',), spec)])
+    # the selected row's hint follows its new status
+    assert hints == ["Wait for the ICA to be computed"]
     frame._queue_jobs(_ICA_SCOPE, [(('R0000',), spec)])  # already queued
     frame._queue_jobs(_OTHER_SCOPE, [(('R0000',), spec)])  # a different table
     assert [entry[0] for entry in frame._job_queue] == [_ICA_SCOPE, _OTHER_SCOPE]
@@ -676,71 +1085,66 @@ def test_queue_jobs_dedupes_within_one_scope_only():
     # only the row of the table on display is marked, and only for its own scope
     assert frame._list.rows == [('R0000', 'queued', PLACEHOLDER, PLACEHOLDER)]
     # the row was red for having no rejected component; queueing it clears that
-    assert frame._list.colours == {0: wx.NullColour}
+    assert frame._list.colours == {0: DEFAULT_COLOUR}
     assert started == [True]
 
 
-def test_compute_job_holds_the_pipeline_lock_except_for_the_fit():
-    "Loading and saving are serialized against the refresh walk; the computation is not"
-    held = {}
+def test_compute_job_uses_the_pipeline_thread_except_for_the_fit():
+    "Loading and saving run in the pipeline thread, serialized with the refresh walk; the computation does not"
+    in_pipeline_thread = {}
+    thread = _FakePipelineThread()
 
     class _Job:
         def __call__(self):
-            held['fit'] = frame._pipeline_lock.locked()
+            in_pipeline_thread['fit'] = thread.running
             return 'RESULT'
 
     class _Spec:
         def make_job(self):
-            held['make_job'] = frame._pipeline_lock.locked()
+            in_pipeline_thread['make_job'] = thread.running
             return _Job()
 
         def save_result(self, job, result):
-            held['save_result'] = frame._pipeline_lock.locked()
+            in_pipeline_thread['save_result'] = thread.running
             return result
 
-    frame = _frame(_pipeline_lock=threading.Lock())
+    frame = _frame(_pipeline_thread=thread)
     assert frame._compute_job(TASKS_BY_NAME['ica'], _Spec(), ('R0000',)) == 'RESULT'
-    # an hour-long fit must not keep the refresh thread out
-    assert held == {'make_job': True, 'fit': False, 'save_result': True}
-    assert not frame._pipeline_lock.locked()
+    # an hour-long fit must not keep a refresh out
+    assert in_pipeline_thread == {'make_job': True, 'fit': False, 'save_result': True}
 
 
-def test_ica_bad_channels_wait_for_the_pipeline(monkeypatch, tmp_path):
-    "Bad channels found for an ICA are filed once no other thread is using the pipeline, and the ICA is deleted"
-    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
-    monkeypatch.setattr(pipeline_gui.wx, 'CallLater', lambda ms, *args: deferred.append(args))
-    posted, deferred, filed = [], [], []
+def test_ica_bad_channels_wait_for_the_pipeline(tmp_path):
+    "Bad channels found for an ICA are filed in the pipeline thread, once it is free, and the ICA is deleted"
+    calls, filed = [], []
     node = SimpleNamespace(_source_states=lambda ctx: [{'task': 't0'}])
     ica_path = tmp_path / 'ica.fif'
     ica_path.touch()
     spec = SimpleNamespace(ctx=SimpleNamespace(node=node), path=ica_path)
     p = SimpleNamespace(set=lambda **state: None, _job_spec=lambda name: spec, make_bad_channels=lambda names, **state: filed.append((names, state)))
-    frame = _frame(_pipeline=p, _pipeline_lock=threading.Lock())
-    args = (_ICA_SCOPE, [(('R01',), ['MEG 0111'])], True)
+    thread = _FakePipelineThread(held=True)
+    frame = _frame(_pipeline=p, _pipeline_thread=thread, _closed=False, _queue_jobs=lambda *args: calls.append(('queue', *args)), _start_refresh=lambda: calls.append(('refresh',)))
 
-    # while a refresh pass holds the pipeline, the call is retried rather than interleaved with it
-    with frame._pipeline_lock:
-        frame._add_ica_bad_channels(*args)
-    assert deferred == [(frame._add_ica_bad_channels, *args)]
-    assert filed == [] and posted == []
+    # while a refresh pass is using the pipeline, nothing is filed
+    frame._add_ica_bad_channels(_ICA_SCOPE, [(('R01',), ['MEG 0111'])], True)
+    assert filed == [] and calls == []
     assert ica_path.exists()
 
-    frame._add_ica_bad_channels(*args)
+    thread.run()
     assert filed == [(['MEG 0111'], {'raw': '1-40', 'subject': 'R01', 'task': 't0'})]
-    assert posted == [(frame._queue_jobs, _ICA_SCOPE, [(('R01',), spec)])]
+    assert calls == [('queue', _ICA_SCOPE, [(('R01',), spec)])]
     assert not ica_path.exists()
-    assert not frame._pipeline_lock.locked()
 
     # without recompute, the table is re-read instead
-    posted.clear()
+    calls.clear()
+    thread.held = False
     frame._add_ica_bad_channels(_ICA_SCOPE, [(('R01',), ['MEG 0111'])], False)
-    assert posted == [(frame._start_refresh,)]
+    assert calls == [('refresh',)]
 
 
-def test_ica_bad_channels_report_a_failed_write(monkeypatch, tmp_path):
+def test_ica_bad_channels_report_a_failed_write(tmp_path):
     "A recording whose bad channels can not be written is reported, and the rows that were written are still queued"
-    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
-    posted, filed = [], []
+    calls, filed = [], []
     node = SimpleNamespace(_source_states=lambda ctx: [{'task': 't0'}])
     spec = SimpleNamespace(ctx=SimpleNamespace(node=node), path=tmp_path / 'ica.fif')
 
@@ -750,13 +1154,12 @@ def test_ica_bad_channels_report_a_failed_write(monkeypatch, tmp_path):
         filed.append((names, state))
 
     p = SimpleNamespace(set=lambda **state: None, _job_spec=lambda name: spec, make_bad_channels=make_bad_channels)
-    frame = _frame(_pipeline=p, _pipeline_lock=threading.Lock())
+    frame = _frame(_pipeline=p, _pipeline_thread=_FakePipelineThread(), _closed=False, _queue_jobs=lambda *args: calls.append(('queue', *args)), _show_error=lambda *args: calls.append(('error', *args)), _start_refresh=lambda: calls.append(('refresh',)))
     frame._add_ica_bad_channels(_ICA_SCOPE, [(('R01',), ['MEG 0111']), (('R02',), ['MEG 0112']), (('R03',), ['MEG 0113'])], True)
     assert [state['subject'] for _, state in filed] == ['R01']  # the loop stops at the failure
-    assert posted[0] == (frame._queue_jobs, _ICA_SCOPE, [(('R01',), spec)])
-    assert posted[1][0] == frame._show_error
-    assert posted[2] == (frame._start_refresh,)
-    assert not frame._pipeline_lock.locked()
+    assert calls[0] == ('queue', _ICA_SCOPE, [(('R01',), spec)])
+    assert calls[1][0] == 'error' and 'no positions' in calls[1][1]
+    assert calls[2] == ('refresh',)
 
 
 def test_channel_summary_rows():
@@ -788,27 +1191,24 @@ def test_channel_summary_rows():
     assert bad_channel_summary._flat_in_every_recording([]) == []
 
 
-def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
-    "Every recording is analyzed under the pipeline lock; a failing one is reported, the rest are summarized"
-    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda func, *args: func(*args))
-    locked, updates = [], []
+def test_find_bad_channels(monkeypatch):
+    "Every recording is analyzed; a failing one is reported, the rest are summarized"
+    analyzed, updates = [], []
     progress = SimpleNamespace(Update=lambda i, msg: updates.append((i, msg)) or (True, False), WasCancelled=lambda: False, Destroy=lambda: None)
 
     def candidates(raw_name, spec):
-        locked.append(frame._pipeline_lock.locked())
+        analyzed.append(spec)
         if spec == 'bad':
             raise DataError("no positions")
         return [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)], [('EEG 001', 'eeg')]
 
     frame = _frame(
-        _pipeline_lock=threading.Lock(),
         _ica_bad_channel_candidates=candidates,
         _show_bad_channel_summary=lambda *args: summary.append(args),
     )
     summary = []
-    frame._find_bad_channels_thread(_ICA_SCOPE, [(('R01',), 'ok'), (('R02',), 'bad')], progress)
-    assert locked == [True, True]
-    assert not frame._pipeline_lock.locked()
+    frame._find_bad_channels(_ICA_SCOPE, [(('R01',), 'ok'), (('R02',), 'bad')], progress)
+    assert analyzed == ['ok', 'bad']
     assert [i for i, _ in updates] == [0, 1]
     (scope, results, errors, progress_), = summary
     assert scope is _ICA_SCOPE and progress_ is progress
@@ -818,9 +1218,9 @@ def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
     # Abort in the progress dialog while a recording loads stops the search before the next one
     progress.Update = lambda i, msg: (i == 0, False)
     summary.clear()
-    locked.clear()
-    frame._find_bad_channels_thread(_ICA_SCOPE, [(('R01',), 'ok'), (('R02',), 'ok'), (('R03',), 'ok')], progress)
-    assert locked == [True]
+    analyzed.clear()
+    frame._find_bad_channels(_ICA_SCOPE, [(('R01',), 'ok'), (('R02',), 'ok'), (('R03',), 'ok')], progress)
+    assert analyzed == ['ok']
     assert summary[0][1] == [(('R01',), [('MEG 0111', 3, 0.6)], [('MEG 0112', 4, 6)], [('EEG 001', 'eeg')])]
 
     # the summary asks the dialog whether Abort was clicked, which also covers the last recording (the frame's own method is mocked above)
@@ -834,25 +1234,6 @@ def test_find_bad_channels_thread_holds_the_pipeline_lock(monkeypatch):
     assert len(opened) == 1 and opened[0][1] == summary[0][1]
 
 
-def test_refresh_holds_the_pipeline_lock(monkeypatch):
-    "Neither refresh pass ever runs while the worker is loading or saving"
-    monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
-    posted = []
-    locked = []
-    token = object()
-    frame = _frame(
-        _pipeline=pipeline(),
-        _pipeline_lock=threading.Lock(),
-        _refresh_token=token,
-        _iter_combos=lambda scope: locked.append(frame._pipeline_lock.locked()) or iter([('R01',)]),
-        _iter_rows=lambda token_, scope, combos: locked.append(frame._pipeline_lock.locked()) or iter([(('R01',), ('R01', 'selected', '30', '2'), 'SPEC', None)]),
-    )
-    frame._refresh_thread(token, _ICA_SCOPE)
-    assert locked == [True, True]
-    assert not frame._pipeline_lock.locked()  # released before the table update is posted
-    assert posted
-
-
 def test_refresh_shows_the_rows_before_their_status(monkeypatch):
     "The table is posted from the first pass, then filled in row by row"
     monkeypatch.setattr(pipeline_gui.wx, 'CallAfter', lambda *args: posted.append(args))
@@ -862,13 +1243,12 @@ def test_refresh_shows_the_rows_before_their_status(monkeypatch):
     rows = [(('R01',), ('R01', 'selected', '30', '2'), 'SPEC-1', None), (('R02',), ('R02', 'no ICA', PLACEHOLDER, PLACEHOLDER), 'SPEC-2', None)]
     frame = _frame(
         _pipeline=pipeline(),
-        _pipeline_lock=threading.Lock(),
         _refresh_token=token,
         _iter_combos=lambda scope: iter([('R01',), ('R02',)]),
         _iter_rows=lambda token_, scope, combos: walked.append(combos) or iter(rows),
     )
     walked = []
-    frame._refresh_thread(token, _ICA_SCOPE)
+    frame._refresh(token, _ICA_SCOPE, 0.)
     # the table goes up first, with every row still loading
     assert posted[0] == (frame._populate_table, [task.missing_row(combo, _ICA_LAYOUT, pipeline_gui.LOADING) for combo, *_ in rows], token)
     # the second pass resolves the rows the first pass found, rather than walking them again
@@ -880,22 +1260,29 @@ def test_refresh_shows_the_rows_before_their_status(monkeypatch):
 
     # a task switch between the two passes drops the table rather than paying for its rows
     posted.clear()
-    frame._refresh_token = object()
-    frame._refresh_thread(token, _ICA_SCOPE)
-    assert posted == []
+    walked.clear()
+    iter_combos = frame._iter_combos
+    frame._iter_combos = lambda scope: frame.__dict__.update(_refresh_token=object()) or iter_combos(scope)
+    frame._refresh(token, _ICA_SCOPE, 0.)
+    assert posted == [] and walked == []
+    # a refresh that was superseded while it waited for the pipeline does not even look for its rows
+    frame._iter_combos = lambda scope: walked.append('combos')
+    frame._refresh(token, _ICA_SCOPE, 0.)
+    assert posted == [] and walked == []
+    frame._iter_combos = iter_combos
 
     # rows that failed are still filled in, and the first failure is reported once, at the end
     frame._refresh_token = token
     errors = [RuntimeError("first"), RuntimeError("second")]
     rows[:] = [(('R01',), ('R01', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER), None, errors[0]), (('R02',), ('R02', pipeline_gui.ERROR, PLACEHOLDER, PLACEHOLDER), None, errors[1])]
-    frame._refresh_thread(token, _ICA_SCOPE)
+    frame._refresh(token, _ICA_SCOPE, 0.)
     assert [args[0] for args in posted] == [frame._populate_table, frame._fill_row, frame._fill_row, frame._show_error, frame._end_refresh]
     assert 'RuntimeError: first' in posted[-2][1]
 
     # a second pass that fails outright is reported, and the table is settled afterwards
     posted.clear()
     frame._iter_rows = lambda token_, scope, combos: (_ for _ in ()).throw(RuntimeError("no rows"))
-    frame._refresh_thread(token, _ICA_SCOPE)
+    frame._refresh(token, _ICA_SCOPE, 0.)
     assert [args[0] for args in posted] == [frame._populate_table, frame._show_error, frame._end_refresh]
     assert posted[-1] == (frame._end_refresh, token)
 
